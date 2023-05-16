@@ -22,54 +22,31 @@ int main(int argc, char* argv[]){
 		std::vector<Stock> stocks;						//Will store classes for each ticker.
 			
 		for(int i = 1; i < argc; i++){
-			args.pushback(std::string(argv[i]));
+			std::string sym(argv[i]);
+			Stock temp(sym);
+			if(temp.GetHTTPResCode() != 200){
+				std::cout << "Failed to fetch " << argv[i] << ": " << temp.GetHTTPResCode() << std::endl;
+				continue;
+
+			}					//Skip this stock class as the data is bad.
+			else {
+				stocks.push_back(temp);
+			}
 		}
 
-		std::string symbol(argv[1]);
-		CURLcode res;
-		long httpCode(0);							//Stores http response code
-		std::string httpData;							//Stores the raw data pulled from GET request
-
-		CURL *curl = curl_easy_init();
-		curl_easy_setopt(curl, CURLOPT_URL, URLGenerator(symbol).c_str());	//Set URL
-		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);				//Set timeout to 10s
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, Callback);		//Hook up data function
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &httpData);			//Hook up data contiainer
-
-		res = curl_easy_perform(curl);
-		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-
-		if(httpCode != 200)
-		{
-			if(httpCode == 404){
-				std::cerr << "Invalid ticker symbol\n";
+		if(stocks.size() > 0){
+			for(auto & stock : stocks){
+				std::cout << stock.GetSymbol() << ": " << stock.GetPrice() << std::endl;
 			}
-			return -1;
+			return 0;
 		}
 
 		else {
-			Stock stock(symbol, httpData);
-			std::cout << stock.GetPrice() << std::endl;
+			std::cout << "No data found for symbols provided\n";
+			return 1;
 		}
-
-		curl_easy_cleanup(curl);
 	}
-
-	return 0;
 }
-
-size_t Callback(void* buffer, size_t size, size_t num, void* out){
-	const size_t totalBytes( size * num );
-	((std::string*)out)->append((char*)buffer, totalBytes);
-	return totalBytes;
-}
-
-std::string URLGenerator(std::string symbol){
-	std::string url = "https://query1.finance.yahoo.com/v8/finance/chart/";
-	url.append(symbol + "?interval=1m");
-	return url;
-}
-
 
 //Stock quote url (current quote)
 //https://query1.finance.yahoo.com/v10/finance/quoteSummmary/ /symbol?modules=price
