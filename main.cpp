@@ -3,6 +3,8 @@
 #include <sstream>
 #include <curl/curl.h>
 
+#include "stock.h"
+
 size_t Callback(void* buffer, size_t size, size_t num, void* out);
 std::string URLGenerator(std::string symbol);
 
@@ -14,7 +16,15 @@ int main(int argc, char* argv[]){
 		std::cerr << "Usage stocks [symbol]\n";
 		return 1;
 	}
+
 	else {
+		std::vector<std::string> args;						//Stores the symbols names provided by user
+		std::vector<Stock> stocks;						//Will store classes for each ticker.
+			
+		for(int i = 1; i < argc; i++){
+			args.pushback(std::string(argv[i]));
+		}
+
 		std::string symbol(argv[1]);
 		CURLcode res;
 		long httpCode(0);							//Stores http response code
@@ -38,15 +48,8 @@ int main(int argc, char* argv[]){
 		}
 
 		else {
-			std::string price_start = "\"regularMarketPrice\":";
-			std::string delimiter = ",";
-			size_t pos = 0;
-			std::string token;
-			pos = httpData.find(price_start) + price_start.length();
-			size_t pos2 = httpData.find(delimiter, pos);
-			token = httpData.substr(pos, pos2);
-			std::string price = token.substr(0, token.find(','));
-			std::cout << price << std::endl;
+			Stock stock(symbol, httpData);
+			std::cout << stock.GetPrice() << std::endl;
 		}
 
 		curl_easy_cleanup(curl);
