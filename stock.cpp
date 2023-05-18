@@ -27,26 +27,34 @@ size_t Stock::Callback(void* buffer, size_t size, size_t num, void* out){
 
 
 //Fetch Website data
-void Stock::GetWebsiteData(){
+bool Stock::GetWebsiteData(){
 	CURLcode res;
+	char error[CURL_ERROR_SIZE];
 	
 	CURL *curl = curl_easy_init();							//Initialize libcurl
-	curl_easy_setopt(curl, CURLOPT_URL, GenerateURL(m_symbol).c_str());			//Set the url
+	curl_easy_setopt(curl, CURLOPT_URL, GenerateURL(m_symbol).c_str());		//Set the url
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);					//Set timeout to 10s
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, Callback);			//Hook up data function
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &m_website_data);			//Hook up data container
-
+	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error);
+	error[0] = 0;
 	res = curl_easy_perform(curl);							//Fetch data from website
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &m_http_std_res_code);		//Get response code
-
-	curl_easy_cleanup(curl);							//Release and cleanup libcurl
+	if(res != CURLE_OK){
+		std::cerr << "libcurl error: " << error << std::endl;
+		exit(EXIT_FAILURE);
+		return -1;
+	}
+	else{
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &m_http_std_res_code);	//Get response code
+		curl_easy_cleanup(curl);						//Release and cleanup libcurl
+		return 0;
+	}
 }
 
 float Stock::ParsePrice(const std::string type){
-	std::string start_delimiter = type;
 	char end_delimiter = ',';
 
-	size_t start_pos = m_website_data.find(start_delimiter) + start_delimiter.length();
+	size_t start_pos = m_website_data.find(type) + type.length();
 	size_t end_pos = m_website_data.find(end_delimiter, start_pos);
 
 	std::string token = m_website_data.substr(start_pos, end_pos);
