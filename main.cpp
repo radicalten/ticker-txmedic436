@@ -1,14 +1,20 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <iomanip>
 #include <curl/curl.h>
 
 #include "stock.h"
 
+#define RED "\033[31m"
+#define GREEN "\033[32m"
+#define RESET "\033[0m"
+
 size_t Callback(void* buffer, size_t size, size_t num, void* out);
 std::string URLGenerator(std::string symbol);
 
-
+const std::string UP_ARROW = "\u2191";
+const std::string DOWN_ARROW = "\u2193";
 
 int main(int argc, char* argv[]){
 	if(argc < 2){
@@ -20,32 +26,37 @@ int main(int argc, char* argv[]){
 	else {
 		std::vector<std::string> args;						//Stores the symbols names provided by user
 		std::vector<Stock> stocks;						//Will store classes for each ticker.
-			
+		unsigned count = 0;	
+		size_t total_received = 0;
+		size_t total_time = 0;
 		for(int i = 1; i < argc; i++){
+			if(i ==1 ){
+				std::cout << "Symbol\t\tPrice\t\tChange\n";
+			}
 			std::string sym(argv[i]);
 			Stock temp(sym);
-			if(temp.GetHTTPResCode() != 200){
-				std::cout << "Failed to fetch " << argv[i] << ": " << temp.GetHTTPResCode() << std::endl;
+			if(temp.GetCurrentPrice() < 0){
 				continue;
+			}
 
-			}					//Skip this stock class as the data is bad.
 			else {
-				stocks.push_back(temp);
+				std::cout << temp.GetSymbol() << "\t\t$" << temp.GetCurrentPrice() << "\t";
+				if(temp.GetCurrentPrice() > temp.GetOpen()){
+					std::cout << "\t" << GREEN << UP_ARROW;
+				}
+				if(temp.GetCurrentPrice() < temp.GetOpen()){
+					std::cout << "\t" << RED << DOWN_ARROW;
+				}
+
+				std::cout << " $" << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() - temp.GetOpen() << RESET <<std::endl;
+				
+
 			}
 		}
 
-		if(stocks.size() > 0){
-			for(auto & stock : stocks){
-				std::cout << stock.GetSymbol() << ": " << stock.GetPrice() << std::endl;
-			}
-			return 0;
-		}
-
-		else {
-			std::cout << "No data found for symbols provided\n";
-			return 1;
-		}
 	}
+
+	return 0;
 }
 
 //Stock quote url (current quote)

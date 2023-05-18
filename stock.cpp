@@ -4,7 +4,8 @@ Stock::Stock(std::string symbol){
 	m_symbol = symbol;
 	m_url = GenerateURL(symbol);
 	GetWebsiteData();
-	ParsePrice();
+	m_current_price = ParsePrice(CURRENT_PRICE);
+	m_open_price = ParsePrice(OPEN_PRICE);
 }
 
 std::string Stock::GetSymbol(){
@@ -14,7 +15,7 @@ std::string Stock::GetSymbol(){
 
 std::string Stock::GenerateURL(std::string symbol){
 	std::string url = "https://query1.finance.yahoo.com/v8/finance/chart/";
-	url.append(symbol + "?interval=1m");
+	url.append(symbol + "?interval=1d");
 	return url;
 }
 
@@ -41,14 +42,23 @@ void Stock::GetWebsiteData(){
 	curl_easy_cleanup(curl);							//Release and cleanup libcurl
 }
 
-void Stock::ParsePrice(){
-	std::string start_delimiter = "\"regularMarketPrice\":";
+float Stock::ParsePrice(const std::string type){
+	std::string start_delimiter = type;
 	char end_delimiter = ',';
 
 	size_t start_pos = m_website_data.find(start_delimiter) + start_delimiter.length();
 	size_t end_pos = m_website_data.find(end_delimiter, start_pos);
 
 	std::string token = m_website_data.substr(start_pos, end_pos);
-	m_current_price = std::stod(token.substr(0, token.find(end_delimiter)));
-	
+	if(token[0] == '['){
+		//Remove first and last char's to remove brackets
+		token.erase(0, 1);
+		token.pop_back();
+	}
+	try {
+		return std::stod(token.substr(0, token.find(end_delimiter)));
+	}
+	catch(std::invalid_argument){
+		return -0.1;
+	}
 }
