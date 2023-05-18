@@ -6,43 +6,42 @@
 #include <sstream>
 #include <iomanip>
 #include <curl/curl.h>
-
 #include "stock.h"
 
+//COLORED OUTPUT 
 #define RED "\033[31m"
 #define GREEN "\033[32m"
 #define RESET "\033[0m"
 
-size_t Callback(void* buffer, size_t size, size_t num, void* out);
-std::string URLGenerator(std::string symbol);
-
+//UNICODE 
 const std::string UP_ARROW = "\u2191";
 const std::string DOWN_ARROW = "\u2193";
 
 int main(int argc, char* argv[]){
+	std::vector<Stock> stocks;							//Will store classes for each ticker symbol.
+	
 	if(argc < 2){
 		std::cerr << "Not enough arguments\n";
-		std::cerr << "Usage stocks [symbols]\n";
+		std::cerr << "Usage stocks [symbols] [options]\n";
 		return 1;
 	}
 
 	else {
 		std::vector<std::string> args;						//Stores the symbols names provided by user
-		std::vector<Stock> stocks;						//Will store classes for each ticker.
-		unsigned count = 0;	
-		size_t total_received = 0;
-		size_t total_time = 0;
+		
+		//Parse each symbol from arguments and create a Stock instance of it.
 		for(int i = 1; i < argc; i++){
 			if(i ==1 ){
 				std::cout << "Symbol\t\tPrice\t\tChange\t\tChange(%)\n";
 			}
 			std::string sym(argv[i]);
 			Stock temp(sym);
-			if(temp.GetCurrentPrice() < 0){
+			if(temp.GetCurrentPrice() < 0){					//Ignore invalid symbols
 				continue;
 			}
 
 			else {
+				//Print symbol and current price
 				std::cout << temp.GetSymbol() << "\t\t$" << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() << "\t\t";
 				if(temp.GetCurrentPrice() > temp.GetOpen()){
 					std::cout << GREEN << UP_ARROW;
@@ -51,9 +50,10 @@ int main(int argc, char* argv[]){
 					std::cout <<  RED << DOWN_ARROW;
 				}
 				
-				//Show change in dollar amount
+				//Print change in dollar amount
 				std::cout << " $" << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() - temp.GetOpen() << RESET <<"\t";
-				//Show change in percentage
+				
+				//Print change in percentage
 				float percent = 100 * (temp.GetCurrentPrice() - temp.GetOpen()) / temp.GetOpen();
 				if(percent < 0){
 					std::cout << RED;
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]){
 				if(percent > 0){
 					std::cout << "\t" << GREEN;
 				}
-				std::cout << std::setprecision(2) << std::fixed << percent << RESET << "%\n";
+				std::cout << std::setprecision(2) << std::fixed << percent << "%" << RESET << std::endl;
 
 			}
 		}
