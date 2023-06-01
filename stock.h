@@ -1,6 +1,7 @@
 #ifndef STOCK_H
 #define STOCK_H
 
+#include <iostream>
 #include <string>
 #include <curl/curl.h>
 
@@ -35,7 +36,7 @@ private:
 	long m_http_std_res_code;
 private:
 	std::string GenerateURL(std::string);
-	void  GetWebsiteData();
+	bool GetWebsiteData();
 	static size_t Callback(void*, size_t, size_t, void*);
 	float ParsePrice(const std::string);
 };
