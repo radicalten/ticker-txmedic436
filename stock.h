@@ -2,6 +2,8 @@
 #define STOCK_H
 
 #include <iostream>
+#include <vector>
+#include <algorithm>
 #include <string>
 #include <curl/curl.h>
 
