@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <curl/curl.h>
 #include "stock.h"
-#include "options.h"
+
 
 //COLORED OUTPUT 
 #define RED "\033[31m"
@@ -23,7 +23,7 @@ int main(int argc, char* argv[]){
 	
 	if(argc < 2){
 		std::cerr << "Not enough arguments\n";
-		PrintHelp();
+		
 		return 1;
 	}
 
