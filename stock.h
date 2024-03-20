@@ -13,8 +13,6 @@ const std::string HIGH_PRICE = "\"high\":";
 const std::string LOW_PRICE = "\"low\":";
 const std::string VOLUME = "\"volume\":";
 
-
-
 class Stock {
 public:
 	Stock(std::string);
@@ -22,15 +20,17 @@ public:
 	float GetOpen(){return m_open_price;};
 	float GetHigh(){return m_high_price;};
 	float GetLow(){return m_high_price;};
+	unsigned GetVolume(){return m_volume;};
 	std::string GetSymbol();
 	long GetHTTPResCode(){return m_http_std_res_code;};
+	std::string GetRawData(){return m_website_data;};
 private:
 	
 	double m_current_price;
 	double m_open_price;
 	double m_high_price;
 	double m_low_price;
-	double m_volume;
+	unsigned m_volume;
 
 	std::string m_symbol;
 	std::string m_url;
