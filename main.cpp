@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <curl/curl.h>
 #include "stock.h"
-#include "options.h"
+
 
 //COLORED OUTPUT 
 #define RED "\033[31m"
@@ -23,7 +23,7 @@ int main(int argc, char* argv[]){
 	
 	if(argc < 2){
 		std::cerr << "Not enough arguments\n";
-		PrintHelp();
+		
 		return 1;
 	}
 
@@ -42,18 +42,26 @@ int main(int argc, char* argv[]){
 			}
 
 			else {
+				float priceChange = temp.GetCurrentPrice() - temp.GetOpen();
+				
 				//Print symbol and current price
 				std::cout << temp.GetSymbol() << "\t\t$" << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() << "\t\t";
-				if(temp.GetCurrentPrice() > temp.GetOpen()){
-					std::cout << GREEN << UP_ARROW;
+				if(priceChange > 0){
+					std::cout << GREEN << UP_ARROW << " $";
 				}
-				if(temp.GetCurrentPrice() < temp.GetOpen()){
-					std::cout <<  RED << DOWN_ARROW;
+				if(priceChange < 0){
+					std::cout <<  RED << DOWN_ARROW << " $";
+				}
+				if(priceChange == 0){
+					std::cout << "  $";
 				}
 				
 				//Print change in dollar amount
-				std::cout << " $" << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() - temp.GetOpen() << RESET <<"\t";
-				
+				std::cout << std::setprecision(2) << std::fixed << temp.GetCurrentPrice() - temp.GetOpen() << RESET <<"\t";
+				if(priceChange == 0){
+					std::cout << "\t";
+				}
+
 				//Print change in percentage
 				float percent = 100 * (temp.GetCurrentPrice() - temp.GetOpen()) / temp.GetOpen();
 				if(percent < 0){
