@@ -19,7 +19,7 @@ public:
 	float GetCurrentPrice(){return m_current_price;};
 	float GetOpen(){return m_open_price;};
 	float GetHigh(){return m_high_price;};
-	float GetLow(){return m_high_price;};
+	float GetLow(){return m_low_price;};
 	unsigned GetVolume(){return m_volume;};
 	std::string GetSymbol();
 	long GetHTTPResCode(){return m_http_std_res_code;};
