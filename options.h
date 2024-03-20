@@ -3,9 +3,8 @@
 
 #include <iostream>
 
-const int QUOTE = 0x0001;
-
+//Function used to print usage statement
 void PrintHelp();
-void ProcessArgs(int *argc, char** argv[], int flag);
+//void ProcessArgs(int *argc, char** argv[], int flag);
 
 #endif

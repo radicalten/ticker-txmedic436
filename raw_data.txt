@@ -1,0 +1,45 @@
+//This file used to review the raw data that is pulled from Yahoo! Finance API using:
+//'https://query1.finance.yahoo.com/v10/finance/quoteSummmary/ /symbol?modules=price'
+
+{"chart":
+    {"result":
+        [{"meta":
+            {"currency":"USD",
+            "symbol":"BB",
+            "exchangeName":"NYQ",
+            "instrumentType":"EQUITY",
+            "firstTradeDate":918138600,
+            "regularMarketTime":1710878402,
+            "hasPrePostMarketData":true,
+            "gmtoffset":-14400,
+            "timezone":"EDT",
+            "exchangeTimezoneName":"America/New_York",
+            "regularMarketPrice":2.47,
+            "chartPreviousClose":2.65,
+            "priceHint":4,
+            "currentTradingPeriod":
+                {"pre":{"timezone":"EDT",
+                        "start":1710835200,
+                        "end":1710855000,
+                        "gmtoffset":-14400},
+                "regular":{"timezone":"EDT",
+                        "start":1710855000,
+                        "end":1710878400,
+                        "gmtoffset":-14400},
+                "post":{"timezone":"EDT",
+                        "start":1710878400,
+                        "end":1710892800,
+                        "gmtoffset":-14400}
+                },
+            "dataGranularity":"1d",
+            "range":"1d",
+            "validRanges":["1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"]},
+        "timestamp":[1710855000],
+        "indicators":
+            {"quote":[{"close":[2.4700000286102295],
+                        "high":[2.640000104904175],
+                        "open":[2.640000104904175],
+                        "volume":[14977600],
+                        "low":[2.4600000381469727]}],
+            "adjclose":[{"adjclose":[2.4700000286102295]}]}}],
+    "error":null}}

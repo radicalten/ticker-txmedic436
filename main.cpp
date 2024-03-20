@@ -1,13 +1,26 @@
 //Stock Ticker - Provides stock prices based on symbols provided from arguments
 //Copyright(C) 2023 TxMedic435
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <sstream>
 #include <iomanip>
 #include <curl/curl.h>
 #include "stock.h"
-
+#include "options.h"
 
 //COLORED OUTPUT 
 #define RED "\033[31m"
@@ -22,7 +35,7 @@ int main(int argc, char* argv[]){
 	std::vector<Stock> stocks;							//Will store classes for each ticker symbol.
 	
 	if(argc < 2){
-		std::cerr << "Not enough arguments\n";
+		PrintHelp();
 		
 		return 1;
 	}
@@ -33,7 +46,7 @@ int main(int argc, char* argv[]){
 		//Parse each symbol from arguments and create a Stock instance of it.
 		for(int i = 1; i < argc; i++){
 			if(i ==1 ){
-				std::cout << "Symbol\t\tPrice\t\tChange\t\tChange(%)\n";
+				std::cout << "Symbol\t\tPrice\t\tChange\t\tChange(%)\tVolume\n";
 			}
 			std::string sym(argv[i]);
 			Stock temp(sym);
@@ -70,7 +83,10 @@ int main(int argc, char* argv[]){
 				if(percent > 0){
 					std::cout << "\t" << GREEN;
 				}
-				std::cout << std::setprecision(2) << std::fixed << percent << "%" << RESET << std::endl;
+				std::cout << std::setprecision(2) << std::fixed << percent << "%" << RESET << "\t\t";
+
+				//Print volume
+				std::cout << temp.GetVolume() << std::endl;
 
 			}
 		}
