@@ -2,7 +2,7 @@ name: OSX-SDL2-Brew-2-ticker-v2
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build:
     runs-on: macos-14
