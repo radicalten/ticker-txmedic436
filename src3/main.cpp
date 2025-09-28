@@ -20,7 +20,6 @@
 #include <iomanip>
 #include <curl/curl.h>
 #include "stock.h"
-#include "options.h"
 
 //COLORED OUTPUT 
 #define RED "\033[31m"
