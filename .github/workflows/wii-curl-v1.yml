@@ -10,23 +10,16 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-
-    - name: Install dependencies extremscorner
+    - name: Update package database and install wii-curl
       run: |
-        sudo dkp-pacman-key --recv-keys C8A2759C315CFBC3429CC2E422B803BA8AA3D7CE --keyserver keyserver.ubuntu.com
-        sudo dkp-pacman-key --lsign-key C8A2759C315CFBC3429CC2E422B803BA8AA3D7CE
-        sudo sed -i '/^\[dkp-libs\]$/,$d' /opt/devkitpro/pacman/etc/pacman.conf
-        sudo echo -e '[extremscorner-devkitpro]\nServer = https://packages.extremscorner.org/devkitpro/linux/$arch' >> /opt/devkitpro/pacman/etc/pacman.conf
-        sudo dkp-pacman -Sy
-        sudo dkp-pacman -S --noconfirm --ask 4 libogc2-git libogc2-libdvm libogc2-opengx libogc2-glu libogc2-sdl2 ppc-glm ppc-libpng
-        dkp-pacman -Ql  
-        
+          dkp-pacman -Syu --noconfirm
+          dkp-pacman -S wii-curl --noconfirm        
     - name: Compile
       run: |
         make -f Makefile-wii
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: wii-directory-ogc2-min-GL20
+        name: wii-curl
         path: |
-          ./wii-examples/*.dol
+          ./wii/*.dol
