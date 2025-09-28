@@ -10,6 +10,7 @@
 #define UPDATE_INTERVAL_SECONDS 15
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 #define API_URL_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s"
+#define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // Add or remove stock tickers here
 const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ETH-USD"};
@@ -30,19 +31,33 @@ typedef struct {
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
-void parse_and_print_stock_data(const char *json_string);
+void parse_and_print_stock_data(const char *json_string, int row);
 void display_dashboard_header();
+void print_initial_layout();
+void print_error_on_line(const char* ticker, const char* error_msg, int row);
+void hide_cursor();
+void show_cursor();
+void cleanup_on_exit();
 
 // --- Main Application ---
 int main(void) {
+    // Register cleanup function to run on exit (e.g., Ctrl+C)
+    atexit(cleanup_on_exit);
+
     // Initialize libcurl
     curl_global_init(CURL_GLOBAL_ALL);
 
+    // Initial setup: clear screen, hide cursor, print static layout
+    hide_cursor();
+    display_dashboard_header();
+    print_initial_layout();
+
     while (1) {
-        display_dashboard_header();
-        
         char url[256];
         for (int i = 0; i < num_tickers; i++) {
+            // Calculate the correct row on the screen for the current ticker
+            int current_row = DATA_START_ROW + i;
+            
             // Construct the URL for the current ticker
             snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
             
@@ -50,20 +65,25 @@ int main(void) {
             char *json_response = fetch_url(url);
             
             if (json_response) {
-                parse_and_print_stock_data(json_response);
+                parse_and_print_stock_data(json_response, current_row);
                 free(json_response); // Free the memory allocated by fetch_url
             } else {
-                printf("%-10s | %sFailed to fetch data%s\n", tickers[i], KRED, KNRM);
+                print_error_on_line(tickers[i], "Failed to fetch data", current_row);
             }
         }
         
-        printf("\nUpdating in %d seconds...\n", UPDATE_INTERVAL_SECONDS);
+        // Move cursor below the data table to print the update message
+        printf("\033[%d;1H", DATA_START_ROW + num_tickers + 1);
+        printf("\033[K"); // Clear the line before printing
+        printf("Updating in %d seconds...\n", UPDATE_INTERVAL_SECONDS);
         fflush(stdout); // Ensure output is printed before sleep
+        
         sleep(UPDATE_INTERVAL_SECONDS);
     }
 
     // Cleanup libcurl (though this part is unreachable in the infinite loop)
     curl_global_cleanup();
+    show_cursor(); // Restore cursor
     return 0;
 }
 
@@ -128,13 +148,14 @@ char* fetch_url(const char *url) {
 }
 
 /**
- * @brief Parses the JSON from Yahoo Finance and prints a formatted line.
+ * @brief Parses the JSON and prints the updated stock data on a specific row.
+ * @param json_string The JSON data received from the API.
+ * @param row The terminal row to print the output on.
  */
-void parse_and_print_stock_data(const char *json_string) {
+void parse_and_print_stock_data(const char *json_string, int row) {
     cJSON *root = cJSON_Parse(json_string);
     if (root == NULL) {
-        // const char *error_ptr = cJSON_GetErrorPtr();
-        // if (error_ptr != NULL) fprintf(stderr, "cJSON Error before: %s\n", error_ptr);
+        print_error_on_line("JSON", "Parse Error", row);
         return;
     }
 
@@ -142,14 +163,12 @@ void parse_and_print_stock_data(const char *json_string) {
     cJSON *chart = cJSON_GetObjectItemCaseSensitive(root, "chart");
     cJSON *result_array = cJSON_GetObjectItemCaseSensitive(chart, "result");
     if (!cJSON_IsArray(result_array) || cJSON_GetArraySize(result_array) == 0) {
-        // Handle cases where a ticker might be invalid
+        char* err_desc = "Invalid ticker or no data";
         cJSON* error_obj = cJSON_GetObjectItemCaseSensitive(chart, "error");
         if(error_obj && cJSON_GetObjectItemCaseSensitive(error_obj, "description")) {
-            char* err_desc = cJSON_GetObjectItemCaseSensitive(error_obj, "description")->valuestring;
-            printf("%-10s | %s%s%s\n", "Error", KRED, err_desc, KNRM);
-        } else {
-             printf("%-10s | %sInvalid ticker or no data returned%s\n", "Error", KRED, KNRM);
+            err_desc = cJSON_GetObjectItemCaseSensitive(error_obj, "description")->valuestring;
         }
+        print_error_on_line("API Error", err_desc, row);
         cJSON_Delete(root);
         return;
     }
@@ -163,24 +182,41 @@ void parse_and_print_stock_data(const char *json_string) {
     double prev_close = cJSON_GetObjectItemCaseSensitive(meta, "chartPreviousClose")->valuedouble;
     
     double change = price - prev_close;
-    double percent_change = (change / prev_close) * 100.0;
+    double percent_change = (prev_close == 0) ? 0 : (change / prev_close) * 100.0;
     
     // Determine color based on change
     const char* color = (change >= 0) ? KGRN : KRED;
     char sign = (change >= 0) ? '+' : '-';
 
-    printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s\n",
+    // **MODIFIED**: Move cursor to the correct line before printing
+    printf("\033[%d;1H", row);
+
+    // **MODIFIED**: Added \033[K to clear the rest of the line
+    printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s\033[K\n",
            symbol,
            KYEL, price, KNRM,
-           color, sign, (change > 0 ? change : -change), KNRM,
-           color, sign, (percent_change > 0 ? percent_change : -percent_change), KNRM);
+           color, sign, (change >= 0 ? change : -change), KNRM,
+           color, sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM);
 
     cJSON_Delete(root);
 }
 
+/**
+ * @brief Prints an error message on a specific row of the dashboard.
+ * @param ticker The ticker symbol that failed.
+ * @param error_msg The error message to display.
+ * @param row The terminal row to print the output on.
+ */
+void print_error_on_line(const char* ticker, const char* error_msg, int row) {
+    // Move cursor to the correct line
+    printf("\033[%d;1H", row);
+    // Print formatted error and clear rest of the line
+    printf("%-10s | %s%-40s%s\033[K\n", ticker, KRED, error_msg, KNRM);
+}
+
 
 /**
- * @brief Clears the screen and prints the dashboard header.
+ * @brief Clears the screen and prints the static dashboard header.
  */
 void display_dashboard_header() {
     // ANSI escape codes to clear screen and move cursor to top-left
@@ -196,4 +232,31 @@ void display_dashboard_header() {
 
     printf("%-10s | %11s | %11s | %13s\n", "Ticker", "Price", "Change", "% Change");
     printf("-------------------------------------------------------------\n");
+}
+
+/**
+ * @brief Prints the initial static layout of tickers for the first run.
+ */
+void print_initial_layout() {
+    for (int i = 0; i < num_tickers; i++) {
+        printf("%-10s | %sFetching...%s\n", tickers[i], KYEL, KNRM);
+    }
+    fflush(stdout);
+}
+
+// --- Terminal Control Functions ---
+
+void hide_cursor() {
+    printf("\033[?25l");
+    fflush(stdout);
+}
+
+void show_cursor() {
+    printf("\033[?25h");
+    fflush(stdout);
+}
+
+void cleanup_on_exit() {
+    // This function is called by atexit() to ensure the cursor is restored.
+    show_cursor();
 }
