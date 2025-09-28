@@ -2,7 +2,7 @@ name: Libogc2-FixGB-min-GL20c
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build-wii:
     runs-on: ubuntu-latest
