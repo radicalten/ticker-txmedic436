@@ -1,0 +1,57 @@
+# Maintainer: rw-r-r-0644 <rwrr0644@gmail.com>
+# Contributors: WinterMute <davem@devkitpro.org>, Elouan Martinet <exa@elou.world>
+
+pkgname=wii-curl
+pkgver=8.16.0
+pkgrel=1
+pkgdesc='Library for transferring data with URLs. (for Nintendo Wii homebrew development)'
+arch=('any')
+url='https://curl.haxx.se'
+license=('MIT')
+options=(!strip libtool staticlibs)
+depends=('ppc-zlib' 'libwiisocket' 'wii-mbedtls>=3.6.4-1')
+makedepends=('wii-pkg-config')
+
+source=("https://curl.haxx.se/download/curl-${pkgver}.tar.xz")
+sha256sums=('40c8cddbcb6cc6251c03dea423a472a6cea4037be654ba5cf5dec6eb2d22ff1d')
+
+build() {
+  cd curl-$pkgver
+
+  unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS
+  export DEVKITPRO=/opt/devkitpro
+  export DEVKITPPC=$DEVKITPRO/devkitPPC
+  export PORTLIBS_PREFIX=$DEVKITPRO/portlibs/wii
+  
+  export MACHDEP="-DGEKKO -mrvl -mcpu=750 -meabi -mhard-float"
+  export LDFLAGS="${MACHDEP} ${LDFLAGS}"
+  export CPPFLAGS="${MACHDEP} ${CPPFLAGS} -I${DEVKITPRO}/libogc/include -O2"
+  export DKP_INCS="-Wl,-L${DEVKITPRO}/portlibs/wii/lib -Wl,-L${DEVKITPRO}/portlibs/ppc/lib -I${DEVKITPRO}/portlibs/ppc/include -I${DEVKITPRO}/portlibs/wii/include -I${DEVKITPRO}/libogc/include -L${DEVKITPRO}/libogc/lib/wii"
+
+
+  ./configure \
+    CFLAGS="${CPPFLAGS} ${DKP_INCS}" \
+    CPPFLAGS="${CPPFLAGS}" \
+    LDFLAGS="${LDFLAGS}" \
+    LIBS="-lmbedtls -lmbedcrypto -lmbedx509 -logc -lwiisocket" \
+    --prefix=${PORTLIBS_PREFIX} --host=powerpc-eabi \
+    --disable-shared --enable-static --disable-ipv6 --disable-unix-sockets \
+    --disable-manual --disable-ntlm-wb --disable-threaded-resolver --disable-socketpair \
+    --with-mbedtls=$PORTLIBS_PREFIX --enable-websockets --without-libpsl
+
+  make -C lib
+}
+
+package() {
+  export DEVKITPRO=/opt/devkitpro
+  export DEVKITPPC=$DEVKITPRO/devkitPPC
+  export PORTLIBS_PREFIX=$DEVKITPRO/portlibs/wii
+  export PATH=$DEVKITPPC/bin/:$PATH
+  cd curl-$pkgver
+
+  make DESTDIR="$pkgdir" -C lib install
+  make DESTDIR="$pkgdir" -C include install
+  make DESTDIR="$pkgdir" install-binSCRIPTS install-pkgconfigDATA
+
+  install -Dm644 COPYING "$pkgdir"${PORTLIBS_PREFIX}/licenses/$pkgname/COPYING
+}
