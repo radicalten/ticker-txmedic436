@@ -6,6 +6,15 @@ Stock::Stock(std::string symbol){
 	m_symbol = symbol;
 	m_url = GenerateURL(symbol);
 
+	// ==================== ADD THIS DEBUGGING BLOCK ====================
+	std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
+	std::cout << "URL -> " << m_url << "\n";
+	std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
+	std::cout << "--- Raw Response Data ---\n";
+	std::cout << m_website_data << "\n";
+	std::cout << "------------------------------------------\n\n";
+	// =================================================================
+	
 	// Attempt to get data and check if the HTTP request was successful (code 200 OK)
 	if (!GetWebsiteData() || m_http_std_res_code != 200) {
 		// If data fetch fails, set member variables to an error state and stop.
