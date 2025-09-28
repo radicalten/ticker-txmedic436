@@ -21,6 +21,7 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 #define KRED  "\x1B[31m"  // Red
 #define KGRN  "\x1B[32m"  // Green
 #define KYEL  "\x1B[33m"  // Yellow
+#define KBLU  "\x1B[34m"  // Blue (Added for price)
 
 // --- Struct to hold HTTP response data ---
 typedef struct {
@@ -194,7 +195,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     // This is important to overwrite any previous, longer text (like an error message).
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s\033[K\n",
            symbol,
-           KYEL, price, KNRM,
+           KBLU, price, KNRM, // <-- MODIFIED: Changed KYEL to KBLU for blue price
            color, sign, (change >= 0 ? change : -change), KNRM,
            color, sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM);
 
