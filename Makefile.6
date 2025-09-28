@@ -1,0 +1,9 @@
+CC		:= cc
+CFLAGS 	:= -O3 -flto
+LDFLAGS := $(CFLAGS) \
+-lcurl -lm
+TARGET  := tuimarket
+SRCS    := $(wildcard src4/*.c)
+OBJS    := $(patsubst %.c,%.o,$(SRCS))
+all: $(OBJS)
+	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
