@@ -72,7 +72,7 @@ bool Stock::GetWebsiteData(){
 	char error[CURL_ERROR_SIZE];
 	
 	const int MAX_RETRIES = 4; // Try up to 4 times
-	long initial_backoff_ms = 500; // Start with a 500ms wait
+	long initial_backoff_ms = 2000; // Start with a 2000ms wait
 
 	for (int i = 0; i < MAX_RETRIES; ++i) {
 		m_website_data.clear(); // IMPORTANT: Clear previous (failed) response data
