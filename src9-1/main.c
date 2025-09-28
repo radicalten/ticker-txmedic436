@@ -17,10 +17,10 @@ const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ET
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
-#define KNRM  "\x1B[0m"
-#define KRED  "\x1B[31m"
-#define KGRN  "\x1B[32m"
-#define KYEL  "\x1B[33m"
+#define KNRM  "\x1B[0m"  // Normal
+#define KRED  "\x1B[31m"  // Red
+#define KGRN  "\x1B[32m"  // Green
+#define KYEL  "\x1B[33m"  // Yellow
 
 // --- Struct to hold HTTP response data ---
 typedef struct {
@@ -32,8 +32,9 @@ typedef struct {
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
 void parse_and_print_stock_data(const char *json_string, int row);
-void display_dashboard_header();
-void print_initial_layout();
+void setup_dashboard_ui();
+void update_timestamp();
+void run_countdown();
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
 void hide_cursor();
 void show_cursor();
@@ -47,15 +48,16 @@ int main(void) {
     // Initialize libcurl
     curl_global_init(CURL_GLOBAL_ALL);
 
-    // Initial setup: clear screen, hide cursor, print static layout
-    hide_cursor();
-    display_dashboard_header();
-    print_initial_layout();
+    // Initial, one-time setup: clear screen, hide cursor, print static layout
+    setup_dashboard_ui();
 
     while (1) {
+        // Update the timestamp at the top of the dashboard
+        update_timestamp();
+
         char url[256];
         for (int i = 0; i < num_tickers; i++) {
-            // Calculate the correct row on the screen for the current ticker
+            // Calculate the correct screen row for the current ticker
             int current_row = DATA_START_ROW + i;
             
             // Construct the URL for the current ticker
@@ -72,13 +74,8 @@ int main(void) {
             }
         }
         
-        // Move cursor below the data table to print the update message
-        printf("\033[%d;1H", DATA_START_ROW + num_tickers + 1);
-        printf("\033[K"); // Clear the line before printing
-        printf("Updating in %d seconds...\n", UPDATE_INTERVAL_SECONDS);
-        fflush(stdout); // Ensure output is printed before sleep
-        
-        sleep(UPDATE_INTERVAL_SECONDS);
+        // Run the countdown timer at the bottom of the screen
+        run_countdown();
     }
 
     // Cleanup libcurl (though this part is unreachable in the infinite loop)
@@ -136,6 +133,7 @@ char* fetch_url(const char *url) {
         if (res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
             free(chunk.memory);
+            curl_easy_cleanup(curl_handle);
             return NULL;
         }
 
@@ -148,7 +146,7 @@ char* fetch_url(const char *url) {
 }
 
 /**
- * @brief Parses the JSON and prints the updated stock data on a specific row.
+ * @brief Parses JSON and prints updated stock data on a specific row.
  * @param json_string The JSON data received from the API.
  * @param row The terminal row to print the output on.
  */
@@ -188,10 +186,12 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     const char* color = (change >= 0) ? KGRN : KRED;
     char sign = (change >= 0) ? '+' : '-';
 
-    // **MODIFIED**: Move cursor to the correct line before printing
+    // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
 
-    // **MODIFIED**: Added \033[K to clear the rest of the line
+    // Print the formatted data row.
+    // ANSI: \033[K clears from the cursor to the end of the line.
+    // This is important to overwrite any previous, longer text (like an error message).
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s\033[K\n",
            symbol,
            KYEL, price, KNRM,
@@ -208,50 +208,81 @@ void parse_and_print_stock_data(const char *json_string, int row) {
  * @param row The terminal row to print the output on.
  */
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
-    // Move cursor to the correct line
+    // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
     // Print formatted error and clear rest of the line
     printf("%-10s | %s%-40s%s\033[K\n", ticker, KRED, error_msg, KNRM);
 }
 
 
+// --- UI and Terminal Control Functions ---
+
 /**
- * @brief Clears the screen and prints the static dashboard header.
+ * @brief Performs the initial one-time setup of the dashboard UI.
  */
-void display_dashboard_header() {
-    // ANSI escape codes to clear screen and move cursor to top-left
+void setup_dashboard_ui() {
+    hide_cursor();
+    // ANSI: \033[2J clears the entire screen. \033[H moves cursor to top-left.
     printf("\033[2J\033[H");
 
-    time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
-    char time_str[64];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
-
     printf("--- C Terminal Stock Dashboard ---\n");
-    printf("Last updated: %s\n\n", time_str);
+    printf("\n"); // Leave a blank line for the dynamic timestamp
+    printf("\n");
 
+    // Print static headers
     printf("%-10s | %11s | %11s | %13s\n", "Ticker", "Price", "Change", "% Change");
     printf("-------------------------------------------------------------\n");
-}
-
-/**
- * @brief Prints the initial static layout of tickers for the first run.
- */
-void print_initial_layout() {
+    
+    // Print initial placeholder text for each ticker
     for (int i = 0; i < num_tickers; i++) {
         printf("%-10s | %sFetching...%s\n", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
 
-// --- Terminal Control Functions ---
+/**
+ * @brief Updates the "Last updated" timestamp on the second line of the screen.
+ */
+void update_timestamp() {
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+
+    // ANSI: Move cursor to row 2, column 1
+    printf("\033[2;1H");
+    // ANSI: \033[K clears from the cursor to the end of the line
+    printf("Last updated: %s\033[K\n", time_str);
+    fflush(stdout);
+}
+
+/**
+ * @brief Displays a live countdown timer at the bottom of the dashboard.
+ */
+void run_countdown() {
+    int update_line = DATA_START_ROW + num_tickers + 1;
+
+    for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
+        // ANSI: Move cursor to the update line
+        printf("\033[%d;1H", update_line);
+        // ANSI: Clear line and print countdown
+        printf("\033[KUpdating in %2d seconds...", i);
+        fflush(stdout);
+        sleep(1);
+    }
+    // Print final "Updating now..." message
+    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    fflush(stdout);
+}
 
 void hide_cursor() {
+    // ANSI: Hides the terminal cursor
     printf("\033[?25l");
     fflush(stdout);
 }
 
 void show_cursor() {
+    // ANSI: Shows the terminal cursor
     printf("\033[?25h");
     fflush(stdout);
 }
