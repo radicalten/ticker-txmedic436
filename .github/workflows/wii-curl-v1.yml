@@ -1,4 +1,4 @@
-name: Libogc2-FixGB-min-GL20c
+name: Wii-curl-v1
 on:
   push:
     branches:
@@ -23,7 +23,6 @@ jobs:
         
     - name: Compile
       run: |
-        cd wii
         make -f Makefile-wii
     - name: Upload
       uses: actions/upload-artifact@v4
