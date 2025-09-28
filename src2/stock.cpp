@@ -4,39 +4,45 @@
 #include <chrono> // added
 #include <cmath> // added
 
-// Constructor: Fetches and parses data for a given stock symbol
-Stock::Stock(std::string symbol){
-	m_symbol = symbol;
-	m_url = GenerateURL(symbol);
+// CORRECTED Stock::Stock constructor
 
-	// ==================== ADD THIS DEBUGGING BLOCK ====================
-	bool success = GetWebsiteData(); // Store the return value
-	std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
-	std::cout << "URL -> " << m_url << "\n";
-	std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
-	std::cout << "--- Raw Response Data ---\n";
-	std::cout << m_website_data << "\n";
-	std::cout << "------------------------------------------\n\n";
-	// =================================================================
-	
-	// Attempt to get data and check if the HTTP request was successful (code 200 OK)
-	if (!GetWebsiteData() || m_http_std_res_code != 200) {
-		// If data fetch fails, set member variables to an error state and stop.
-		// This prevents the program from trying to parse invalid/empty data.
-		m_current_price = -1.0;
-		m_open_price = -1.0;
-		m_high_price = -1.0;
-		m_low_price = -1.0;
-		m_volume = 0;
-		return; // IMPORTANT: Stop processing for this invalid stock
-	}
+Stock::Stock(std::string symbol) {
+    m_symbol = symbol;
+    m_url = GenerateURL(symbol);
 
-	// --- Only if the data is valid, proceed to parse ---
-	m_current_price = ParseValue(CURRENT_PRICE);
-	m_open_price = ParseValue(OPEN_PRICE);
-	m_high_price = ParseValue(HIGH_PRICE);
-	m_low_price = ParseValue(LOW_PRICE);
-	m_volume = static_cast<unsigned>(ParseValue(VOLUME)); // Volume is an integer
+    // [FIX] Call GetWebsiteData() ONLY ONCE and store the result.
+    bool success = GetWebsiteData(); 
+
+    // Now you can use the 'success' variable and the member variables 
+    // that were set inside the single call to GetWebsiteData().
+
+    // ==================== Optional Debugging Block ====================
+    std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
+    std::cout << "URL -> " << m_url << "\n";
+    std::cout << "Request Success? -> " << (success ? "Yes" : "No") << "\n";
+    std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
+    std::cout << "--- Raw Response Data ---\n";
+    std::cout << m_website_data << "\n";
+    std::cout << "------------------------------------------\n\n";
+    // ==================================================================
+
+    // Use the result of the SINGLE call to check for success.
+    if (!success || m_http_std_res_code != 200) {
+        // Set member variables to an error state and stop.
+        m_current_price = -1.0;
+        m_open_price = -1.0;
+        m_high_price = -1.0;
+        m_low_price = -1.0;
+        m_volume = 0;
+        return; 
+    }
+
+    // --- Only if the data is valid, proceed to parse ---
+    m_current_price = ParseValue(CURRENT_PRICE);
+    m_open_price = ParseValue(OPEN_PRICE);
+    m_high_price = ParseValue(HIGH_PRICE);
+    m_low_price = ParseValue(LOW_PRICE);
+    m_volume = static_cast<unsigned>(ParseValue(VOLUME));
 }
 
 // Returns the symbol in uppercase
