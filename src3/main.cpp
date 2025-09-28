@@ -34,8 +34,8 @@ int main(int argc, char* argv[]){
 	std::vector<Stock> stocks;							//Will store classes for each ticker symbol.
 	
 	if(argc < 2){
-		PrintHelp();
-		
+		std::cout << "Usage: ticker [SYMBOLS] [OPTIONS}\n";
+		std::cout << "\t--quote\t\tGet a quote on a specified symbol\n";
 		return 1;
 	}
 
