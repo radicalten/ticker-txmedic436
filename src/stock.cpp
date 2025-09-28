@@ -7,6 +7,7 @@ Stock::Stock(std::string symbol){
 	m_url = GenerateURL(symbol);
 
 	// ==================== ADD THIS DEBUGGING BLOCK ====================
+	bool success = GetWebsiteData(); // Store the return value
 	std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
 	std::cout << "URL -> " << m_url << "\n";
 	std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
