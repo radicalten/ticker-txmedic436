@@ -1,0 +1,9 @@
+CXX		:= clang++
+CFLAGS 	:= -O3 -flto -std=c++17
+LDFLAGS := $(CFLAGS) \
+-lcurl -lm
+TARGET  := myapp
+SRCS    := $(wildcard src2/*.cpp)
+OBJS    := $(patsubst %.cpp,%.o,$(SRCS))
+all: $(OBJS)
+	$(CXX) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
