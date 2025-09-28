@@ -1,4 +1,4 @@
-#include "json.hpp"
+#include "stock.h"
 
 Stock::Stock(std::string symbol){
 	m_symbol = symbol;
