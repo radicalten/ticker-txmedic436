@@ -91,6 +91,9 @@
 #define cJSON_IsReference 256
 #define cJSON_StringIsConst 512
 
+// *** THIS IS THE ADDED LINE TO FIX THE ERROR ***
+#define cJSON_IsArray(item) (((item) != NULL) && (((item)->type & 0xFF) == cJSON_Array))
+
 typedef struct cJSON {
     struct cJSON *next;
     struct cJSON *prev;
