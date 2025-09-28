@@ -57,37 +57,67 @@ size_t Stock::Callback(void* buffer, size_t size, size_t num, void* out){
 	return totalBytes;
 }
 
-// Fetches website data using libcurl
+// Fetches website data using libcurl with retry logic for rate limiting
 bool Stock::GetWebsiteData(){
 	CURLcode res;
 	char error[CURL_ERROR_SIZE];
 	
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		std::cerr << "libcurl failed to initialize" << std::endl;
-		return false;
-	}
+	const int MAX_RETRIES = 4; // Try up to 4 times
+	long initial_backoff_ms = 500; // Start with a 500ms wait
 
-	curl_easy_setopt(curl, CURLOPT_URL, m_url.c_str());
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L); // Use 10L for long
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, Callback);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &m_website_data);
-	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error);
-	error[0] = 0;
+	for (int i = 0; i < MAX_RETRIES; ++i) {
+		m_website_data.clear(); // IMPORTANT: Clear previous (failed) response data
+		m_http_std_res_code = 0;  // Reset response code
 
-	res = curl_easy_perform(curl);
-	
-	if(res != CURLE_OK){
-		std::cerr << "libcurl error for symbol " << m_symbol << ": " << error << std::endl;
-		curl_easy_cleanup(curl);
-		// Don't exit the whole program, just signal failure for this one stock
-		return false; 
-	}
-	else{
-		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &m_http_std_res_code);
-		curl_easy_cleanup(curl);
-		return true; // Signal success
-	}
+		CURL *curl = curl_easy_init();
+		if (!curl) {
+			std::cerr << "libcurl failed to initialize" << std::endl;
+			return false;
+		}
+
+		curl_easy_setopt(curl, CURLOPT_URL, m_url.c_str());
+		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, Callback);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &m_website_data);
+		curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error);
+		error[0] = 0;
+
+		res = curl_easy_perform(curl);
+		
+		if(res == CURLE_OK){
+			curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &m_http_std_res_code);
+			curl_easy_cleanup(curl);
+
+			if (m_http_std_res_code == 200) {
+				return true; // Success! Exit the function.
+			}
+			else if (m_http_std_res_code == 429) {
+				// Too Many Requests, let's wait and retry
+				std::cerr << "Warning: HTTP 429 (Too Many Requests) for " << m_symbol 
+						  << ". Retrying in " << initial_backoff_ms << "ms..." << std::endl;
+				
+				std::this_thread::sleep_for(std::chrono::milliseconds(initial_backoff_ms));
+				
+				// Exponential backoff: double the wait time for the next potential retry
+				initial_backoff_ms *= 2; 
+			}
+			else {
+				// Another HTTP error (e.g., 404 Not Found), no point in retrying
+				std::cerr << "HTTP Error " << m_http_std_res_code << " for " << m_symbol << ". Not retrying." << std::endl;
+				return false;
+			}
+		}
+		else {
+			// libcurl level error (e.g., could not connect), no point in retrying
+			std::cerr << "libcurl error for symbol " << m_symbol << ": " << error << std::endl;
+			curl_easy_cleanup(curl);
+			return false; 
+		}
+	} // end for loop
+
+	// If we exit the loop, all retries have failed
+	std::cerr << "Error: All retries failed for symbol " << m_symbol << "." << std::endl;
+	return false;
 }
 
 // Robustly parses a numeric value from the fetched JSON data based on a key
