@@ -2,7 +2,7 @@ CC		:= g++
 CFLAGS 	:= -O3 -flto
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
-TARGET  := tuimarket
+TARGET  := myapp
 SRCS    := $(wildcard src/*.cpp)
 OBJS    := $(patsubst %.cpp,%.o,$(SRCS))
 all: $(OBJS)
