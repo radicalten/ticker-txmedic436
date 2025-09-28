@@ -1,0 +1,70 @@
+.SUFFIXES:
+.SECONDARY:
+include /opt/devkitpro/libogc2/wii_rules
+
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
+CC 			:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
+CXX 			:= $(DEVKITPPC)/bin/powerpc-eabi-g++
+
+TARGET := GL20
+DEBUG   = 1
+AUDIO_FLOAT = 0
+#CC = powerpc-eabi-gcc
+MACHDEP = -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math -funroll-loops -fauto-inc-dec -finline-functions
+
+SRCDIR = opengl20c common
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+CPP_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
+SOURCES = $(C_SOURCES) $(CPP_SOURCES)
+OBJECTS = $(SOURCES:.c=.o)
+OBJECTS := $(OBJECTS:.cpp=.o)
+
+# OBJECTS :=
+# OBJECTS +=main.o
+
+FLAGS    += -Wall -Wextra -ffast-math
+# FLAGS    += -Werror=implicit-function-declaration
+DEFINES  +=
+INCLUDES += -I$(DEVKITPRO)/libogc2/include -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I../common
+
+ifeq ($(AUDIO_FLOAT),1)
+FLAGS += -DAUDIO_FLOAT=1
+endif
+
+ifeq ($(DEBUG),1)
+FLAGS += -O0 -g
+else
+FLAGS   += -O3
+LDFLAGS +=
+endif
+
+CFLAGS += $(FLAGS) $(DEFINES) $(INCLUDES) 
+CXXFLAGS	=	$(CFLAGS)
+LDFLAGS += $(CFLAGS) $(MACHDEP) \
+-Wl,-Map,$(notdir $@).map \
+-L$(DEVKITPRO)/libogc2/lib/wii \
+-L/opt/devkitpro/portlibs/wii/lib \
+-L/opt/devkitpro/portlibs/ppc/lib \
+-lSDL2 -lSDL2main -lglm -lGLU -lopengx -lwiiuse -lwiikeyboard -lbte -lfat -laesnd -lpng -logc -lm
+
+ELF2DOL     := elf2dol
+
+all: $(TARGET).dol
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+$(TARGET).dol: $(TARGET).elf
+	$(ELF2DOL) $< $@
+
+%.o: %.cpp
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+
+
+.PHONY: clean test
