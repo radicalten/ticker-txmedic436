@@ -1,5 +1,8 @@
 #include "stock.h"
 #include <stdexcept> // Required for std::exception
+#include <thread> // added
+#include <chrono> // added
+#include <cmath> // added
 
 // Constructor: Fetches and parses data for a given stock symbol
 Stock::Stock(std::string symbol){
