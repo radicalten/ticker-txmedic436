@@ -1,0 +1,23 @@
+name: OSX-SDL2-Brew-2-ticker-v2
+on:
+  push:
+    branches:
+    - main
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Compile
+      run: |
+        make -f Makefile.2
+    - name: Create tarball
+      run: |
+        tar -cvf myapp.tgz myapp
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: Artifact
+        path: |
+          .
