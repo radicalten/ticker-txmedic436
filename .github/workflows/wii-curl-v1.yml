@@ -12,8 +12,8 @@ jobs:
       uses: actions/checkout@v4
     - name: Update package database and install wii-curl
       run: |
-          dkp-pacman -Syu --noconfirm
-          dkp-pacman -S wii-curl --noconfirm        
+          sudo dkp-pacman -Syu --noconfirm
+          sudo dkp-pacman -S wii-curl --noconfirm        
     - name: Compile
       run: |
         make -f Makefile-wii
