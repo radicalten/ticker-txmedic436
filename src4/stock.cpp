@@ -1,11 +1,10 @@
 #include "stock.h"
 #include <stdexcept> // Required for std::exception
-#include <thread> // added
-#include <chrono> // added
-#include <cmath> // added
+#include <thread>
+#include <chrono>
+#include <cmath>
 
 // CORRECTED Stock::Stock constructor
-
 Stock::Stock(std::string symbol) {
     m_symbol = symbol;
     m_url = GenerateURL(symbol);
@@ -17,13 +16,13 @@ Stock::Stock(std::string symbol) {
     // that were set inside the single call to GetWebsiteData().
 
     // ==================== Optional Debugging Block ====================
-    std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
-    std::cout << "URL -> " << m_url << "\n";
-    std::cout << "Request Success? -> " << (success ? "Yes" : "No") << "\n";
-    std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
-    std::cout << "--- Raw Response Data ---\n";
-    std::cout << m_website_data << "\n";
-    std::cout << "------------------------------------------\n\n";
+    // std::cout << "\n--- DEBUG INFO FOR SYMBOL: " << m_symbol << " ---\n";
+    // std::cout << "URL -> " << m_url << "\n";
+    // std::cout << "Request Success? -> " << (success ? "Yes" : "No") << "\n";
+    // std::cout << "HTTP Response Code -> " << m_http_std_res_code << "\n";
+    // std::cout << "--- Raw Response Data ---\n";
+    // std::cout << m_website_data << "\n";
+    // std::cout << "------------------------------------------\n\n";
     // ==================================================================
 
     // Use the result of the SINGLE call to check for success.
@@ -85,6 +84,12 @@ bool Stock::GetWebsiteData(){
 		}
 
 		curl_easy_setopt(curl, CURLOPT_URL, m_url.c_str());
+
+        // ********************************************************************
+        // ** THIS IS THE LINE YOU NEED TO ADD TO SET THE USER-AGENT HEADER  **
+        // ********************************************************************
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, Callback);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &m_website_data);
@@ -130,7 +135,6 @@ bool Stock::GetWebsiteData(){
 }
 
 // Robustly parses a numeric value from the fetched JSON data based on a key
-// Renamed from ParsePrice to ParseValue to be more generic
 float Stock::ParseValue(const std::string& key){
 	try {
 		// 1. Find the key (e.g., "regularMarketPrice:")
