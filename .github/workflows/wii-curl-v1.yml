@@ -3,6 +3,7 @@ on:
   push:
     branches:
     - main
+
 jobs:
   build-wii:
     runs-on: ubuntu-latest
@@ -10,21 +11,42 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Install wii-curl dependency
+
+    - name: Install wii-curl
       run: |
-        CURL_TAG="v8.16.0"
-        CURL_FILENAME="libwiisocket-0.1-1-any.pkg.tar.gz"
-        CURL_FILENAME2="wii-mbedtls-3.6.4-1-any.pkg.tar.gz"
-        CURL_FILENAME3="wii-curl-8.16.0-1-any.pkg.tar.gz"
-        CURL_URL="https://github.com/AndrewPiroli/wii-curl/releases/download/${CURL_TAG}/${CURL_FILENAME}"
-        curl -L -o ${CURL_FILENAME} ${CURL_URL}
-        tar -xjf ${CURL_FILENAME} -C ${DEVKITPRO}
-        rm ${CURL_FILENAME}
+        # Get latest release URL from GitHub API
+        curl -s https://api.github.com/repos/AndrewPiroli/wii-curl/releases/latest \
+          | grep "browser_download_url" \
+          | cut -d '"' -f 4 \
+          | grep '.zip$' \
+          | head -n 1 \
+          | xargs curl -L -o wii-curl.zip
+
+        # Unpack it into $DEVKITPRO/portlibs/ppc (adjust if necessary)
+        unzip wii-curl.zip -d wii-curl
+        cp -r wii-curl/* $DEVKITPRO/portlibs/ppc/
+
     - name: Compile
       run: |
         make -f Makefile-wii
+
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: wii-curl
         path: ./wii/*.dol
+```
+
+### 3. Adjusting installation target  
+- Many Wii ports expect external libraries under `$DEVKITPRO/portlibs/ppc`.  
+- Some might need headers or libs under `$DEVKITPRO/libogc`.  
+If compilation fails with "undefined reference" or "file not found," you might just need to relocate the headers and `.a` files to match where the Makefile looks.
+
+### 4. Pro tips to keep things smooth
+- If you want a specific release (not latest), replace the API query with a fixed URL, e.g. `https://github.com/AndrewPiroli/wii-curl/releases/download/vX.Y.Z/wii-curl-vX.Y.Z.zip`.
+- Add `ls -R $DEVKITPRO/portlibs/ppc` after copying, just to confirm the right files are in place.
+- Ensure your `Makefile-wii` has `-lcurl` configured in its linker flags, otherwise it won’t know to use the library.
+
+That way, your Action won’t just build — it also pulls in the most up-to-date precompiled `wii-curl` so you can happily link your project without error.  
+
+Would you like me to also sketch how you’d modify your Makefile to link against this library, in case it doesn’t automatically detect it?
