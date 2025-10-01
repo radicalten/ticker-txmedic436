@@ -1,29 +1,15 @@
-name: Build Wii Project with Custom Packages
-
-# Controls when the workflow will run
+name: Wii-curl-v1
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
+    branches:
+    - main
 jobs:
-  build:
-    # Use the latest Ubuntu runner
+  build-wii:
     runs-on: ubuntu-latest
-
+    container: devkitpro/devkitppc:latest
     steps:
-      # 1. Check out your repository code
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 2. Set up the devkitPro environment
-      # This action installs the toolchain and makes tools like `pacman` available.
-      - name: Setup devkitPro
-        uses: devkitpro/setup-devkitpro@v3
-
+    - name: Checkout
+      uses: actions/checkout@v4
       # 3. Download the required packages from the GitHub release
       - name: Download custom packages
         run: |
@@ -59,11 +45,12 @@ jobs:
           echo "Verifying libwiisocket..."
           pacman -Qi libwiisocket
 
-      # 6. Your build step
-      # This is where you would run your project's build command (e.g., make).
-      # The compiler will now be able to find the headers and libraries from the packages you just installed.
-      - name: Build project
-        run: |
-          echo "Building the project..."
-          # Replace this with your actual build command
-          make
+    - name: Compile
+      run: |
+        make -f Makefile-wii
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: wii-curl
+        path: |
+          ./wii/*.dol
