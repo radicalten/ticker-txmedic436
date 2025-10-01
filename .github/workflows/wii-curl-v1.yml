@@ -12,7 +12,6 @@ jobs:
       uses: actions/checkout@v4
     - name: Download custom packages
       run: |
-          # Use curl with -L to follow redirects and -O to save with the original filename
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/libwiisocket-0.1-1-any.pkg.tar.gz
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/wii-mbedtls-3.6.4-1-any.pkg.tar.gz
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/wii-curl-8.16.0-1-any.pkg.tar.gz
