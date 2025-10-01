@@ -15,10 +15,6 @@ jobs:
           curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/libwiisocket-0.1-1-any.pkg.tar.gz -o libwiisocket-0.1-1-any.pkg.tar.gz
           curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-curl-8.16.0-1-any.pkg.tar.gz -o wii-curl-8.16.0-1-any.pkg.tar.gz
           curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-mbedtls-3.6.4-1-any.pkg.tar.gz -o wii-mbedtls-3.6.4-1-any.pkg.tar.gz
-          # Extract the archive to get the .pkg.tar.gz files
-          # tar -xf libwiisocket-0.1-1-any.pkg.tar.gz
-          # tar -xf wii-curl-8.16.0-1-any.pkg.tar.gz
-          # tar -xf wii-mbedtls-3.6.4-1-any.pkg.tar.gz
     - name: Install custom packages
       run: |
             sudo dkp-pacman -U --noconfirm wii-curl-8.16.0-1-any.pkg.tar.gz libwiisocket-0.1-1-any.pkg.tar.gz wii-mbedtls-3.6.4-1-any.pkg.tar.gz
