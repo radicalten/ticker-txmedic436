@@ -13,7 +13,9 @@ jobs:
     - name: Update package database and install wii-curl
       run: |
         sudo dkp-pacman -Syu --noconfirm
-        sudo dkp-pacman -S wii-curl --noconfirm        
+        sudo dkp-pacman -U libwiisocket-0.1-1-any.pkg.tar.gz --noconfirm 
+        sudo dkp-pacman -U wii-mbedtls-3.6.4-1-any.pkg.tar.gz --noconfirm 
+        sudo dkp-pacman -U wii-curl-8.16.0-1-any.pkg.tar.gz --noconfirm       
     - name: Compile
       run: |
         make -f Makefile-wii
