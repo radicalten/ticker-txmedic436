@@ -12,13 +12,14 @@ jobs:
       uses: actions/checkout@v4
     - name: Install wii-curl dependency
       run: |
-        CURL_TAG="v7.45.0"
-        CURL_FILENAME="libcurl-7.45.0_wii.tar.bz2"
+        CURL_TAG="v8.16.0"
+        CURL_FILENAME="libwiisocket-0.1-1-any.pkg.tar.gz"
+        CURL_FILENAME2="wii-mbedtls-3.6.4-1-any.pkg.tar.gz"
+        CURL_FILENAME3="wii-curl-8.16.0-1-any.pkg.tar.gz"
         CURL_URL="https://github.com/AndrewPiroli/wii-curl/releases/download/${CURL_TAG}/${CURL_FILENAME}"
         curl -L -o ${CURL_FILENAME} ${CURL_URL}
         tar -xjf ${CURL_FILENAME} -C ${DEVKITPRO}
         rm ${CURL_FILENAME}
-        ls -l ${DEVKITPRO}/portlibs/ppc/lib/libcurl.a
     - name: Compile
       run: |
         make -f Makefile-wii
