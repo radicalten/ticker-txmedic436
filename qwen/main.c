@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
-#include "cjson/cJSON.h"
+#include "cJSON.h"
 #include <unistd.h>
 #include <time.h>
 
