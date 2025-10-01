@@ -1,18 +1,3 @@
-Of course! To download and install these `.pkg.tar.gz` files in a GitHub Actions workflow, you need to use the package manager that understands this format. These packages are for the **devkitPro** toolchain (used for Wii/GameCube homebrew development), and the package manager is `pacman`.
-
-The general process will be:
-1.  Set up the devkitPro environment in your GitHub Actions runner.
-2.  Download the specific `.pkg.tar.gz` files you need.
-3.  Use the devkitPro `pacman` to install them from the local files.
-
-Here is a complete, commented `workflow.yml` file that does exactly that.
-
-### The GitHub Actions Workflow File
-
-You can create a file named `.github/workflows/build.yml` in your repository and paste the following content into it.
-
-```yaml
-# .github/workflows/build.yml
 name: Build Wii Project with Custom Packages
 
 # Controls when the workflow will run
@@ -82,55 +67,3 @@ jobs:
           echo "Building the project..."
           # Replace this with your actual build command
           make
-```
-
-### Explanation of Key Steps
-
-1.  **`uses: actions/checkout@v4`**
-    *   This is a standard step that checks out your repository's code so the workflow can access it.
-
-2.  **`uses: devkitpro/setup-devkitpro@v3`**
-    *   This is the most crucial step. It's an official action from the devkitPro team that downloads and configures the entire homebrew development toolchain on the runner.
-    *   It sets up environment variables like `DEVKITPRO` and adds the necessary tools (like `powerpc-eabi-gcc` and `pacman`) to the system's `PATH`. Without this, the runner wouldn't know what `pacman` is.
-
-3.  **`Download custom packages`**
-    *   This step uses `curl`, a standard command-line tool for transferring data.
-    *   `-L`: This flag tells `curl` to follow any HTTP redirects. GitHub release URLs often use redirects.
-    *   `-O`: This flag tells `curl` to save the downloaded file with the same name as the one on the server (e.g., `wii-curl-8.16.0-1-any.pkg.tar.gz`).
-
-4.  **`Install custom packages`**
-    *   This step uses the `pacman` command provided by the `setup-devkitpro` action.
-    *   `pacman -U <files...>`: The `-U` or `--upgrade` flag is used to install packages from local files (as opposed to `-S` which syncs from a remote repository).
-    *   `--noconfirm`: This is essential for any script or automated environment. It prevents `pacman` from pausing and waiting for a `[Y/n]` input from the user.
-    *   Using wildcards like `libwiisocket-*.pkg.tar.gz` is a good practice. It makes your workflow more resilient if you only update the download URL and forget to update the exact filename in the install command.
-
-5.  **`Verify package installation`** (Optional)
-    *   `pacman -Qi <package-name>` queries the local package database for information about the specified package. If the package is installed, it will print details like the version, description, and dependencies. If it's not installed, the command will fail, which will cause the workflow step to fail, alerting you that something went wrong.
-
-### How to Make it More Robust (Advanced)
-
-If the release version changes frequently, you can avoid hardcoding the URLs by using the GitHub CLI (`gh`) to automatically fetch the latest release assets.
-
-Here's how you could modify the download step to be more dynamic:
-
-```yaml
-      # 3. (Advanced) Download the required packages from the LATEST release
-      - name: Download custom packages dynamically
-        env:
-          # Required for the 'gh' CLI to interact with the GitHub API
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Use the GitHub CLI to download specific files from the latest release
-          # of the specified repository.
-          gh release download --repo AndrewPiroli/wii-curl --pattern "libwiisocket-*.pkg.tar.gz"
-          gh release download --repo AndrewPiroli/wii-curl --pattern "wii-mbedtls-*.pkg.tar.gz"
-          gh release download --repo AndrewPiroli/wii-curl --pattern "wii-curl-*.pkg.tar.gz"
-          
-          echo "Downloads complete. Files in this directory:"
-          ls -l
-```
-
-This version is better because:
-*   You don't need to update the URLs in your workflow every time a new version is released.
-*   The `--pattern` flag allows you to grab the correct files even if their version numbers change.
-*   The `GH_TOKEN: ${{ github.token }}` provides the GitHub CLI with the necessary authentication to query the API.
