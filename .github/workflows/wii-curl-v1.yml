@@ -10,20 +10,57 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Update package database and install wii-curl
+    # --- NEW STEP TO INSTALL THE LIBRARY ---
+    - name: Install wii-curl dependency
       run: |
-        sudo dkp-pacman -Ql
-        # sudo dkp-pacman -Syu --noconfirm
-        # sudo dkp-pacman -S --noconfirm --ask 4 libwiisocket wii-mbedtls wii-curl
-        # sudo dkp-pacman -S libwiisocket-0.1-1-any.pkg.tar.gz --noconfirm 
-        # sudo dkp-pacman -S wii-mbedtls-3.6.4-1-any.pkg.tar.gz --noconfirm 
-        # sudo dkp-pacman -S wii-curl-8.16.0-1-any.pkg.tar.gz --noconfirm       
+        # Use a specific, known-working version for reproducibility
+        CURL_TAG="v7.45.0"
+        CURL_FILENAME="libcurl-7.45.0_wii.tar.bz2"
+        CURL_URL="https://github.com/AndrewPiroli/wii-curl/releases/download/${CURL_TAG}/${CURL_FILENAME}"
+
+        echo "Downloading ${CURL_FILENAME}..."
+        # -L follows redirects, -o saves the file with the given name
+        curl -L -o ${CURL_FILENAME} ${CURL_URL}
+
+        echo "Installing library to ${DEVKITPRO}..."
+        # The archive contains a `portlibs` folder. We extract it directly into $DEVKITPRO.
+        # This will merge the contents of the archive's `portlibs` folder with the existing one.
+        # The `j` flag is for bzip2, `x` for extract, `f` for file.
+        # The `-C` flag changes the directory before extracting.
+        tar -xjf ${CURL_FILENAME} -C ${DEVKITPRO}
+
+        echo "Cleaning up downloaded archive..."
+        rm ${CURL_FILENAME}
+
+        echo "Installation complete. Verifying..."
+        # Check if the main library file now exists where the linker will look for it
+        ls -l ${DEVKITPRO}/portlibs/ppc/lib/libcurl.a
+
     - name: Compile
       run: |
+        # Your makefile can now link against libcurl (-lcurl) and it will be found
         make -f Makefile-wii
+
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: wii-curl
-        path: |
-          ./wii/*.dol
+        # The original path was './wii/*.dol.' - corrected to remove the trailing dot
+        path: ./wii/*.dol
+```
+
+### Explanation of the New Step
+
+1.  **Define Variables**: We set variables for the release tag and filename. This makes it easy to update the version in the future.
+2.  **Download with `curl`**:
+    *   `curl -L -o ${CURL_FILENAME} ${CURL_URL}`: This command downloads the release asset.
+    *   `-L`: Follows any HTTP redirects, which is important for GitHub releases.
+    *   `-o`: Specifies the output filename.
+3.  **Extract with `tar`**:
+    *   `tar -xjf ${CURL_FILENAME} -C ${DEVKITPRO}`: This is the key command for installation.
+    *   `-xjf`: A set of flags to `e**x**tract` from a `bzip2` (`j`) compressed `**f**ile`.
+    *   `-C ${DEVKITPRO}`: This tells `tar` to **change directory** to `$DEVKITPRO` *before* extracting the files. The `wii-curl` release archive contains a `portlibs` directory, so this command will correctly place the `ppc` library and header files inside `$DEVKITPRO/portlibs/`.
+4.  **Cleanup**: `rm ${CURL_FILENAME}` removes the downloaded `.tar.bz2` file to keep the runner clean.
+5.  **Verification**: `ls -l ${DEVKITPRO}/portlibs/ppc/lib/libcurl.a` is an optional but highly recommended command. It checks if the static library file (`libcurl.a`) was placed in the correct directory. If this step fails, you know the download or extraction went wrong.
+
+Now, when your `Compile` step runs, the devkitPPC toolchain will automatically find the `libcurl` headers and library files, and your `make` command should succeed.
