@@ -1,4 +1,6 @@
-CC		:= cc
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
+CC 					:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
 INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I../common
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES)
