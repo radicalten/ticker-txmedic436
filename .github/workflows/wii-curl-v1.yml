@@ -18,7 +18,7 @@ jobs:
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/wii-curl-8.16.0-1-any.pkg.tar.gz
     - name: Install custom packages
       run: |
-          dkp pacman -U --noconfirm libwiisocket-*.pkg.tar.gz wii-mbedtls-*.pkg.tar.gz wii-curl-*.pkg.tar.gz
+          dkp-pacman -U --noconfirm libwiisocket-*.pkg.tar.gz wii-mbedtls-*.pkg.tar.gz wii-curl-*.pkg.tar.gz
     - name: Compile
       run: |
         make -f Makefile-wii
