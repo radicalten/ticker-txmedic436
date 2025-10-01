@@ -12,8 +12,6 @@ jobs:
       uses: actions/checkout@v4
     - name: Update package database and install wii-curl
       run: |
-        sudo pacman-key --recv BC26F752D25B92CE272E0F44F7FD5492264BB9D0 --keyserver keyserver.ubuntu.com
-        sudo pacman-key --lsign BC26F752D25B92CE272E0F44F7FD5492264BB9D0
         sudo dkp-pacman -Syu --noconfirm
         sudo dkp-pacman -S wii-curl --noconfirm        
     - name: Compile
