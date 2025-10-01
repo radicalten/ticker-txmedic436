@@ -10,41 +10,15 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      # 3. Download the required packages from the GitHub release
-      - name: Download custom packages
-        run: |
-          echo "Downloading packages..."
+    - name: Download custom packages
+      run: |
           # Use curl with -L to follow redirects and -O to save with the original filename
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/libwiisocket-0.1-1-any.pkg.tar.gz
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/wii-mbedtls-3.6.4-1-any.pkg.tar.gz
           curl -L -O https://github.com/AndrewPiroli/wii-curl/releases/download/v8.16.0-1/wii-curl-8.16.0-1-any.pkg.tar.gz
-          
-          echo "Downloads complete. Files in this directory:"
-          ls -l
-
-      # 4. Install the downloaded packages using pacman
-      - name: Install custom packages
-        run: |
-          # Use pacman to install the local .pkg.tar.gz files.
-          # -U: Upgrade or install packages from local files.
-          # --noconfirm: Skips all "Are you sure?" prompts, which is essential for automation.
-          # The wildcard (*) makes it robust if the version numbers in the filenames change slightly.
-          pacman -U --noconfirm libwiisocket-*.pkg.tar.gz wii-mbedtls-*.pkg.tar.gz wii-curl-*.pkg.tar.gz
-
-      # 5. (Optional but Recommended) Verify the installation
-      - name: Verify package installation
-        run: |
-          # The `pacman -Qi` command queries information about an installed package.
-          # If the command succeeds, the package was installed correctly.
-          echo "Verifying wii-curl..."
-          pacman -Qi wii-curl
-          
-          echo "Verifying wii-mbedtls..."
-          pacman -Qi wii-mbedtls
-
-          echo "Verifying libwiisocket..."
-          pacman -Qi libwiisocket
-
+    - name: Install custom packages
+      run: |
+          dkp pacman -U --noconfirm libwiisocket-*.pkg.tar.gz wii-mbedtls-*.pkg.tar.gz wii-curl-*.pkg.tar.gz
     - name: Compile
       run: |
         make -f Makefile-wii
