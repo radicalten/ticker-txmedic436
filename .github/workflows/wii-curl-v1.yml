@@ -21,7 +21,9 @@ jobs:
           tar -xf wii-mbedtls-3.6.4-1-any.pkg.tar.gz
     - name: Install custom packages
       run: |
+          for pkg in *.pkg.tar.gz; do
           sudo dkp-pacman -U --noconfirm "$pkg"
+          done
     - name: Compile
       run: |
         make -f Makefile-wii
