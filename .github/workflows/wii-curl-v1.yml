@@ -22,7 +22,7 @@ jobs:
     - name: Install custom packages
       run: |
           for pkg in *.pkg.tar.gz; do
-          sudo dkp-pacman -U --noconfirm "$pkg"
+            sudo dkp-pacman -U --noconfirm "$pkg"
           done
     - name: Compile
       run: |
