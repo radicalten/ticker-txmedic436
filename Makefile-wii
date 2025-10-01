@@ -1,5 +1,7 @@
 CC		:= cc
-CFLAGS 	:= -O3 -flto 
+INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I../common
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES)
 LDFLAGS := $(CFLAGS) \
 $(PORTLIBS) \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -logc -lm
