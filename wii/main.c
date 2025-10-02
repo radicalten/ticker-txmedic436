@@ -1,11 +1,11 @@
-#include <wiisocket.h> // added from wii-curl-repo
+//#include <wiisocket.h> // added from wii-curl-repo
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <curl/curl.h>
-#include <mbedtls/sha1.h> // added from wii-curl-repo
+//#include <mbedtls/sha1.h> // added from wii-curl-repo
 #include "cJSON.h"
 
 // --- Configuration ---
