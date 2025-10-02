@@ -13,7 +13,10 @@ LDFLAGS += $(CFLAGS) \
 -L/opt/devkitpro/portlibs/ppc/lib \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -logc -lm
 TARGET  := myapp
-SRCS    := $(wildcard wii/*.c)
-OBJS    := $(patsubst %.c,%.o,$(SRCS))
-all: $(OBJS)
-	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+SRCDIR 	:= wii
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+all: $(OBJECTS)
+	$(CC) $(OBJECTS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
