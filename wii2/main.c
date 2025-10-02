@@ -10,7 +10,6 @@
 #include <ogc/consol.h>
 #include <ogc/system.h>
 #include <ogc/lwp.h>
-#include <ogc/net/network.h>
 #include <wiiuse/wpad.h>
 
 // --- Configuration ---
