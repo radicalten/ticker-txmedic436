@@ -8,6 +8,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
+-Wl,-Map,$(notdir $@).map \
 -L/opt/devkitpro/portlibs/wii/lib \
 -L/opt/devkitpro/portlibs/ppc/lib \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -logc -lm
