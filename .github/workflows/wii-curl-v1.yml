@@ -27,4 +27,4 @@ jobs:
       with:
         name: wii-curl
         path: |
-          ./wii/*.dol
+          *.dol
