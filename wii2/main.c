@@ -281,46 +281,41 @@ int main(int argc, char** argv) {
     atexit(cleanup_on_exit);
 
     // Wii video & network init
-    #if defined(GEKKO) && defined(HW_RVL)
+#if defined(GEKKO) && defined(HW_RVL)
     wii_video_init();
-        while (1) {
-            WPAD_ScanPads();
-            if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) return 0;
-            VIDEO_WaitVSync();
-        }
+    // Possibly init FAT/NET here depending on your build.
+#endif
+
+curl_global_init(CURL_GLOBAL_ALL);
+
+setup_dashboard_ui();
+
+while (1) {
+    #if defined(GEKKO) && defined(HW_RVL)
+    WPAD_ScanPads();
+    if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) break;
     #endif
 
-    curl_global_init(CURL_GLOBAL_ALL);
+    update_timestamp();
 
-    setup_dashboard_ui();
+    char url[256];
+    for (int i = 0; i < num_tickers; i++) {
+        int current_row = DATA_START_ROW + i;
+        snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
 
-    while (1) {
-        // Wii: allow exit with HOME
-        #if defined(GEKKO) && defined(HW_RVL)
-        WPAD_ScanPads();
-        if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) break;
-        #endif
-
-        update_timestamp();
-
-        char url[256];
-        for (int i = 0; i < num_tickers; i++) {
-            int current_row = DATA_START_ROW + i;
-            snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
-
-            char *json_response = fetch_url(url);
-            if (json_response) {
-                parse_and_print_stock_data(json_response, current_row);
-                free(json_response);
-            } else {
-                print_error_on_line(tickers[i], "Failed to fetch data", current_row);
-            }
+        char *json_response = fetch_url(url);
+        if (json_response) {
+            parse_and_print_stock_data(json_response, current_row);
+            free(json_response);
+        } else {
+            print_error_on_line(tickers[i], "Failed to fetch data", current_row);
         }
-
-        run_countdown();
     }
 
-    curl_global_cleanup();
-    show_cursor();
+    run_countdown();
+}
+
+curl_global_cleanup();
+show_cursor();
     return 0;
 }
