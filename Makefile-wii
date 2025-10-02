@@ -5,9 +5,9 @@ include $(DEVKITPPC)/wii_rules
 CC 					:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
 MACHDEP := -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math -funroll-loops -fauto-inc-dec -finline-functions
 INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include
-CFLAGS 	:= -O3 -flto \
+CFLAGS 	+= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
-LDFLAGS := $(CFLAGS) \
+LDFLAGS += $(CFLAGS) \
 -Wl,-Map,$(notdir $@).map \
 -L/opt/devkitpro/portlibs/wii/lib \
 -L/opt/devkitpro/portlibs/ppc/lib \
