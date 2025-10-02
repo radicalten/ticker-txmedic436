@@ -1,0 +1,34 @@
+name: Libogc2-FixGB-min-GL20cpp
+on:
+  push:
+    branches:
+    - master
+jobs:
+  build-wii:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies extremscorner
+      run: |
+        sudo dkp-pacman-key --recv-keys C8A2759C315CFBC3429CC2E422B803BA8AA3D7CE --keyserver keyserver.ubuntu.com
+        sudo dkp-pacman-key --lsign-key C8A2759C315CFBC3429CC2E422B803BA8AA3D7CE
+        sudo sed -i '/^\[dkp-libs\]$/,$d' /opt/devkitpro/pacman/etc/pacman.conf
+        sudo echo -e '[extremscorner-devkitpro]\nServer = https://packages.extremscorner.org/devkitpro/linux/$arch' >> /opt/devkitpro/pacman/etc/pacman.conf
+        sudo dkp-pacman -Sy
+        sudo dkp-pacman -S --noconfirm --ask 4 gamecube-tools-git libogc2-git libogc2-libdvm libogc2-opengx libogc2-glu libogc2-sdl2 ppc-glm ppc-libpng
+        dkp-pacman -Ql  
+        # libogc2-dkp-toolchain-vars freeimage-svn 
+        
+    - name: Compile
+      run: |
+        cd wii-examples
+        make -f Makefile-fixGBv2-min-GL20cppv991.ogc2
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: wii-directory-ogc2-min-GL20
+        path: |
+          ./wii-examples/*.dol
