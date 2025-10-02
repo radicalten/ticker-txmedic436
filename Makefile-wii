@@ -2,7 +2,7 @@ include $(DEVKITPPC)/wii_rules
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
 CC 					:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
-INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I../common
+INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES)
 LDFLAGS := $(CFLAGS) \
