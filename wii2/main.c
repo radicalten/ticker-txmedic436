@@ -284,15 +284,11 @@ int main(int argc, char** argv) {
     // Wii video & network init
     #if defined(GEKKO) && defined(HW_RVL)
     wii_video_init();
-    if (wii_network_init() != 0) {
-        printf("Network init failed (DHCP). Check Wi-Fi, try again.\n");
-        printf("Press HOME to exit.\n");
         while (1) {
             WPAD_ScanPads();
             if (WPAD_ButtonsDown(0) & WPAD_BUTTON_HOME) return 0;
             VIDEO_WaitVSync();
         }
-    }
     #endif
 
     curl_global_init(CURL_GLOBAL_ALL);
