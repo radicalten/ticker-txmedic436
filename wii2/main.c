@@ -12,7 +12,7 @@
 #if defined(GEKKO) && defined(HW_RVL)
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-#include <network.h>
+//#include <network.h>
 
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
