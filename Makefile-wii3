@@ -32,6 +32,11 @@ $(TARGET).elf: $(OBJECTS)
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# Embed pem files
+%.pem.o %_pem.h: %.pem
+	@echo $(notdir $<)
+	$(bin2o)
+
 clean:
 	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
 
