@@ -1,0 +1,98 @@
+.SUFFIXES:
+
+include /opt/devkitpro/libogc2/wii_rules
+
+export DEVKITPRO:= /opt/devkitpro
+export DEVKITPPC:= $(DEVKITPRO)/devkitPPC
+#CC 		:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
+CXX 		:= $(DEVKITPPC)/bin/powerpc-eabi-g++
+AR 		:= $(DEVKITPPC)/bin/powerpc-eabi-ar
+RANLIB 		:= $(DEVKITPPC)/bin/powerpc-eabi-ranlib
+#BIN2O 		:= $(DEVKITPPC)/bin/powerpc-eabi-objcopy
+#DUMP 		:= $(DEVKITPPC)/bin/powerpc-eabi-objdump
+#MACHDEP 	:= -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math -funroll-loops -fauto-inc-dec -finline-functions
+
+DEBUG   	:= 1
+ifeq ($(DEBUG),1)
+FLAGS 		+= -O0 -g
+else
+FLAGS   	+= -O3
+endif
+
+export TARGET 	:= $(notdir $(CURDIR))
+BUILD 		:= build
+SRCDIR		:= opengl20cpp common
+DATA 		:= common
+C_SOURCES 	:= $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.c)))
+CPP_SOURCES 	:= $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.cpp)))
+sFILES		:= $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.s)))
+SFILES		:= $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.S)))
+BINFILES 	:= $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.png)))
+export INCLUDES := -I$(DEVKITPRO)/libogc2/include -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I../common 
+
+BIN_OBJECTS 	:= $(addsuffix .o,$(BINFILES))
+C_OBJECTS 	:= $(C_SOURCES:.c=.o)
+CPP_OBJECTS 	:= $(CPP_SOURCES:.cpp=.o)
+S_OBJECTS 	:= $(sFILES:.s=.o) 
+S_OBJECTS	:= $(SFILES:.S=.o)
+export OBJECTS 	:= $(BIN_OBJECTS) $(CPP_OBJECTS) $(C_OBJECTS) $(S_OBJECTS)
+
+export VPATH	:= $(foreach dir,$(SRCDIR),$(CURDIR)/$(dir)) \
+				$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+export LD	:= $(CXX)
+TMPDIR 		:= _
+ELF2DOL     	:= elf2dol
+BIN2O 		:= bin2o
+
+#mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
+#mkfile_dir := $(dir $(mkfile_path))
+    
+
+FLAGS    	+= -Wall -Wextra -ffast-math -fpermissive
+# FLAGS    	+= -Werror=implicit-function-declaration
+DEFINES  	+=
+
+CFLAGS 		+= $(FLAGS) $(DEFINES) $(INCLUDES) 
+CXXFLAGS	:= $(CFLAGS)
+export LDFLAGS 	+= $(CFLAGS) $(MACHDEP) \
+-Wl,-Map,$(notdir $@).map \
+-L$(DEVKITPRO)/libogc2/lib/wii \
+-L/opt/devkitpro/portlibs/wii/lib \
+-L/opt/devkitpro/portlibs/ppc/lib \
+-L/opt/devkitpro/devkitPPC/lib \
+-L. \
+-L$(TMPDIR) \
+-L../buildtools \
+-l:textures.a -lSDL2main -lSDL2 -lGLU -lglm -lopengx -lpng -lz -laesnd -lwiikeyboard -lfat -lwiiuse -lbte -logc -lm
+
+all: $(TARGET).dol 
+$(TARGET).dol: $(TARGET).elf
+
+	$(ELF2DOL) $< $@
+
+$(TARGET).elf: $(OBJECTS) textures.a
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
+%.o: %.cpp
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+%.o: %.c
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+%.png.o: %.png
+	mkdir -p $(TMPDIR) 
+	ln -sf $(abspath $<) $(TMPDIR)/$(notdir $<)
+	$(DEVKITPPC)/bin/powerpc-eabi-objcopy -I binary -O elf32-powerpc -B powerpc $(TMPDIR)/$(notdir $<) $@
+
+textures.a: $(BIN_OBJECTS) $(C_OBJECTS)
+	$(AR) rcs $@ $^ 
+	$(RANLIB) $@
+	# @echo "Makefile directory: $(mkfile_dir)"
+	# @echo "Object file paths: $(OBJECTS)"
+	# $(DEVKITPPC)/bin/powerpc-eabi-objdump -t $(OBJECTS)
+
+clean:
+	@rm -fr $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS) textures.a
+
+.PHONY: test clean
+
