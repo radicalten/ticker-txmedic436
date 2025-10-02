@@ -18,5 +18,19 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
-all: $(OBJECTS)
-	$(CC) $(OBJECTS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+ELF2DOL     := elf2dol
+
+all: $(TARGET).dol
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+$(TARGET).dol: $(TARGET).elf
+	$(ELF2DOL) $< $@
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+
+.PHONY: clean test
