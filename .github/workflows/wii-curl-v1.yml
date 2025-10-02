@@ -18,6 +18,7 @@ jobs:
     - name: Install custom packages
       run: |
             sudo dkp-pacman -U --noconfirm wii-curl-8.16.0-1-any.pkg.tar.gz libwiisocket-0.1-1-any.pkg.tar.gz wii-mbedtls-3.6.4-1-any.pkg.tar.gz
+            sudo dkp-pacman -Ql 
     - name: Compile
       run: |
         make -f Makefile-wii
