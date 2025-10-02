@@ -1,4 +1,4 @@
-name: Wii-curl-v1
+name: Wii-curl-v2
 on:
   push:
     branches:
