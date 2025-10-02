@@ -1,3 +1,4 @@
+#include <wiisocket.h> // added from wii-curl-repo
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
