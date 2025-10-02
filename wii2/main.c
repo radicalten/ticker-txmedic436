@@ -12,6 +12,7 @@
 #if defined(GEKKO) && defined(HW_RVL)
 #include <gccore.h>
 #include <wiiuse/wpad.h>
+#include <fat.h>
 //#include <network.h>
 
 static void *xfb = NULL;
