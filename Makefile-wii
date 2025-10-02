@@ -12,7 +12,7 @@ LDFLAGS += $(CFLAGS) \
 -L/opt/devkitpro/portlibs/wii/lib \
 -L/opt/devkitpro/portlibs/ppc/lib \
 -L/opt/devkitpro/libogc/lib \
--lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -logc -lm
+-l:libwiisocket.a -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -logc -lm
 TARGET  := myapp
 SRCDIR 	:= wii
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
