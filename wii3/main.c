@@ -12,6 +12,8 @@
 #if defined(GEKKO) && defined(HW_RVL)
 #include <gccore.h>
 #include <wiiuse/wpad.h>
+#include <wiisocket.h>
+#include <mbedtls/sha1.h>
 
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
