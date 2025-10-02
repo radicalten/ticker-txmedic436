@@ -5,6 +5,7 @@
 #include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <curl/curl.h>
+#include <mbedtls/sha1.h> // added from wii-curl-repo
 #include "cJSON.h"
 
 // --- Configuration ---
