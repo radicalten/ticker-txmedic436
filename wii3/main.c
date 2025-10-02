@@ -293,6 +293,14 @@ int main(int argc, char** argv) {
 		printf("attempt: %d wiisocket_init: %d\n", attempts, socket_init_success);
 		if (socket_init_success == 0)
 			break;
+
+		u32 ip = 0;
+	for (int attempts = 0; attempts < 3; attempts++) {
+		ip = gethostid();
+		printf("attempt: %d gethostid: %x\n", attempts, ip);
+		if (ip)
+			break;
+	}
 	}
 #endif
 
