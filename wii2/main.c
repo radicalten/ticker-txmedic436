@@ -36,12 +36,6 @@ static void wii_video_init(void) {
     // Clear and home
     printf("\x1b[2J\x1b[H");
 }
-
-static int wii_network_init(void) {
-    // DHCP. if_config returns >=0 on success
-    s32 ret = if_config(NULL, NULL, NULL, TRUE);
-    return (ret >= 0) ? 0 : -1;
-}
 #endif
 
 // --- Configuration ---
