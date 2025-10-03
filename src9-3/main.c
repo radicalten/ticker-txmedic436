@@ -9,7 +9,8 @@
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 15
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-#define API_URL_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=6mo&interval=1d&includePrePost=false"
+// Modified URL to fetch 3 months of daily historical data for MACD calculation
+#define API_URL_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=3mo&interval=1d"
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // Add or remove stock tickers here
@@ -18,10 +19,10 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
 #define KNRM  "\x1B[0m"  // Normal
-#define KRED  "\x1B[31m" // Red
-#define KGRN  "\x1B[32m" // Green
-#define KYEL  "\x1B[33m" // Yellow
-#define KBLU  "\x1B[34m" // Blue (Added for price)
+#define KRED  "\x1B[31m"  // Red
+#define KGRN  "\x1B[32m"  // Green
+#define KYEL  "\x1B[33m"  // Yellow
+#define KBLU  "\x1B[34m"  // Blue (Added for price)
 
 // --- Struct to hold HTTP response data ---
 typedef struct {
@@ -40,10 +41,9 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row);
 void hide_cursor();
 void show_cursor();
 void cleanup_on_exit();
+void calculate_ema_series(const double* data, int data_size, int period, double* ema_out);
+void calculate_macd(const double* close_prices, int num_prices, double* out_last_macd, double* out_last_signal);
 
-// New helpers for MACD
-int extract_close_prices(const cJSON *result, double **out_closes, int *out_len);
-int compute_macd_and_signal(const double *closes, int len, double *macd_out, double *signal_out);
 
 // --- Main Application ---
 int main(void) {
@@ -60,17 +60,17 @@ int main(void) {
         // Update the timestamp at the top of the dashboard
         update_timestamp();
 
-        char url[512];
+        char url[256];
         for (int i = 0; i < num_tickers; i++) {
             // Calculate the correct screen row for the current ticker
             int current_row = DATA_START_ROW + i;
-
+            
             // Construct the URL for the current ticker
             snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
-
+            
             // Fetch data from the URL
             char *json_response = fetch_url(url);
-
+            
             if (json_response) {
                 parse_and_print_stock_data(json_response, current_row);
                 free(json_response); // Free the memory allocated by fetch_url
@@ -78,7 +78,7 @@ int main(void) {
                 print_error_on_line(tickers[i], "Failed to fetch data", current_row);
             }
         }
-
+        
         // Run the countdown timer at the bottom of the screen
         run_countdown();
     }
@@ -88,6 +88,95 @@ int main(void) {
     show_cursor(); // Restore cursor
     return 0;
 }
+
+// --- MACD Calculation Functions ---
+
+/**
+ * @brief Calculates a series of Exponential Moving Averages (EMA).
+ * @param data Input data array (e.g., closing prices).
+ * @param data_size The number of elements in the data array.
+ * @param period The period for the EMA (e.g., 12, 26).
+ * @param ema_out Output array to store the calculated EMA values. Must be pre-allocated.
+ */
+void calculate_ema_series(const double* data, int data_size, int period, double* ema_out) {
+    if (data_size < period) return; // Not enough data to calculate
+
+    double multiplier = 2.0 / (period + 1.0);
+    double sma = 0.0;
+
+    // 1. Calculate the initial SMA for the first EMA value
+    for (int i = 0; i < period; i++) {
+        sma += data[i];
+    }
+    ema_out[period - 1] = sma / period;
+
+    // 2. Calculate the rest of the EMAs
+    for (int i = period; i < data_size; i++) {
+        ema_out[i] = (data[i] - ema_out[i - 1]) * multiplier + ema_out[i - 1];
+    }
+}
+
+/**
+ * @brief Calculates the final MACD and Signal line values from a series of closing prices.
+ * @param close_prices Array of historical closing prices.
+ * @param num_prices The number of prices in the array.
+ * @param out_last_macd Pointer to store the last calculated MACD value.
+ * @param out_last_signal Pointer to store the last calculated Signal line value.
+ */
+void calculate_macd(const double* close_prices, int num_prices, double* out_last_macd, double* out_last_signal) {
+    const int period_fast = 12;
+    const int period_slow = 26;
+    const int period_signal = 9;
+
+    // Check if there's enough data for a meaningful calculation
+    if (num_prices < period_slow + period_signal) {
+        *out_last_macd = 0.0;
+        *out_last_signal = 0.0;
+        return;
+    }
+
+    // Allocate memory for intermediate calculations, initialized to zero
+    double* ema_fast = (double*)calloc(num_prices, sizeof(double));
+    double* ema_slow = (double*)calloc(num_prices, sizeof(double));
+    double* macd_line = (double*)calloc(num_prices, sizeof(double));
+    if (!ema_fast || !ema_slow || !macd_line) {
+        // Memory allocation failed
+        free(ema_fast); free(ema_slow); free(macd_line);
+        *out_last_macd = 0.0; *out_last_signal = 0.0;
+        return;
+    }
+    
+    // 1. Calculate the fast (12) and slow (26) EMAs of the closing price
+    calculate_ema_series(close_prices, num_prices, period_fast, ema_fast);
+    calculate_ema_series(close_prices, num_prices, period_slow, ema_slow);
+    
+    // 2. Calculate the MACD line (fast EMA - slow EMA)
+    int macd_count = 0;
+    for (int i = period_slow - 1; i < num_prices; i++) {
+        macd_line[macd_count++] = ema_fast[i] - ema_slow[i];
+    }
+
+    // 3. Calculate the Signal line (9-period EMA of the MACD line)
+    double* signal_line = (double*)calloc(macd_count, sizeof(double));
+    if (!signal_line) {
+        // Memory allocation failed
+        free(ema_fast); free(ema_slow); free(macd_line);
+        *out_last_macd = 0.0; *out_last_signal = 0.0;
+        return;
+    }
+    calculate_ema_series(macd_line, macd_count, period_signal, signal_line);
+
+    // 4. Store the last valid values
+    *out_last_macd = macd_line[macd_count - 1];
+    *out_last_signal = signal_line[macd_count - 1];
+
+    // Clean up allocated memory
+    free(ema_fast);
+    free(ema_slow);
+    free(macd_line);
+    free(signal_line);
+}
+
 
 // --- Helper Functions ---
 
@@ -145,7 +234,7 @@ char* fetch_url(const char *url) {
         curl_easy_cleanup(curl_handle);
         return chunk.memory;
     }
-
+    
     free(chunk.memory);
     return NULL;
 }
@@ -162,7 +251,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         return;
     }
 
-    // Navigate the JSON: root -> chart -> result[0] -> meta
+    // Navigate the JSON: root -> chart -> result[0]
     cJSON *chart = cJSON_GetObjectItemCaseSensitive(root, "chart");
     cJSON *result_array = cJSON_GetObjectItemCaseSensitive(chart, "result");
     if (!cJSON_IsArray(result_array) || cJSON_GetArraySize(result_array) == 0) {
@@ -178,169 +267,72 @@ void parse_and_print_stock_data(const char *json_string, int row) {
 
     cJSON *result = cJSON_GetArrayItem(result_array, 0);
     cJSON *meta = cJSON_GetObjectItemCaseSensitive(result, "meta");
-
-    // Extract values
+    
+    // --- Extract current market data ---
     const char *symbol = cJSON_GetObjectItemCaseSensitive(meta, "symbol")->valuestring;
     double price = cJSON_GetObjectItemCaseSensitive(meta, "regularMarketPrice")->valuedouble;
     double prev_close = cJSON_GetObjectItemCaseSensitive(meta, "chartPreviousClose")->valuedouble;
-
+    
     double change = price - prev_close;
     double percent_change = (prev_close == 0) ? 0 : (change / prev_close) * 100.0;
-
-    // Compute MACD and Signal from historical closes
-    double *closes = NULL;
-    int closes_len = 0;
-    double macd_val = 0.0, signal_val = 0.0;
-    int have_closes = extract_close_prices(result, &closes, &closes_len);
-    int have_macd = 0;
-    if (have_closes) {
-        have_macd = compute_macd_and_signal(closes, closes_len, &macd_val, &signal_val);
-        free(closes);
-    }
-
-    // Format MACD/Signal as strings (or N/A)
-    char macd_str[32], signal_str[32];
-    if (have_macd) {
-        snprintf(macd_str, sizeof(macd_str), "%.2f", macd_val);
-        snprintf(signal_str, sizeof(signal_str), "%.2f", signal_val);
-    } else {
-        snprintf(macd_str, sizeof(macd_str), "N/A");
-        snprintf(signal_str, sizeof(signal_str), "N/A");
-    }
-
-    // Colors
-    const char* change_color = (change >= 0) ? KGRN : KRED;
+    
+    const char* color = (change >= 0) ? KGRN : KRED;
     char sign = (change >= 0) ? '+' : '-';
-    const char* macd_color = have_macd ? ((macd_val >= 0) ? KGRN : KRED) : KNRM;
-    const char* signal_color = KYEL;
+
+    // --- Extract historical data and calculate MACD ---
+    double macd_line = 0.0, signal_line = 0.0;
+    double std_macd = 0.0, std_signal = 0.0;
+
+    cJSON *indicators = cJSON_GetObjectItemCaseSensitive(result, "indicators");
+    cJSON *quote_array = cJSON_GetObjectItemCaseSensitive(indicators, "quote");
+    if(cJSON_IsArray(quote_array) && cJSON_GetArraySize(quote_array) > 0) {
+        cJSON *quote = cJSON_GetArrayItem(quote_array, 0);
+        cJSON *close_prices_json = cJSON_GetObjectItemCaseSensitive(quote, "close");
+
+        if (cJSON_IsArray(close_prices_json)) {
+            int num_prices_raw = cJSON_GetArraySize(close_prices_json);
+            double* close_prices = malloc(num_prices_raw * sizeof(double));
+            int num_prices_valid = 0;
+
+            // Extract valid (non-null) close prices into a double array
+            for (int i = 0; i < num_prices_raw; i++) {
+                cJSON *price_item = cJSON_GetArrayItem(close_prices_json, i);
+                if (cJSON_IsNumber(price_item)) {
+                    close_prices[num_prices_valid++] = price_item->valuedouble;
+                }
+            }
+            
+            // Calculate MACD with the valid historical prices
+            if (num_prices_valid > 0) {
+                 calculate_macd(close_prices, num_prices_valid, &macd_line, &signal_line);
+
+                 // Standardize MACD and Signal as a percentage of the current price
+                 if (price > 0.0001) { // Avoid division by zero
+                     std_macd = (macd_line / price) * 100.0;
+                     std_signal = (signal_line / price) * 100.0;
+                 }
+            }
+            free(close_prices);
+        }
+    }
+
+    // Determine color for MACD histogram (MACD - Signal)
+    const char* macd_color = (std_macd >= std_signal) ? KGRN : KRED;
 
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
 
-    // Print the formatted data row.
+    // Print the formatted data row, now with MACD columns.
     // ANSI: \033[K clears from the cursor to the end of the line.
-    printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%10s%s | %s%10s%s\033[K\n",
+    printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%+8.3f%%%s | %s%+8.3f%%%s \033[K\n",
            symbol,
            KBLU, price, KNRM,
-           change_color, sign, (change >= 0 ? change : -change), KNRM,
-           change_color, sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
-           macd_color, macd_str, KNRM,
-           signal_color, signal_str, KNRM);
+           color, sign, (change >= 0 ? change : -change), KNRM,
+           color, sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
+           macd_color, std_macd, KNRM,   // Standardized MACD
+           KYEL, std_signal, KNRM);     // Standardized Signal
 
     cJSON_Delete(root);
-}
-
-/**
- * @brief Extracts close prices array from result JSON into a C array.
- *        Skips nulls; caller must free(*out_closes) on success.
- * @return 1 on success (with at least 1 value), 0 otherwise.
- */
-int extract_close_prices(const cJSON *result, double **out_closes, int *out_len) {
-    if (!result || !out_closes || !out_len) return 0;
-
-    cJSON *indicators = cJSON_GetObjectItemCaseSensitive(result, "indicators");
-    if (!indicators) return 0;
-
-    cJSON *quote_array = cJSON_GetObjectItemCaseSensitive(indicators, "quote");
-    if (!cJSON_IsArray(quote_array) || cJSON_GetArraySize(quote_array) == 0) return 0;
-
-    cJSON *quote0 = cJSON_GetArrayItem(quote_array, 0);
-    if (!quote0) return 0;
-
-    cJSON *close_array = cJSON_GetObjectItemCaseSensitive(quote0, "close");
-    if (!cJSON_IsArray(close_array)) return 0;
-
-    int n = cJSON_GetArraySize(close_array);
-    if (n <= 0) return 0;
-
-    double *closes = (double *)malloc(sizeof(double) * n);
-    if (!closes) return 0;
-
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        cJSON *cv = cJSON_GetArrayItem(close_array, i);
-        if (cJSON_IsNumber(cv)) {
-            closes[count++] = cv->valuedouble;
-        }
-    }
-
-    if (count == 0) {
-        free(closes);
-        return 0;
-    }
-
-    *out_closes = closes;
-    *out_len = count;
-    return 1;
-}
-
-/**
- * @brief Computes latest MACD and Signal.
- *        MACD = EMA(12) - EMA(26), Signal = EMA(9) of MACD.
- *        Uses SMA as initial EMA seed.
- * @return 1 if computed, 0 if insufficient data.
- */
-int compute_macd_and_signal(const double *closes, int len, double *macd_out, double *signal_out) {
-    const int FAST = 12;
-    const int SLOW = 26;
-    const int SIG = 9;
-
-    if (!closes || len <= 0 || !macd_out || !signal_out) return 0;
-
-    // Need at least SLOW + SIG - 1 prices to compute final signal
-    if (len < (SLOW + SIG - 1)) return 0;
-
-    double k_fast = 2.0 / (FAST + 1.0);
-    double k_slow = 2.0 / (SLOW + 1.0);
-
-    // Initial EMA seeds (SMAs)
-    double ema_fast = 0.0;
-    for (int i = 0; i < FAST; i++) ema_fast += closes[i];
-    ema_fast /= FAST;
-
-    // Advance EMA fast to index SLOW-1
-    for (int i = FAST; i <= SLOW - 1; i++) {
-        ema_fast = (closes[i] - ema_fast) * k_fast + ema_fast;
-    }
-
-    double ema_slow = 0.0;
-    for (int i = 0; i < SLOW; i++) ema_slow += closes[i];
-    ema_slow /= SLOW;
-
-    // Build MACD series from index SLOW-1 to end
-    int macd_len = len - (SLOW - 1);
-    double *macd_series = (double *)malloc(sizeof(double) * macd_len);
-    if (!macd_series) return 0;
-
-    int m = 0;
-    macd_series[m++] = ema_fast - ema_slow;
-
-    for (int i = SLOW; i < len; i++) {
-        ema_fast = (closes[i] - ema_fast) * k_fast + ema_fast;
-        ema_slow = (closes[i] - ema_slow) * k_slow + ema_slow;
-        macd_series[m++] = ema_fast - ema_slow;
-    }
-
-    // Compute Signal (EMA of MACD)
-    if (macd_len < SIG) {
-        free(macd_series);
-        return 0;
-    }
-
-    double signal = 0.0;
-    for (int i = 0; i < SIG; i++) signal += macd_series[i];
-    signal /= SIG;
-
-    double k_sig = 2.0 / (SIG + 1.0);
-    for (int i = SIG; i < macd_len; i++) {
-        signal = (macd_series[i] - signal) * k_sig + signal;
-    }
-
-    *macd_out = macd_series[macd_len - 1];
-    *signal_out = signal;
-
-    free(macd_series);
-    return 1;
 }
 
 /**
@@ -353,7 +345,7 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
     // Print formatted error and clear rest of the line
-    printf("%-10s | %s%-40s%s\033[K\n", ticker, KRED, error_msg, KNRM);
+    printf("%-10s | %s%-60s%s\033[K\n", ticker, KRED, error_msg, KNRM);
 }
 
 
@@ -371,11 +363,10 @@ void setup_dashboard_ui() {
     printf("\n"); // Leave a blank line for the dynamic timestamp
     printf("\n");
 
-    // Print static headers
-    printf("%-10s | %11s | %11s | %13s | %11s | %11s\n",
-           "Ticker", "Price", "Change", "% Change", "MACD", "Signal");
-    printf("----------------------------------------------------------------------------------------------------\n");
-
+    // Print static headers with new MACD columns
+    printf("%-10s | %11s | %11s | %13s | %10s | %10s\n", "Ticker", "Price", "Change", "% Change", "MACD %", "Signal %");
+    printf("------------------------------------------------------------------------------------------\n");
+    
     // Print initial placeholder text for each ticker
     for (int i = 0; i < num_tickers; i++) {
         printf("%-10s | %sFetching...%s\n", tickers[i], KYEL, KNRM);
