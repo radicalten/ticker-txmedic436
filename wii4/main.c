@@ -13,7 +13,7 @@
 #include <gccore.h>
 #include <wiiuse/wpad.h>
 #include <wiisocket.h>
-#include <mbedtls/sha1.h>
+//#include <mbedtls/sha1.h>
 //#include "cacert_pem.h"
 
 static void *xfb = NULL;
