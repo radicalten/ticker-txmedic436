@@ -4,12 +4,14 @@
 #include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <curl/curl.h>
+#include <math.h>   // For NAN
 #include "cJSON.h"
 
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 15
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-#define API_URL_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s"
+// Modified URL to fetch enough historical data for MACD calculation (approx. 60-65 daily data points)
+#define API_URL_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=3mo&interval=1d"
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // Add or remove stock tickers here
@@ -32,6 +34,7 @@ typedef struct {
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
+void calculate_ema_series(const double* data, int data_size, int period, double* ema_output);
 void parse_and_print_stock_data(const char *json_string, int row);
 void setup_dashboard_ui();
 void update_timestamp();
@@ -147,7 +150,36 @@ char* fetch_url(const char *url) {
 }
 
 /**
- * @brief Parses JSON and prints updated stock data on a specific row.
+ * @brief Calculates a series of Exponential Moving Averages (EMA).
+ * @param data Input array of prices.
+ * @param data_size The size of the data array.
+ * @param period The EMA period (e.g., 12, 26).
+ * @param ema_output The output array to store the calculated EMA values.
+ */
+void calculate_ema_series(const double* data, int data_size, int period, double* ema_output) {
+    if (data_size < period) {
+        for (int i = 0; i < data_size; i++) ema_output[i] = NAN;
+        return;
+    }
+
+    double multiplier = 2.0 / (period + 1.0);
+    double sum = 0.0;
+
+    // Calculate initial SMA for the first period
+    for (int i = 0; i < period; i++) {
+        sum += data[i];
+        if (i < period - 1) ema_output[i] = NAN; // Not enough data for EMA yet
+    }
+    ema_output[period - 1] = sum / period;
+
+    // Calculate the rest of the EMAs
+    for (int i = period; i < data_size; i++) {
+        ema_output[i] = (data[i] - ema_output[i-1]) * multiplier + ema_output[i-1];
+    }
+}
+
+/**
+ * @brief Parses JSON, calculates MACD, and prints updated stock data on a specific row.
  * @param json_string The JSON data received from the API.
  * @param row The terminal row to print the output on.
  */
@@ -158,7 +190,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         return;
     }
 
-    // Navigate the JSON: root -> chart -> result[0] -> meta
+    // Navigate the JSON: root -> chart -> result[0]
     cJSON *chart = cJSON_GetObjectItemCaseSensitive(root, "chart");
     cJSON *result_array = cJSON_GetObjectItemCaseSensitive(chart, "result");
     if (!cJSON_IsArray(result_array) || cJSON_GetArraySize(result_array) == 0) {
@@ -171,48 +203,105 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         cJSON_Delete(root);
         return;
     }
-
     cJSON *result = cJSON_GetArrayItem(result_array, 0);
     cJSON *meta = cJSON_GetObjectItemCaseSensitive(result, "meta");
     
-    // Extract values
+    // --- Extract basic price data ---
     const char *symbol = cJSON_GetObjectItemCaseSensitive(meta, "symbol")->valuestring;
     double price = cJSON_GetObjectItemCaseSensitive(meta, "regularMarketPrice")->valuedouble;
     double prev_close = cJSON_GetObjectItemCaseSensitive(meta, "chartPreviousClose")->valuedouble;
-    
     double change = price - prev_close;
     double percent_change = (prev_close == 0) ? 0 : (change / prev_close) * 100.0;
+    const char* price_color = (change >= 0) ? KGRN : KRED;
+
+    // --- MACD Calculation ---
+    double std_macd_percent = NAN; // Default to NAN
+    cJSON *indicators = cJSON_GetObjectItemCaseSensitive(result, "indicators");
+    cJSON *quote_array = cJSON_GetObjectItemCaseSensitive(indicators, "quote");
+    if (cJSON_IsArray(quote_array) && cJSON_GetArraySize(quote_array) > 0) {
+        cJSON *quote = cJSON_GetArrayItem(quote_array, 0);
+        cJSON *close_prices_json = cJSON_GetObjectItemCaseSensitive(quote, "close");
+
+        if (cJSON_IsArray(close_prices_json)) {
+            int num_prices_total = cJSON_GetArraySize(close_prices_json);
+            double* close_prices = malloc(num_prices_total * sizeof(double));
+            int valid_prices_count = 0;
+
+            // Copy prices to a double array, skipping any null values
+            for (int i = 0; i < num_prices_total; i++) {
+                cJSON *price_item = cJSON_GetArrayItem(close_prices_json, i);
+                if (cJSON_IsNumber(price_item)) {
+                    close_prices[valid_prices_count++] = price_item->valuedouble;
+                }
+            }
+
+            // Need at least 34 periods for a stable MACD (26 for slow EMA + 9 for signal line - 1)
+            if (valid_prices_count >= 34) {
+                double* ema12 = malloc(valid_prices_count * sizeof(double));
+                double* ema26 = malloc(valid_prices_count * sizeof(double));
+                
+                calculate_ema_series(close_prices, valid_prices_count, 12, ema12);
+                calculate_ema_series(close_prices, valid_prices_count, 26, ema26);
+                
+                int macd_len = valid_prices_count - 25;
+                double* macd_line = malloc(macd_len * sizeof(double));
+                for(int i = 0; i < macd_len; i++) {
+                    macd_line[i] = ema12[i + 25] - ema26[i + 25];
+                }
+
+                double* signal_line = malloc(macd_len * sizeof(double));
+                calculate_ema_series(macd_line, macd_len, 9, signal_line);
+
+                // Latest values are at the end of the arrays
+                double latest_macd_line = macd_line[macd_len - 1];
+                double latest_signal_line = signal_line[macd_len - 1];
+                
+                if (!isnan(latest_macd_line) && !isnan(latest_signal_line)) {
+                    double histogram = latest_macd_line - latest_signal_line;
+                    double latest_price = close_prices[valid_prices_count - 1];
+                    if (latest_price > 0.0001) { // Avoid division by zero
+                        std_macd_percent = (histogram / latest_price) * 100.0;
+                    }
+                }
+
+                free(ema12);
+                free(ema26);
+                free(macd_line);
+                free(signal_line);
+            }
+            free(close_prices);
+        }
+    }
     
-    // Determine color based on change
-    const char* color = (change >= 0) ? KGRN : KRED;
-    char sign = (change >= 0) ? '+' : '-';
-
-    // ANSI: Move cursor to the start of the specified row
-    printf("\033[%d;1H", row);
-
-    // Print the formatted data row.
-    // ANSI: \033[K clears from the cursor to the end of the line.
-    // This is important to overwrite any previous, longer text (like an error message).
-    printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s\033[K\n",
+    // --- Print Data to Terminal ---
+    printf("\033[%d;1H", row); // ANSI: Move cursor to the start of the specified row
+    
+    // Print the formatted data row, clearing the rest of the line
+    printf("%-10s | %s%10.2f%s | %s%+10.2f%s | %s%+10.2f%%%s | ",
            symbol,
-           KBLU, price, KNRM, // <-- MODIFIED: Changed KYEL to KBLU for blue price
-           color, sign, (change >= 0 ? change : -change), KNRM,
-           color, sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM);
+           KBLU, price, KNRM,
+           price_color, change, KNRM,
+           price_color, percent_change, KNRM);
+
+    // Print MACD value or N/A
+    if (!isnan(std_macd_percent)) {
+        const char* macd_color = (std_macd_percent >= 0) ? KGRN : KRED;
+        printf("%s%+12.2f%%%s", macd_color, std_macd_percent, KNRM);
+    } else {
+        printf("%s%13s%s", KYEL, "N/A", KNRM);
+    }
+    printf("\033[K\n"); // Clear to end of line
 
     cJSON_Delete(root);
 }
 
+
 /**
  * @brief Prints an error message on a specific row of the dashboard.
- * @param ticker The ticker symbol that failed.
- * @param error_msg The error message to display.
- * @param row The terminal row to print the output on.
  */
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
-    // ANSI: Move cursor to the start of the specified row
-    printf("\033[%d;1H", row);
-    // Print formatted error and clear rest of the line
-    printf("%-10s | %s%-40s%s\033[K\n", ticker, KRED, error_msg, KNRM);
+    printf("\033[%d;1H", row); // ANSI: Move cursor to the start of the specified row
+    printf("%-10s | %s%-60s%s\033[K\n", ticker, KRED, error_msg, KNRM);
 }
 
 
@@ -223,16 +312,15 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
  */
 void setup_dashboard_ui() {
     hide_cursor();
-    // ANSI: \033[2J clears the entire screen. \033[H moves cursor to top-left.
-    printf("\033[2J\033[H");
+    printf("\033[2J\033[H"); // ANSI: Clear screen and move to top-left
 
     printf("--- C Terminal Stock Dashboard ---\n");
     printf("\n"); // Leave a blank line for the dynamic timestamp
     printf("\n");
 
     // Print static headers
-    printf("%-10s | %11s | %11s | %13s\n", "Ticker", "Price", "Change", "% Change");
-    printf("-------------------------------------------------------------\n");
+    printf("%-10s | %11s | %11s | %12s | %14s\n", "Ticker", "Price", "Change", "% Change", "Std MACD %");
+    printf("------------------------------------------------------------------------------\n");
     
     // Print initial placeholder text for each ticker
     for (int i = 0; i < num_tickers; i++) {
@@ -250,10 +338,8 @@ void update_timestamp() {
     char time_str[64];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
-    // ANSI: Move cursor to row 2, column 1
-    printf("\033[2;1H");
-    // ANSI: \033[K clears from the cursor to the end of the line
-    printf("Last updated: %s\033[K\n", time_str);
+    printf("\033[2;1H"); // ANSI: Move cursor to row 2, column 1
+    printf("Last updated: %s\033[K\n", time_str); // \033[K clears to end of line
     fflush(stdout);
 }
 
@@ -261,30 +347,25 @@ void update_timestamp() {
  * @brief Displays a live countdown timer at the bottom of the dashboard.
  */
 void run_countdown() {
-    int update_line = DATA_START_ROW + num_tickers + 1;
+    int update_line = DATA_START_ROW + num_tickers + 2;
 
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
-        // ANSI: Move cursor to the update line
-        printf("\033[%d;1H", update_line);
-        // ANSI: Clear line and print countdown
-        printf("\033[KUpdating in %2d seconds...", i);
+        printf("\033[%d;1H", update_line); // ANSI: Move cursor to the update line
+        printf("\033[KUpdating in %2d seconds...", i); // ANSI: Clear line and print
         fflush(stdout);
         sleep(1);
     }
-    // Print final "Updating now..." message
     printf("\033[%d;1H\033[KUpdating now...           ", update_line);
     fflush(stdout);
 }
 
 void hide_cursor() {
-    // ANSI: Hides the terminal cursor
-    printf("\033[?25l");
+    printf("\033[?25l"); // ANSI: Hides the terminal cursor
     fflush(stdout);
 }
 
 void show_cursor() {
-    // ANSI: Shows the terminal cursor
-    printf("\033[?25h");
+    printf("\033[?25h"); // ANSI: Shows the terminal cursor
     fflush(stdout);
 }
 
