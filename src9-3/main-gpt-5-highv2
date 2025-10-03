@@ -19,7 +19,7 @@
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // Add or remove stock tickers here
-const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD"};
+const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ETH-USD"};
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
