@@ -293,7 +293,6 @@ int main(int argc, char** argv) {
 		if (ip)
 			break;
 	}
-	}
 #endif
 
 curl_global_init(CURL_GLOBAL_ALL);
