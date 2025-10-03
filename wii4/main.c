@@ -12,7 +12,7 @@
 #if defined(GEKKO) && defined(HW_RVL)
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-//#include <wiisocket.h>
+#include <wiisocket.h>
 //#include <mbedtls/sha1.h>
 //#include "cacert_pem.h"
 
@@ -286,12 +286,22 @@ int main(int argc, char** argv) {
     // Wii video & network init
 #if defined(GEKKO) && defined(HW_RVL)
     wii_video_init();
+    // The original documentation for libwiisocket showed using multiple tries to init and get an ip.
+	// I don't think this is necessary, but I'm leaving it in just in case.
+	int socket_init_success = -1;
+	for (int attempts = 0;attempts < 3;attempts++) {
+		socket_init_success = wiisocket_init();
+		printf("attempt: %d wiisocket_init: %d\n", attempts, socket_init_success);
+		if (socket_init_success == 0)
+			break;
+
 		u32 ip = 0;
 	for (int attempts = 0; attempts < 3; attempts++) {
 		ip = gethostid();
 		printf("attempt: %d gethostid: %x\n", attempts, ip);
 		if (ip)
 			break;
+	}
 	}
 #endif
 
