@@ -12,7 +12,7 @@
 #if defined(GEKKO) && defined(HW_RVL)
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-#include <wiisocket.h>
+//#include <wiisocket.h>
 //#include <mbedtls/sha1.h>
 //#include "cacert_pem.h"
 
