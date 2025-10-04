@@ -23,11 +23,9 @@ OBJECTS = $(SOURCES:.c=.o)
 
 all: $(TARGET).3dsx
 
-# Build ELF
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Package ELF into 3DSX (requires devkitPro tools)
 $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
 
