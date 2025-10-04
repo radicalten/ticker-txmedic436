@@ -21,6 +21,9 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
+export OUTPUT	:=	$(CURDIR)/$(TARGET)
+export _3DSXDEPS	:=	$(if $(NO_SMDH),,$(OUTPUT).smdh)
+
 all: $(TARGET).3dsx
 $(TARGET).3dsx: $(TARGET).elf
 	$(_3DSXDEPS)
@@ -32,6 +35,6 @@ $(TARGET).elf: $(OBJECTS)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).map $(OBJECTS)
 
 .PHONY: clean test
