@@ -5,6 +5,7 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 #include <3ds.h>
+#include <malloc.h>
 
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 15
