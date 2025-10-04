@@ -1,38 +1,94 @@
 .SUFFIXES:
-export DEVKITPRO 	:= /opt/devkitpro
-export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+export DEVKITPRO  := /opt/devkitpro
+export DEVKITARM  := $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
-CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
-INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
-CFLAGS 	:= -O3 -flto \
-$(INCLUDES) $(MACHDEP)
-LDFLAGS := $(CFLAGS) \
--specs=3dsx.specs \
--Wl,-Map,$(TARGET).map \
--L/opt/devkitpro/portlibs/3ds/lib \
--L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/libctru/lib \
--L/opt/devkitpro/libctru/lib/3ds \
--lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
-TARGET  := myapp
-SRCDIR 	:= 3ds-2
+
+CC        := $(DEVKITARM)/bin/arm-none-eabi-gcc
+MACHDEP   := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
+INCLUDES  += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
+CFLAGS    := -O3 -flto $(INCLUDES) $(MACHDEP)
+
+# Split LDFLAGS: one for 3dsx, one for CIA (ctr)
+LDFLAGS_3DSX := $(CFLAGS) \
+  -specs=3dsx.specs \
+  -Wl,-Map,$(TARGET).map \
+  -L/opt/devkitpro/portlibs/3ds/lib \
+  -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+  -L/opt/devkitpro/libctru/lib \
+  -L/opt/devkitpro/libctru/lib/3ds \
+  -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+
+LDFLAGS_CTR := $(CFLAGS) \
+  -specs=ctr.specs \
+  -Wl,-Map,$(TARGET)_ctr.map \
+  -L/opt/devkitpro/portlibs/3ds/lib \
+  -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+  -L/opt/devkitpro/libctru/lib \
+  -L/opt/devkitpro/libctru/lib/3ds \
+  -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+
+TARGET   := myapp
+SRCDIR   := 3ds-2
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
-SOURCES = $(C_SOURCES) 
-OBJECTS = $(SOURCES:.c=.o)
+SOURCES   = $(C_SOURCES)
+OBJECTS   = $(SOURCES:.c=.o)
 
-all: $(TARGET).3dsx
+# Metadata for icon/smdh/banner
+APP_TITLE       ?= My App
+APP_DESCRIPTION ?= Something nifty
+APP_AUTHOR      ?= You
+ICON_PNG        ?= assets/icon.png
+BANNER_IMAGE    ?= assets/banner.png
+BANNER_AUDIO    ?= assets/banner.wav
 
+# CIA metadata
+APP_UNIQUE_ID    ?= 0x12345   # pick a unique 5-digit hex value
+APP_PRODUCT_CODE ?= CTR-HB-MYAP
+RSF              ?= cia.rsf   # provide a suitable RSF (see notes below)
+
+all: $(TARGET).3dsx $(TARGET).cia
+
+# 3DSX path
 $(TARGET).elf: $(OBJECTS)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $^ -o $@ $(LDFLAGS_3DSX)
+
+# If you don't already have an smdh, uncomment this to auto-generate
+# $(TARGET).smdh: $(ICON_PNG)
+# 	smdhtool --create "$(APP_TITLE)" "$(APP_DESCRIPTION)" "$(APP_AUTHOR)" $(ICON_PNG) $@
 
 $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+
+# CIA path
+# 1) Link a ctr-specs ELF
+$(TARGET)_ctr.elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS_CTR)
+
+# 2) Build icon/banner
+$(TARGET).icn: $(ICON_PNG)
+	bannertool makeicon -i $< -o $@
+
+$(TARGET).bnr: $(BANNER_IMAGE) $(BANNER_AUDIO)
+	bannertool makebanner -i $(BANNER_IMAGE) -a $(BANNER_AUDIO) -o $@
+
+# 3) Pack CIA (requires RSF)
+$(TARGET).cia: $(TARGET)_ctr.elf $(TARGET).icn $(TARGET).bnr $(RSF)
+	makerom -f cia -o $@ \
+		-target t -exefslogo \
+		-elf $(TARGET)_ctr.elf \
+		-icon $(TARGET).icn \
+		-banner $(TARGET).bnr \
+		-rsf $(RSF) \
+		-DAPP_UNIQUE_ID=$(APP_UNIQUE_ID) \
+		-DAPP_PRODUCT_CODE=$(APP_PRODUCT_CODE) \
+		-DAPP_TITLE="$(APP_TITLE)"
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map \
+	      $(TARGET)_ctr.elf $(TARGET)_ctr.map $(TARGET).cia $(TARGET).icn $(TARGET).bnr \
+	      $(OBJECTS)
 
 .PHONY: all clean
