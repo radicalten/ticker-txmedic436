@@ -114,41 +114,46 @@ int main(void) {
     time_t last_fetch = 0;
     int update_line = DATA_START_ROW + num_tickers + 1;
 
-    while (aptMainLoop()) {
-        hidScanInput();
-        u32 kDown = hidKeysDown();
-        if (kDown & KEY_START) break;
+while (aptMainLoop()) {
+    hidScanInput();
+    u32 kDown = hidKeysDown();
+    if (kDown & KEY_START) break;
 
-        time_t now = time(NULL);
-        if (last_fetch == 0 || difftime(now, last_fetch) >= UPDATE_INTERVAL_SECONDS) {
-            update_timestamp();
+    time_t now = time(NULL);
+    if (last_fetch == 0 || difftime(now, last_fetch) >= UPDATE_INTERVAL_SECONDS) {
+        update_timestamp();
 
-            char url[512];
-            for (int i = 0; i < num_tickers; i++) {
-                int current_row = DATA_START_ROW + i;
-                snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
+        char url[512];
+        for (int i = 0; i < num_tickers; i++) {
+            int current_row = DATA_START_ROW + i;
+            snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
 
-                char *json_response = fetch_url(url);
-                if (json_response) {
-                    parse_and_print_stock_data(json_response, current_row);
-                    free(json_response);
-                } else {
-                    print_error_on_line(tickers[i], "Fetch failed", current_row);
-                }
-                present_frame(); // show each row as it updates
+            char *json_response = fetch_url(url);
+            if (json_response) {
+                parse_and_print_stock_data(json_response, current_row);
+                free(json_response);
+            } else {
+                print_error_on_line(tickers[i], "Fetch failed", current_row);
             }
-            last_fetch = now;
+            present_frame(); // show each row as it updates
         }
-
-        // Live countdown (bottom line)
-        int rem = UPDATE_INTERVAL_SECONDS - (int)difftime(now, last_fetch);
-        if (rem < 0) rem = 0;
-        printf("\x1b[%d;1H", update_line);
-        printf("\x1b[KUpdating in %2d s...  (START to exit)", rem);
-        fflush(stdout);
-
-        present_frame();
+        // Record completion time, not start time
+        last_fetch = time(NULL);
     }
+
+    // Recompute 'now' after a potentially long update
+    now = time(NULL);
+
+    // Live countdown (bottom line)
+    int rem = UPDATE_INTERVAL_SECONDS - (int)difftime(now, last_fetch);
+    if (rem < 0) rem = 0;
+    if (rem > UPDATE_INTERVAL_SECONDS) rem = UPDATE_INTERVAL_SECONDS; // optional clamp
+    printf("\x1b[%d;1H", update_line);
+    printf("\x1b[KUpdating in %2d s...  (START to exit)", rem);
+    fflush(stdout);
+
+    present_frame();
+}
 
     // Cleanup for 3DS
     curl_global_cleanup();
