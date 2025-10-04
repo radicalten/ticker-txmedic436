@@ -9,7 +9,7 @@ CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
 -specs=3dsx.specs \
--Wl,-Map,$(notdir $@).map \
+-Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/3ds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libctru/lib \
