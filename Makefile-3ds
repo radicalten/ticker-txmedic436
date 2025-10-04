@@ -2,6 +2,7 @@
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -DPLATFORM_3DS=1 -march=armv6k -mtune=mpcore -fomit-frame-pointer -ffunction-sections
 INCLUDES +=
 CFLAGS 	:= -O3 -flto \
