@@ -1,0 +1,116 @@
+.SUFFIXES:
+
+# devkitPro paths
+export DEVKITPRO  := /opt/devkitpro
+export DEVKITARM  := $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/3ds_rules
+
+# Make "all" the default even if 3ds_rules defines other targets
+.DEFAULT_GOAL := all
+
+# Toolchain
+CC := $(DEVKITARM)/bin/arm-none-eabi-gcc
+
+# Project
+TARGET  := myapp
+SRCDIR  := 3ds-2
+
+# Sources/objects
+C_SOURCES := $(foreach dir,$(SRCDIR),$(wildcard $(dir)/*.c))
+SOURCES   := $(C_SOURCES)
+OBJECTS   := $(SOURCES:.c=.o)
+
+# Flags
+MACHDEP  := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
+INCLUDES += -I/opt/devkitpro/portlibs/3ds/include \
+            -I/opt/devkitpro/portlibs/arm-none-eabi/include \
+            -I/opt/devkitpro/libctru/include
+
+CFLAGS   := -O3 -flto $(INCLUDES) $(MACHDEP)
+
+# Split LDFLAGS: one for 3dsx, one for CIA (ctr)
+LDFLAGS_3DSX := $(CFLAGS) \
+  -specs=3dsx.specs \
+  -Wl,-Map,$(TARGET).map \
+  -L/opt/devkitpro/portlibs/3ds/lib \
+  -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+  -L/opt/devkitpro/libctru/lib \
+  -L/opt/devkitpro/libctru/lib/3ds \
+  -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+
+LDFLAGS_CTR := $(CFLAGS) \
+  -specs=ctr.specs \
+  -Wl,-Map,$(TARGET)_ctr.map \
+  -L/opt/devkitpro/portlibs/3ds/lib \
+  -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+  -L/opt/devkitpro/libctru/lib \
+  -L/opt/devkitpro/libctru/lib/3ds \
+  -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+
+# Metadata for .smdh (3dsx)
+APP_TITLE       ?= My App
+APP_DESCRIPTION ?= Something nifty
+APP_AUTHOR      ?= You
+
+# Asset paths (adjust these)
+ICON_PNG     ?= assets/icon.png
+BANNER_IMAGE ?= assets/banner.png
+BANNER_AUDIO ?= assets/banner.wav   # WAV; bannertool will convert to bcwav
+
+# CIA metadata and RSF
+APP_UNIQUE_ID    ?= 0x12345          # choose your own unique 5-digit hex
+APP_PRODUCT_CODE ?= CTR-HB-MYAP
+RSF              ?= cia.rsf
+
+# Default build: both formats
+all: $(TARGET).3dsx $(TARGET).cia
+
+# 3DSX build path
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS_3DSX)
+
+# Auto-generate .smdh if you have an icon
+$(TARGET).smdh: $(ICON_PNG)
+	smdhtool --create "$(APP_TITLE)" "$(APP_DESCRIPTION)" "$(APP_AUTHOR)" $(ICON_PNG) $@
+
+$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
+	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+
+# CIA build path
+# 1) Link a ctr-specs ELF (cannot reuse the 3dsx-linked one)
+$(TARGET)_ctr.elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS_CTR)
+
+# 2) Build icon/banner for CIA
+$(TARGET).icn: $(ICON_PNG)
+	bannertool makeicon -i $< -o $@
+
+$(TARGET).bnr: $(BANNER_IMAGE) $(BANNER_AUDIO)
+	bannertool makebanner -i $(BANNER_IMAGE) -a $(BANNER_AUDIO) -o $@
+
+# 3) Pack CIA
+$(TARGET).cia: $(TARGET)_ctr.elf $(TARGET).icn $(TARGET).bnr $(RSF)
+	makerom -f cia -o $@ \
+		-target t -exefslogo \
+		-elf $(TARGET)_ctr.elf \
+		-icon $(TARGET).icn \
+		-banner $(TARGET).bnr \
+		-rsf $(RSF) \
+		-DAPP_UNIQUE_ID=$(APP_UNIQUE_ID) \
+		-DAPP_PRODUCT_CODE=$(APP_PRODUCT_CODE) \
+		-DAPP_TITLE="$(APP_TITLE)"
+
+# Compile objects
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+# Convenience targets
+3dsx: $(TARGET).3dsx
+cia:  $(TARGET).cia
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map \
+	      $(TARGET)_ctr.elf $(TARGET)_ctr.map $(TARGET).cia $(TARGET).icn $(TARGET).bnr \
+	      $(OBJECTS)
+
+.PHONY: all clean 3dsx cia
