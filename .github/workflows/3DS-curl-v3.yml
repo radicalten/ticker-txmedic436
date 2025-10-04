@@ -1,4 +1,4 @@
-name: 3DS-curl-v2
+name: 3DS-curl-v3
 on:
   push:
     branches:
