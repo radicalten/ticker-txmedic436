@@ -470,7 +470,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
 
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            symbol,
-           last_close,
+           KNRM, last_close, KNRM,
            color_change, change_sign, (change >= 0 ? change : -change), KNRM,
            color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
            color_macd, macd_buf, KNRM,
