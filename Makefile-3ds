@@ -3,9 +3,13 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC		:= cc
-CFLAGS 	:= -O3 -flto
+MACHDEP := -DPLATFORM_3DS=1 -DAPI_C3D=1 -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft \
+-mword-relocations -fomit-frame-pointer -ffunction-sections
+INCLUDES +=
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
--lcurl -lm
+-lcitro3d -lctru -lcurl -lm
 TARGET  := myapp
 SRCS    := $(wildcard 3ds/*.c)
 OBJS    := $(patsubst %.c,%.o,$(SRCS))
