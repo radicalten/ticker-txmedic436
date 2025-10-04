@@ -33,7 +33,6 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 #define KRED  "\x1B[31m" // Red
 #define KGRN  "\x1B[32m" // Green
 #define KYEL  "\x1B[33m" // Yellow
-#define KBLU  "\x1B[34m" // Blue (Added for price)
 
 // Compact column widths to fit the 3DS console (~50 cols)
 #ifdef __3DS__
@@ -481,7 +480,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     printf("%-*s ", COL_TKR, symbol);
 
     // Price (blue)
-    printf("%s%*.*f%s ", KBLU, COL_PRICE, 2, last_close, KNRM);
+    printf("%s%*.*f%s ", KNRM, COL_PRICE, 2, last_close, KNRM);
 
     // Change (sign + value)
     double absChange = fabs(change);
@@ -524,7 +523,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
 
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\x1b[K",
            symbol,
-           KBLU, last_close, KNRM,
+           KNRM, last_close, KNRM,
            color_change, change_sign, (change >= 0 ? change : -change), KNRM,
            color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
            color_macd, macd_buf, KNRM,
