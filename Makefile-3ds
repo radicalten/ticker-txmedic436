@@ -14,7 +14,24 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lctru -lcurl -lm
 TARGET  := myapp
-SRCS    := $(wildcard 3ds/*.c)
-OBJS    := $(patsubst %.c,%.o,$(SRCS))
-all: $(OBJS)
-	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+SRCDIR 	:= 3ds
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+ELF2DOL     := elf2dol
+
+all: $(TARGET).dol
+$(TARGET).dol: $(TARGET).elf
+	$(ELF2DOL) $< $@
+
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+
+.PHONY: clean test
