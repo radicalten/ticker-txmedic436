@@ -27,10 +27,6 @@ all: $(TARGET).3dsx
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Generate SMDH (simple metadata; customize as needed)
-$(TARGET).smdh:
-	smdhtool --create "$(TARGET)" "Author" "Description" $(TARGET).smdh
-
 # Package ELF into 3DSX (requires devkitPro tools)
 $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
