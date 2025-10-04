@@ -53,7 +53,7 @@ const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ET
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
-#define KNRM  "\x1B[0m"  // Normal
+#define KNRM  "\x1B[0m"  // Default attributes 
 #define KBLK  "\x1B[30m" // Black
 #define KRED  "\x1B[31m" // Red
 #define KGRN  "\x1B[32m" // Green
@@ -62,6 +62,36 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 #define KMAG  "\x1B[35m" // Magenta
 #define KCYN  "\x1B[36m" // Cyan
 #define KWHT  "\x1B[37m" // White
+
+/* --- Regular Background Colors ---
+#define BGBLK "\x1B[40m" // Black
+#define BGRED "\x1B[41m" // Red
+#define BGGRN "\x1B[42m" // Green
+#define BGYEL "\x1B[43m" // Yellow
+#define BGBLU "\x1B[44m" // Blue
+#define BGMAG "\x1B[45m" // Magenta
+#define BGCYN "\x1B[46m" // Cyan
+#define BGWHT "\x1B[47m" // White
+
+--- Bright/Bold Background Colors ---
+#define BGBBLK "\x1B[100m" // Bright Black (Gray)
+#define BGBRED "\x1B[101m" // Bright Red
+#define BGBGRN "\x1B[102m" // Bright Green
+#define BGBYEL "\x1B[103m" // Bright Yellow
+#define BGBBLU "\x1B[104m" // Bright Blue
+#define BGBMAG "\x1B[105m" // Bright Magenta
+#define BGBCYN "\x1B[106m" // Bright Cyan
+#define BGBWHT "\x1B[107m" // Bright White
+
+--- Other Text Attributes ---
+#define KBLD "\x1B[1m"   // Bold
+#define KDIM "\x1B[2m"   // Dim
+#define KUND "\x1B[4m"   // Underline
+#define KBNK "\x1B[5m"   // Blink
+#define KREV "\x1B[7m"   // Reverse/Invert
+#define KHDN "\x1B[8m"   // Hidden
+
+*/
 
 // --- Struct to hold HTTP response data ---
 typedef struct {
@@ -440,7 +470,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
 
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            symbol,
-           KCYN, last_close, KNRM,
+           last_close,
            color_change, change_sign, (change >= 0 ? change : -change), KNRM,
            color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
            color_macd, macd_buf, KNRM,
