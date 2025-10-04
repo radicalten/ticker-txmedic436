@@ -575,7 +575,7 @@ void setup_dashboard_ui() {
     printf("\n");
 
     // Headers (compact)
-    printf("%-*s %-*s %-*s %-*s %-*s %-*s\n",
+    printf("%-7s %-*s %-*s %-*s %-*s %-*s\n",
            COL_TKR,  "Tkr",
            COL_PRICE,"Price",
            COL_CHG,  "Chg",
