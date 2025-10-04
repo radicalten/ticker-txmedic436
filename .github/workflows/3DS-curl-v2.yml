@@ -21,4 +21,4 @@ jobs:
       with:
         name: 3ds-curl
         path: |
-          *.elf *.3dsx
+          .
