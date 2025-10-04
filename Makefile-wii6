@@ -15,7 +15,7 @@ LDFLAGS += $(CFLAGS) \
 -L/opt/devkitpro/libogc/lib/wii \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -lwiikeyboard -lfat -lwiiuse -lbte -logc -lm
 TARGET  := myapp
-SRCDIR 	:= wii5
+SRCDIR 	:= wii6
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
