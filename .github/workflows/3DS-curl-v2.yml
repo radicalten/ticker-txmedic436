@@ -2,7 +2,7 @@ name: 3DS-curl-v2
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build-3ds:
     runs-on: ubuntu-latest
