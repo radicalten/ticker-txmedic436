@@ -14,7 +14,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libctru/lib \
 -L/opt/devkitpro/libctru/lib/3ds \
--lcurl -lmbedtls -lctru -lm
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
 SRCDIR 	:= 3ds
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
