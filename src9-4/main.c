@@ -378,12 +378,11 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
 
-    // Print formatted data row. Clear to end of line with \033[K
+    // Print formatted data row. Clear to end of line with \033[K (no trailing newline)
     // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
     char change_sign = (change >= 0) ? '+' : '-';
     char pct_sign = (percent_change >= 0) ? '+' : '-';
 
-    // MODIFIED: Removed trailing '\n' to prevent accidental scrolling
     printf("%-10s | %s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            symbol,
            KBLU, last_close, KNRM,
@@ -391,12 +390,10 @@ void parse_and_print_stock_data(const char *json_string, int row) {
            color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
+    fflush(stdout);
 
     free(closes);
     cJSON_Delete(root);
-
-    // ADDED: Explicitly flush stdout since we removed the newline character
-    fflush(stdout);
 }
 
 /**
@@ -408,10 +405,8 @@ void parse_and_print_stock_data(const char *json_string, int row) {
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
-    // Print formatted error and clear rest of the line
-    // MODIFIED: Removed trailing '\n' to prevent accidental scrolling
+    // Print formatted error and clear rest of the line (no trailing newline)
     printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
-    // ADDED: Explicitly flush stdout
     fflush(stdout);
 }
 
@@ -436,9 +431,11 @@ void setup_dashboard_ui() {
            "Ticker", "Price", "Change", "% Change", "MACD%", "Signal%");
     printf("----------------------------------------------------------------------------------------------------\n");
 
-    // Print initial placeholder text for each ticker
+    // Print initial placeholder text for each ticker at exact rows
     for (int i = 0; i < num_tickers; i++) {
-        printf("%-10s | %sFetching daily data...%s\n", tickers[i], KYEL, KNRM);
+        int row = DATA_START_ROW + i;
+        printf("\033[%d;1H", row);
+        printf("%-10s | %sFetching daily data...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
@@ -454,8 +451,7 @@ void update_timestamp() {
 
     // ANSI: Move cursor to row 2, column 1
     printf("\033[2;1H");
-    // ANSI: \033[K clears from the cursor to the end of the line
-    // MODIFIED: Removed trailing '\n' to prevent accidental scrolling
+    // ANSI: \033[K clears from the cursor to the end of the line (no trailing newline)
     printf("Last updated: %s\033[K", time_str);
     fflush(stdout);
 }
@@ -469,7 +465,7 @@ void run_countdown() {
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
         // ANSI: Move cursor to the update line
         printf("\033[%d;1H", update_line);
-        // ANSI: Clear line and print countdown
+        // ANSI: Clear line and print countdown (no trailing newline)
         printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
         sleep(1);
