@@ -21,18 +21,24 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
-
 all: $(TARGET).3dsx
-$(TARGET).3dsx: $(TARGET).elf
-	$(_3DSXDEPS)
 
+# Build ELF
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Generate SMDH (simple metadata; customize as needed)
+$(TARGET).smdh:
+	smdhtool --create "$(TARGET)" "Author" "Description" $(TARGET).smdh
+
+# Package ELF into 3DSX (requires devkitPro tools)
+$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
+	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
 
-.PHONY: clean test
+.PHONY: all clean
