@@ -21,11 +21,13 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
-ELF2DOL     := elf2dol
+# ELF2DOL     := elf2dol 
 
-all: $(TARGET).dol
-$(TARGET).dol: $(TARGET).elf
-	$(ELF2DOL) $< $@
+
+all: $(TARGET).3dsx
+$(TARGET).3dsx: $(TARGET).elf
+	$(_3DSXDEPS)
+	#$(ELF2DOL) $< $@
 
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
@@ -34,6 +36,6 @@ $(TARGET).elf: $(OBJECTS)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).map $(OBJECTS)
 
 .PHONY: clean test
