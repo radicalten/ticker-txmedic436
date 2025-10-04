@@ -1,3 +1,7 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/3ds_rules
 CC		:= cc
 CFLAGS 	:= -O3 -flto
 LDFLAGS := $(CFLAGS) \
