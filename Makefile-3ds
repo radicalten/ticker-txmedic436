@@ -4,7 +4,7 @@ export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
-INCLUDES +=
+INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
