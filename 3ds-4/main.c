@@ -580,8 +580,8 @@ void setup_dashboard_ui() {
            COL_PRICE,"Price",
            COL_CHG,  "Chg",
            COL_PCT,  "%Chg",
-           COL_MACD, "MACD%",
-           COL_SIG,  "Sig%");
+           COL_MACD, "MACD",
+           COL_SIG,  "Sig");
     // Divider (fit screen width)
     for (int i = 0; i < CONSOLE_COLS; ++i) putchar('-');
     putchar('\n');
