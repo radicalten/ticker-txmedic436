@@ -37,12 +37,12 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 // Compact column widths to fit the 3DS console (~50 cols)
 #ifdef __3DS__
   #define CONSOLE_COLS 50
-  #define COL_TKR   7
+  #define COL_TKR   9
   #define COL_PRICE 9
-  #define COL_CHG   8
-  #define COL_PCT   7
-  #define COL_MACD  7
-  #define COL_SIG   7
+  #define COL_CHG   9
+  #define COL_PCT   6
+  #define COL_MACD  6
+  #define COL_SIG   6
 #endif
 
 // --- Struct to hold HTTP response data ---
