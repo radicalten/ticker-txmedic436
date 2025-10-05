@@ -501,11 +501,11 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     if (has_macd) {
         double absMacd = fabs(macd_pct);
         char signMacd = (macd_pct >= 0) ? '+' : '-';
-        printf("%s%c%*.1f%%%s ", color_macd, signMacd, COL_MACD - 2, absMacd, KNRM);
+        printf("%s%c%*.2f%s ", color_macd, signMacd, COL_MACD - 2, absMacd, KNRM);
 
         double absSig = fabs(signal_pct);
         char signSig = (signal_pct >= 0) ? '+' : '-';
-        printf("%s%c%*.1f%%%s", color_signal, signSig, COL_SIG - 2, absSig, KNRM);
+        printf("%s%c%*.2f%s", color_signal, signSig, COL_SIG - 2, absSig, KNRM);
     } else {
         printf("%s%*s%s %s%*s%s", KYEL, COL_MACD, "N/A", KNRM, KYEL, COL_SIG, "N/A", KNRM);
     }
