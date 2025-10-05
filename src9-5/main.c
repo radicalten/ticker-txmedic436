@@ -517,4 +517,132 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     printf("%s%-10s%s | %s%s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            // Ticker with optional background highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
-           // Price with optional 
+           // Price with optional bg highlighting for movement
+           price_bg, KBLU, last_close, KNRM,
+           // Change
+           color_change, change_sign, (change >= 0 ? change : -change), KNRM,
+           // % Change
+           color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
+           // MACD%
+           color_macd, macd_buf, KNRM,
+           // Signal%
+           color_signal, sig_buf, KNRM);
+    fflush(stdout);
+
+    // NEW: Store last_close for next comparison
+    if (g_prev_price) {
+        g_prev_price[ticker_index] = last_close;
+    }
+
+    free(closes);
+    cJSON_Delete(root);
+}
+
+/**
+ * @brief Prints an error message on a specific row of the dashboard.
+ * @param ticker The ticker symbol that failed.
+ * @param error_msg The error message to display.
+ * @param row The terminal row to print the output on.
+ */
+void print_error_on_line(const char* ticker, const char* error_msg, int row) {
+    // ANSI: Move cursor to the start of the specified row
+    printf("\033[%d;1H", row);
+    // Print formatted error and clear rest of the line (no trailing newline)
+    printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
+    fflush(stdout);
+}
+
+
+// --- UI and Terminal Control Functions ---
+
+/**
+ * @brief Performs the initial one-time setup of the dashboard UI.
+ */
+void setup_dashboard_ui() {
+    hide_cursor();
+    // ANSI: \033[2J clears the entire screen. \033[H moves cursor to top-left.
+    printf("\033[2J\033[H");
+
+    // NEW: Allocate and initialize previous price storage
+    if (!g_prev_price) {
+        g_prev_price = (double*)malloc(sizeof(double) * num_tickers);
+        if (g_prev_price) {
+            for (int i = 0; i < num_tickers; i++) g_prev_price[i] = NAN;
+        }
+    }
+
+    printf("--- C Terminal Stock Dashboard ---\n");
+    printf("\n"); // Leave a blank line for the dynamic timestamp
+    printf("\n");
+
+    // Print static headers
+    // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
+    printf("%-10s | %11s | %11s | %13s | %10s | %10s\n",
+           "Ticker", "Price", "Change", "% Change", "MACD%", "Signal%");
+    printf("----------------------------------------------------------------------------------------------------\n");
+
+    // Print initial placeholder text for each ticker at exact rows
+    for (int i = 0; i < num_tickers; i++) {
+        int row = DATA_START_ROW + i;
+        printf("\033[%d;1H", row);
+        printf("%-10s | %sFetching 1m data...%s\033[K", tickers[i], KYEL, KNRM);
+    }
+    fflush(stdout);
+}
+
+/**
+ * @brief Updates the "Last updated" timestamp on the second line of the screen.
+ */
+void update_timestamp() {
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+
+    // ANSI: Move cursor to row 2, column 1
+    printf("\033[2;1H");
+    // ANSI: \033[K clears from the cursor to the end of the line (no trailing newline)
+    printf("Last updated: %s\033[K", time_str);
+    fflush(stdout);
+}
+
+/**
+ * @brief Displays a live countdown timer at the bottom of the dashboard.
+ */
+void run_countdown() {
+    int update_line = DATA_START_ROW + num_tickers + 1;
+
+    for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
+        // ANSI: Move cursor to the update line
+        printf("\033[%d;1H", update_line);
+        // ANSI: Clear line and print countdown (no trailing newline)
+        printf("\033[KUpdating in %2d seconds...", i);
+        fflush(stdout);
+        sleep(1);
+    }
+    // Print final "Updating now..." message
+    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    fflush(stdout);
+}
+
+void hide_cursor() {
+    // ANSI: Hides the terminal cursor
+    printf("\033[?25l");
+    fflush(stdout);
+}
+
+void show_cursor() {
+    // ANSI: Shows the terminal cursor
+    printf("\033[?25h");
+    fflush(stdout);
+}
+
+void cleanup_on_exit() {
+    // This function is called by atexit() to ensure the cursor is restored.
+    show_cursor();
+    // NEW: Free previous price storage
+    if (g_prev_price) {
+        free(g_prev_price);
+        g_prev_price = NULL;
+    }
+}
