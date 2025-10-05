@@ -64,17 +64,11 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 #define KCYN  "\x1B[36m" // Cyan
 //#define KWHT  "\x1B[37m" // White
 
-// --- Background Colors ---
-#define BGBLK "\x1B[40m" // Black
+// --- Regular Background Colors ---
 #define BGRED "\x1B[41m" // Red
 #define BGGRN "\x1B[42m" // Green
-#define BGYEL "\x1B[43m" // Yellow
-#define BGBLU "\x1B[44m" // Blue
-#define BGMAG "\x1B[45m" // Magenta
-#define BGCYN "\x1B[46m" // Cyan
-#define BGWHT "\x1B[47m" // White
 
-// --- Bright Background Colors ---
+// --- Bright/Bold Background Colors ---
 #define BGBRED "\x1B[101m" // Bright Red
 #define BGBGRN "\x1B[102m" // Bright Green
 
@@ -84,21 +78,10 @@ typedef struct {
     size_t size;
 } MemoryStruct;
 
-// --- Struct to store MACD history for cross detection ---
-typedef struct {
-    double macd_prev;
-    double signal_prev;
-    double macd_current;
-    double signal_current;
-} MACDHistory;
-
-// Global array to store MACD history for each ticker
-static MACDHistory macd_history[100] = {0}; // Assuming max 100 tickers
-
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
-void parse_and_print_stock_data(const char *json_string, int row, int ticker_index);
+void parse_and_print_stock_data(const char *json_string, int row);
 void setup_dashboard_ui();
 void update_timestamp();
 void run_countdown();
@@ -110,7 +93,7 @@ void cleanup_on_exit();
 // New helpers for extracting closes and computing MACD
 int extract_daily_closes(cJSON *result, double **out_closes, int *out_n);
 void compute_ema_series(const double *data, int n, int period, double *out);
-int compute_macd_values(const double *closes, int n, double *macd_last, double *signal_last, double *macd_prev, double *signal_prev);
+int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct, double *hist_pct, int *cross_type);
 
 // --- Main Application ---
 int main(void) {
@@ -153,7 +136,7 @@ int main(void) {
             char *json_response = fetch_url(url);
 
             if (json_response) {
-                parse_and_print_stock_data(json_response, current_row, i);
+                parse_and_print_stock_data(json_response, current_row);
                 free(json_response); // Free the memory allocated by fetch_url
             } else {
                 print_error_on_line(tickers[i], "Failed to fetch data", current_row);
@@ -313,17 +296,17 @@ void compute_ema_series(const double *data, int n, int period, double *out) {
 }
 
 /**
- * @brief Computes MACD and Signal values for cross detection.
+ * @brief Computes MACD% and Signal% relative to the last close.
  * @param closes Array of daily closes (chronological, oldest -> newest).
  * @param n Number of closes.
- * @param macd_last Output last MACD value.
- * @param signal_last Output last Signal value.
- * @param macd_prev Output previous MACD value.
- * @param signal_prev Output previous Signal value.
+ * @param macd_pct Output MACD as percentage of last close.
+ * @param signal_pct Output Signal as percentage of last close.
+ * @param hist_pct Output Histogram (MACD - Signal) as percentage of last close.
+ * @param cross_type Output 1 for bullish cross, -1 for bearish cross, 0 otherwise.
  * @return 1 if computed, 0 if insufficient data.
  */
-int compute_macd_values(const double *closes, int n, double *macd_last, double *signal_last, double *macd_prev, double *signal_prev) {
-    if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD + 1)) return 0;
+int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct, double *hist_pct, int *cross_type) {
+    if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD)) return 0;
 
     // Compute EMAs
     double *ema_fast = (double *)malloc(sizeof(double) * n);
@@ -338,7 +321,7 @@ int compute_macd_values(const double *closes, int n, double *macd_last, double *
     // MACD line defined from index = SLOW_EMA_PERIOD - 1
     int macd_start = SLOW_EMA_PERIOD - 1;
     int macd_count = n - macd_start;
-    if (macd_count <= 1) {
+    if (macd_count <= 0) {
         free(ema_fast); free(ema_slow);
         return 0;
     }
@@ -355,7 +338,7 @@ int compute_macd_values(const double *closes, int n, double *macd_last, double *
     }
 
     // Signal line = EMA of MACD line
-    if (macd_count < SIGNAL_EMA_PERIOD + 1) {
+    if (macd_count < SIGNAL_EMA_PERIOD) {
         free(ema_fast); free(ema_slow); free(macd_line);
         return 0;
     }
@@ -367,11 +350,33 @@ int compute_macd_values(const double *closes, int n, double *macd_last, double *
     }
     compute_ema_series(macd_line, macd_count, SIGNAL_EMA_PERIOD, signal_line);
 
-    // Return the last two values for cross detection
-    *macd_prev = macd_line[macd_count - 2];
-    *signal_prev = signal_line[macd_count - 2];
-    *macd_last = macd_line[macd_count - 1];
-    *signal_last = signal_line[macd_count - 1];
+    double last_close = closes[n - 1];
+    if (last_close == 0.0) {
+        free(ema_fast); free(ema_slow); free(macd_line); free(signal_line);
+        return 0;
+    }
+
+    double macd_last = macd_line[macd_count - 1];
+    double signal_last = signal_line[macd_count - 1];
+
+    *macd_pct = (macd_last / last_close) * 100.0;
+    *signal_pct = (signal_last / last_close) * 100.0;
+
+    double hist_last = macd_last - signal_last;
+    *hist_pct = (hist_last / last_close) * 100.0;
+
+    // Detect cross if previous values are available
+    *cross_type = 0;
+    if (macd_count > SIGNAL_EMA_PERIOD) {
+        double macd_prev = macd_line[macd_count - 2];
+        double signal_prev = signal_line[macd_count - 2];
+        double hist_prev = macd_prev - signal_prev;
+        if (hist_prev < 0 && hist_last > 0) {
+            *cross_type = 1; // Bullish cross
+        } else if (hist_prev > 0 && hist_last < 0) {
+            *cross_type = -1; // Bearish cross
+        }
+    }
 
     free(ema_fast);
     free(ema_slow);
@@ -381,59 +386,13 @@ int compute_macd_values(const double *closes, int n, double *macd_last, double *
 }
 
 /**
- * @brief Determines background color based on MACD cross and intensity.
- * @param ticker_index Index of the ticker for tracking history
- * @param macd_last Current MACD value
- * @param signal_last Current Signal value
- * @param macd_prev Previous MACD value
- * @param signal_prev Previous Signal value
- * @return Pointer to background color string
- */
-const char* get_background_color(int ticker_index, double macd_last, double signal_last, double macd_prev, double signal_prev) {
-    // Check for cross
-    int cross_up = (macd_prev <= signal_prev) && (macd_last > signal_last);
-    int cross_down = (macd_prev >= signal_prev) && (macd_last < signal_last);
-    
-    if (cross_up || cross_down) {
-        // Update history
-        macd_history[ticker_index].macd_prev = macd_prev;
-        macd_history[ticker_index].signal_prev = signal_prev;
-        macd_history[ticker_index].macd_current = macd_last;
-        macd_history[ticker_index].signal_current = signal_last;
-        
-        double diff = macd_last - signal_last;
-        double abs_diff = diff < 0 ? -diff : diff;
-        
-        // Scale intensity (adjust multiplier as needed)
-        int intensity = (int)(abs_diff * 1000);
-        if (intensity > 255) intensity = 255;
-        
-        if (cross_up) {
-            // Green background with intensity
-            if (intensity > 150) return BGBGRN;  // Bright green
-            else if (intensity > 75) return "\x1B[48;5;114m";  // Medium green
-            else return BGGRN;  // Normal green
-        } else {
-            // Red background with intensity
-            if (intensity > 150) return BGBRED;  // Bright red
-            else if (intensity > 75) return "\x1B[48;5;160m";  // Medium red
-            else return BGRED;  // Normal red
-        }
-    } else {
-        // No cross, use default background
-        return "";
-    }
-}
-
-/**
  * @brief Parses JSON and prints updated stock data on a specific row.
  *        Uses DAILY close and previous close for Price/Change/%Change.
  *        Adds MACD% and Signal% standardized by close.
  * @param json_string The JSON data received from the API.
  * @param row The terminal row to print the output on.
- * @param ticker_index Index of the ticker for tracking history
  */
-void parse_and_print_stock_data(const char *json_string, int row, int ticker_index) {
+void parse_and_print_stock_data(const char *json_string, int row) {
     cJSON *root = cJSON_Parse(json_string);
     if (root == NULL) {
         print_error_on_line("JSON", "Parse Error", row);
@@ -479,24 +438,32 @@ void parse_and_print_stock_data(const char *json_string, int row, int ticker_ind
     double change = last_close - prev_close;
     double percent_change = (prev_close != 0.0) ? (change / prev_close) * 100.0 : 0.0;
 
-    // MACD and Signal values for cross detection
-    double macd_last = 0.0, signal_last = 0.0, macd_prev = 0.0, signal_prev = 0.0;
-    int has_macd = compute_macd_values(closes, n, &macd_last, &signal_last, &macd_prev, &signal_prev);
+    // MACD% and Signal% (standardized by last_close)
+    double macd_pct = 0.0, signal_pct = 0.0, hist_pct = 0.0;
+    int cross_type = 0;
+    int has_macd = compute_macd_percent(closes, n, &macd_pct, &signal_pct, &hist_pct, &cross_type);
 
-    // Determine background color based on MACD cross
-    const char* bg_color = "";
+    // Determine background color for ticker based on cross and intensity
+    const char* bg_color = KNRM;
     if (has_macd) {
-        bg_color = get_background_color(ticker_index, macd_last, signal_last, macd_prev, signal_prev);
+        double abs_hist = fabs(hist_pct);
+        if (cross_type == 1) { // Bullish cross
+            bg_color = (abs_hist > 0.5) ? BGBGRN : BGGRN;
+        } else if (cross_type == -1) { // Bearish cross
+            bg_color = (abs_hist > 0.5) ? BGBRED : BGRED;
+        }
     }
 
-    // Determine color based on change
+    // Determine color based on change and MACD
     const char* color_change = (change >= 0) ? KGRN : KRED;
     const char* color_pct = (percent_change >= 0) ? KGRN : KRED;
+    const char* color_macd = (has_macd && macd_pct >= 0) ? KGRN : KRED;
+    const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
     char macd_buf[16], sig_buf[16];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+8.2f", macd_last);
-        snprintf(sig_buf, sizeof(sig_buf), "%+8.2f", signal_last);
+        snprintf(macd_buf, sizeof(macd_buf), "%+8.2f%", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+8.2f%", signal_pct);
     } else {
         snprintf(macd_buf, sizeof(macd_buf), "%8s", "N/A");
         snprintf(sig_buf, sizeof(sig_buf), "%8s", "N/A");
@@ -506,17 +473,17 @@ void parse_and_print_stock_data(const char *json_string, int row, int ticker_ind
     printf("\033[%d;1H", row);
 
     // Print formatted data row. Clear to end of line with \033[K (no trailing newline)
-    // Columns: Ticker | Price | Change | % Change | MACD | Signal
+    // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
     char change_sign = (change >= 0) ? '+' : '-';
     char pct_sign = (percent_change >= 0) ? '+' : '-';
 
-    printf("%s%-10s%s | %s%10.2f%s | %s%c%10.2f%s | %s%c%6.2f%%%s | %s%8s%s | %s%8s%s\033[K",
+    printf("%s%-10s%s | %s%10.2f%s | %s%c%10.2f%s | %s%c%6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
            bg_color, symbol, KNRM,
            KNRM, last_close, KNRM,
            color_change, change_sign, (change >= 0 ? change : -change), KNRM,
            color_pct, pct_sign, (percent_change >= 0 ? percent_change : -percent_change), KNRM,
-           KNRM, macd_buf, KNRM,
-           KNRM, sig_buf, KNRM);
+           color_macd, macd_buf, KNRM,
+           color_signal, sig_buf, KNRM);
     fflush(stdout);
 
     free(closes);
@@ -553,7 +520,7 @@ void setup_dashboard_ui() {
     printf("\n");
 
     // Print static headers
-    // Columns: Ticker | Price | Change | % Change | MACD | Signal
+    // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
     printf("%-10s | %10s | %11s | %8s | %8s | %8s\n",
            "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("----------------------------------------------------------------------------------------------------\n");
