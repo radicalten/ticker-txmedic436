@@ -49,6 +49,7 @@ static void wii_video_init(void) {
 #define SIGNAL_EMA_PERIOD 9
 
 // Add or remove stock tickers here
+// YahooFinance has query limit of 2000 requests/hr 15 tickers every 30s = 15*2*60=1800 queries; 22 tickers every 40s = 22*1.5*60 = 1980, 22tk@45s = 22*1.333*60=1760 queries
 const char *tickers[] = {"BTC-USD", "ETH-USD", "DX-Y.NYB", "^TNX", "^SPX", "^RUA", "GC=F","HRC=F", "CL=F", "NG=F", "NVDA", "UNH", "PFE", "TGT", "TRAK"};
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
