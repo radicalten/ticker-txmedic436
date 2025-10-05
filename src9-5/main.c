@@ -23,7 +23,7 @@
 #define CROSS_SATURATION_PCT 0.5  // 0.5% MACD-Signal difference -> full intensity
 
 // Add or remove stock tickers here
-const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ETH-USD"};
+const char *tickers[] = {"BTC-USD", "ETH-USD", "XRP-USD", "BNB-USD", "SOL-USD", "DOGE-USD", "ADA-USD", "LINK-USD", "XLM-USD", "AVAX-USD", "BCH-USD", "LTC-USD", "DOT-USD", "XMR-USD", "ATOM-USD"};
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
