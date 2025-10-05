@@ -639,7 +639,7 @@ void run_countdown() {
 
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
         printf("\x1b[%d;1H", update_line);
-        printf("\x1b[KUpdating in %2d seconds...", i);
+        printf(" \x1b[KUpdating in %2d seconds...", i);
         fflush(stdout);
         sleep(1);
     }
