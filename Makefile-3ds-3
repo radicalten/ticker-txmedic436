@@ -16,7 +16,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
-SRCDIR 	:= 3ds-3
+SRCDIR 	:= 3ds-4
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
