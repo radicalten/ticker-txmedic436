@@ -513,7 +513,7 @@ void setup_dashboard_ui() {
 
     // Print static headers
     // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
-    printf("%-10s | %10s | %9s | %9s | %9s | %9s\n",
+    printf("%-10s | %10s | %10s | %9s | %8s | %8s\n",
            "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("----------------------------------------------------------------------------------------------------\n");
 
