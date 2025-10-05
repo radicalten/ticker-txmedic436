@@ -149,7 +149,7 @@ while (aptMainLoop()) {
     if (rem < 0) rem = 0;
     if (rem > UPDATE_INTERVAL_SECONDS) rem = UPDATE_INTERVAL_SECONDS; // optional clamp
     printf("\x1b[%d;1H", update_line);
-    printf("\x1b[KUpdating in %2d s...  (START to exit)", rem);
+    printf(" \x1b[KUpdating in %2d s...  (START to exit)", rem);
     fflush(stdout);
 
     present_frame();
@@ -639,7 +639,7 @@ void run_countdown() {
 
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
         printf("\x1b[%d;1H", update_line);
-        printf(" \x1b[KUpdating in %2d seconds...", i);
+        printf("\x1b[KUpdating in %2d seconds...", i);
         fflush(stdout);
         sleep(1);
     }
