@@ -3,7 +3,7 @@
 #include <string.h>
 #include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
-#include <math.h>   // For fabs()
+#include <math.h>   // For fabs(), isnan()
 #include <curl/curl.h>
 #include "cJSON.h"
 
@@ -23,7 +23,7 @@
 #define CROSS_SATURATION_PCT 0.5  // 0.5% MACD-Signal difference -> full intensity
 
 // Add or remove stock tickers here
-const char *tickers[] = {"AAPL", "GOOGL", "TSLA", "MSFT", "NVDA", "BTC-USD", "ETH-USD"};
+const char *tickers[] = {"BTC-USD", "ETH-USD", "XRP-USD", "BNB-USD", "SOL-USD", "DOGE-USD", "ADA-USD", "LINK-USD", "XLM-USD", "AVAX-USD", "BCH-USD", "LTC-USD", "DOT-USD", "XMR-USD", "ATOM-USD"};
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
@@ -32,8 +32,12 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 #define KGRN  "\x1B[32m" // Green (fg)
 #define KYEL  "\x1B[33m" // Yellow (fg)
 #define KBLU  "\x1B[34m" // Blue (fg)
-#define BRED  "\x1B[41m" // Red background
-#define BGRN  "\x1B[42m" // Green background
+// NEW: Background colors for price cell
+#define BRED  "\x1B[41m" // Red (bg)
+#define BGRN  "\x1B[42m" // Green (bg)
+
+// --- Per-ticker previous price (for bg coloring) ---
+static double* g_prev_price = NULL; // allocated in setup_dashboard_ui()
 
 // --- Struct to hold HTTP response data ---
 typedef struct {
@@ -378,7 +382,7 @@ int compute_macd_last_two(const double *closes, int n,
  * @brief Parses JSON and prints updated stock data on a specific row.
  *        Uses DAILY close and previous close for Price/Change/%Change.
  *        Adds MACD% and Signal% standardized by close and colors ticker background on cross.
- *        Also colors the Price cell background green/red based on up/down.
+ *        NEW: Colors price cell background green if price rose vs previous fetch, red if fell.
  * @param json_string The JSON data received from the API.
  * @param row The terminal row to print the output on.
  */
@@ -461,7 +465,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         bearish_cross = (macd_prev >= signal_prev) && (macd_last < signal_last);
     }
 
-    // Build ticker background code if a cross occurred (truecolor with intensity scaling)
+    // Build ticker background code if a cross occurred
     char ticker_bg[32] = {0};
     const char* ticker_bg_prefix = "";
     const char* ticker_bg_suffix = "";
@@ -471,6 +475,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         if (t > 1.0) t = 1.0;
         if (t < 0.0) t = 0.0;
 
+        // Keep a minimum visible intensity so the highlight is noticeable
         double intensity = 0.25 + 0.75 * t; // [0.25, 1.0]
 
         int r = 0, g = 0, b = 0;
@@ -486,10 +491,19 @@ void parse_and_print_stock_data(const char *json_string, int row) {
         ticker_bg_suffix = KNRM; // reset after ticker so rest of row is unaffected
     }
 
-    // Background for the Price column based on up/down
+    // NEW: Determine price background based on movement vs previous fetch
+    int ticker_index = row - DATA_START_ROW;
+    if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0; // safety
+    double prev_price_seen = (g_prev_price ? g_prev_price[ticker_index] : NAN);
+
     const char* price_bg = "";
-    if (change > 0.0) price_bg = BGRN;
-    else if (change < 0.0) price_bg = BRED;
+    if (!isnan(prev_price_seen)) {
+        if (last_close > prev_price_seen) {
+            price_bg = BGRN; // price went up -> green background
+        } else if (last_close < prev_price_seen) {
+            price_bg = BRED; // price went down -> red background
+        } // equal -> default (no bg)
+    }
 
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
@@ -502,7 +516,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     printf("%s%-10s%s | %s%s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            // Ticker with optional background highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
-           // Price with background based on up/down and blue foreground
+           // Price with optional bg highlighting for movement
            price_bg, KBLU, last_close, KNRM,
            // Change
            color_change, change_sign, (change >= 0 ? change : -change), KNRM,
@@ -513,6 +527,11 @@ void parse_and_print_stock_data(const char *json_string, int row) {
            // Signal%
            color_signal, sig_buf, KNRM);
     fflush(stdout);
+
+    // NEW: Store last_close for next comparison
+    if (g_prev_price) {
+        g_prev_price[ticker_index] = last_close;
+    }
 
     free(closes);
     cJSON_Delete(root);
@@ -542,6 +561,14 @@ void setup_dashboard_ui() {
     hide_cursor();
     // ANSI: \033[2J clears the entire screen. \033[H moves cursor to top-left.
     printf("\033[2J\033[H");
+
+    // NEW: Allocate and initialize previous price storage
+    if (!g_prev_price) {
+        g_prev_price = (double*)malloc(sizeof(double) * num_tickers);
+        if (g_prev_price) {
+            for (int i = 0; i < num_tickers; i++) g_prev_price[i] = NAN;
+        }
+    }
 
     printf("--- C Terminal Stock Dashboard ---\n");
     printf("\n"); // Leave a blank line for the dynamic timestamp
@@ -612,4 +639,9 @@ void show_cursor() {
 void cleanup_on_exit() {
     // This function is called by atexit() to ensure the cursor is restored.
     show_cursor();
+    // NEW: Free previous price storage
+    if (g_prev_price) {
+        free(g_prev_price);
+        g_prev_price = NULL;
+    }
 }
