@@ -5,6 +5,7 @@
 #include <time.h>   // For timestamp
 #include <curl/curl.h>
 #include "cJSON.h"
+#include <math.h>
 
 // Wii-specific init (guarded)
 #if defined(GEKKO) && defined(HW_RVL)
