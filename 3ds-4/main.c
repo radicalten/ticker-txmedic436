@@ -495,7 +495,7 @@ void parse_and_print_stock_data(const char *json_string, int row) {
     // %Change (sign + value + %)
     double absPct = fabs(percent_change);
     char signPct = (percent_change >= 0) ? '+' : '-';
-    printf("%s%c%*.1f%%%s ", color_pct, signPct, COL_PCT - 2, absPct, KNRM);
+    printf("%s%c%*.2f%%%s ", color_pct, signPct, COL_PCT - 2, absPct, KNRM);
 
     // MACD% and Signal% (or N/A)
     if (has_macd) {
