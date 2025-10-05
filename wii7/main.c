@@ -552,7 +552,7 @@ void run_countdown() {
         // ANSI: Move cursor to the update line
         printf("\033[%d;1H", update_line);
         // ANSI: Clear line and print countdown (no trailing newline)
-        printf("\033[K Updating in %2d seconds...", i);
+        printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
         sleep(1);
     }
