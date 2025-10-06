@@ -574,7 +574,7 @@ void setup_dashboard_ui() {
 
     // Headers made to fit 50 columns
     // Tkr(7)|Price(9)|Chg(8)|%Chg(7)|MACD(7)|Sig(7)
-    printf("%-7s|%9s|%8s|%7s|%7s|%7s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------------------------\n");
 
     for (int i = 0; i < num_tickers; i++) {
