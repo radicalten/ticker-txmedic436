@@ -705,6 +705,31 @@ void setup_dashboard_ui() {
     // ANSI: \033[2J clears the entire screen. \033[H moves cursor to top-left.
     printf("\033[2J\033[H");
 
+  #ifdef __3DS__
+    printf("3DS Stock Dashboard\n");
+    printf("\n"); // row 2 reserved for timestamp
+    printf("\n");
+
+    // Headers (compact)
+    printf("%-*s %-*s %-*s %-*s %-*s %-*s\n",
+           COL_TKR,  "Tkr",
+           COL_PRICE,"Price",
+           COL_CHG,  "Chg",
+           COL_PCT,  "%Chg",
+           COL_MACD, "MACD",
+           COL_SIG,  "Sig");
+    // Divider (fit screen width)
+    for (int i = 0; i < CONSOLE_COLS; ++i) putchar('-');
+    putchar('\n');
+
+    // Initial placeholder text for each ticker at exact rows
+    for (int i = 0; i < num_tickers; i++) {
+        int row = DATA_START_ROW + i;
+        printf("\x1b[%d;1H", row);
+        printf("%-*s %sFetching daily data...%s\x1b[K", COL_TKR, tickers[i], KYEL, KNRM);
+    }
+  #else
+
     // NEW: Allocate and initialize previous price storage
     if (!g_prev_price) {
         g_prev_price = (double*)malloc(sizeof(double) * num_tickers);
@@ -729,6 +754,7 @@ void setup_dashboard_ui() {
         printf("\033[%d;1H", row);
         printf("%-10s | %sFetching 5m+1d data...%s\033[K", tickers[i], KYEL, KNRM);
     }
+  #endif
     fflush(stdout);
 }
 
@@ -743,8 +769,12 @@ void update_timestamp() {
 
     // ANSI: Move cursor to row 2, column 1
     printf("\033[2;1H");
+  #ifdef __3DS__
+    printf("Updated: %s\x1b[K", time_str);
+  #else
     // ANSI: \033[K clears from the cursor to the end of the line (no trailing newline)
     printf("Last updated: %s\033[K", time_str);
+  #endif
     fflush(stdout);
 }
 
