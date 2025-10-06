@@ -139,7 +139,7 @@ while (aptMainLoop()) {
         char url[512];
         for (int i = 0; i < num_tickers; i++) {
             int current_row = DATA_START_ROW + i;
-            snprintf(url, sizeof(url), API_URL_FORMAT, tickers[i]);
+            snprintf(url, sizeof(url), API_URL_5M_FORMAT, tickers[i]);
 
             char *json_response = fetch_url(url);
             if (json_response) {
