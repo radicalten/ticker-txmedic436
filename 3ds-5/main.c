@@ -88,8 +88,6 @@ static inline void present_frame(void) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 }
-#else
-static inline void present_frame(void) { /* no-op on desktop */ }
 #endif
 
 // --- Main Application ---
@@ -121,9 +119,10 @@ int main(void) {
 
     // Initial, one-time setup: clear screen, hide cursor, print static layout
     setup_dashboard_ui();
-    present_frame(); // added for 3DS
+    
   
 #ifdef __3DS__
+    present_frame(); // moved for 3DS
     // 3DS: non-blocking main loop with countdown and START to exit
     time_t last_fetch = 0;
     int update_line = DATA_START_ROW + num_tickers + 1;
