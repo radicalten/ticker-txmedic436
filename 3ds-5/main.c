@@ -533,7 +533,7 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
     printf("\033[%d;1H", row);
 
     // 50-col layout: Tkr(7)|Price(9)|Chg(8)|%Chg(7)|MACD(7)|Sig(7)
-    printf("%s%-7s%s|%s%9.2f%s|%s%+8.2f%s|%s%+6.2f%%%s|%s%7s%s|%s%7s%s\033[K",
+    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_5m, KNRM,
            color_change, change_to_show, KNRM,
