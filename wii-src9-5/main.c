@@ -7,6 +7,36 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+// Wii-specific init (guarded)
+#if defined(GEKKO) && defined(HW_RVL)
+#include <gccore.h>
+#include <wiiuse/wpad.h>
+#include <wiisocket.h>
+
+static void *xfb = NULL;
+static GXRModeObj *rmode = NULL;
+
+static void wii_video_init(void) {
+    VIDEO_Init();
+    WPAD_Init();
+
+    rmode = VIDEO_GetPreferredMode(NULL);
+    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    console_init(xfb, 0, 0, rmode->fbWidth, rmode->xfbHeight,
+                 rmode->fbWidth * VI_DISPLAY_PIX_SZ);
+
+    VIDEO_Configure(rmode);
+    VIDEO_SetNextFramebuffer(xfb);
+    VIDEO_SetBlack(FALSE);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
+
+    // Clear and home
+    printf("\x1b[2J\x1b[H");
+}
+#endif
+
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 15
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
@@ -70,6 +100,20 @@ int compute_macd_last_two(const double *closes, int n,
 int main(void) {
     // Register cleanup function to run on exit (e.g., Ctrl+C)
     atexit(cleanup_on_exit);
+
+    // Wii video & network init
+#if defined(GEKKO) && defined(HW_RVL)
+    wii_video_init();
+    // The original documentation for libwiisocket showed using multiple tries to init and get an ip.
+	// I don't think this is necessary, but I'm leaving it in just in case.
+	int socket_init_success = -1;
+	for (int attempts = 0;attempts < 3;attempts++) {
+		socket_init_success = wiisocket_init();
+		printf("attempt: %d wiisocket_init: %d\n", attempts, socket_init_success);
+		if (socket_init_success == 0)
+			break;
+	}
+#endif
 
     // Initialize libcurl
     curl_global_init(CURL_GLOBAL_ALL);
