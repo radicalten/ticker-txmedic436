@@ -642,6 +642,11 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
 
+  #ifdef __3DS__
+    // Compact 3DS-friendly row: Tkr Price Chg %Chg MACD% Sig%
+    // Widths are set by macros to fit ~50 columns.
+    printf("%-*s ", COL_TKR, symbol);
+
     // Print formatted data row. Clear to end of line with \033[K (no trailing newline)
     // Columns: Ticker | Price | Change | % Change | MACD% | Signal%
     char change_sign = (change_to_show >= 0) ? '+' : '-';
@@ -680,6 +685,10 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     // ANSI: Move cursor to the start of the specified row
     printf("\033[%d;1H", row);
+  #ifdef __3DS__
+    // Compact error line for 3DS
+    printf("%-*s %s%-38s%s\x1b[K", COL_TKR, ticker, KRED, error_msg, KNRM);
+  #endif
     // Print formatted error and clear rest of the line (no trailing newline)
     printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
