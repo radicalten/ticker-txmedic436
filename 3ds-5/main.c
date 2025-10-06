@@ -522,8 +522,8 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
     // Pre-format MACD and Signal cells to 7 chars (fits the 50-col layout)
     char macd_buf[16], sig_buf[16];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.2f%%", macd_pct);
-        snprintf(sig_buf,   sizeof(sig_buf),   "%+6.2f%%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
+        snprintf(sig_buf,   sizeof(sig_buf),   "%+6.3f%", signal_pct);
     } else {
         snprintf(macd_buf, sizeof(macd_buf), "N/A");
         snprintf(sig_buf,   sizeof(sig_buf), "N/A");
