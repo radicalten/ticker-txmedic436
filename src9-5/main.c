@@ -541,7 +541,7 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
            // Ticker with optional background highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            // Price with optional bg highlighting for movement (5m price)
-           price_bg, KNRM, last_close_5m, KNRM,
+           price_bg, last_close_5m, KNRM,
            // Change (1d if available, else 5m)
            color_change, change_sign, (change_to_show >= 0 ? change_to_show : -change_to_show), KNRM,
            // % Change (1d if available, else 5m)
