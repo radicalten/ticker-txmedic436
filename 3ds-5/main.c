@@ -7,6 +7,11 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+#ifdef __3DS__
+#include <3ds.h>
+#include <malloc.h> // memalign for SOC
+#endif
+
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
@@ -34,6 +39,17 @@ const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 // NEW: Background colors for price cell and ticker bg
 #define BRED  "\x1B[41m" // Red (bg)
 #define BGRN  "\x1B[42m" // Green (bg)
+
+// Compact column widths to fit the 3DS console (~50 cols)
+#ifdef __3DS__
+  #define CONSOLE_COLS 50
+  #define COL_TKR   8
+  #define COL_PRICE 9
+  #define COL_CHG   9
+  #define COL_PCT   7
+  #define COL_MACD  6
+  #define COL_SIG   6
+#endif
 
 // --- Per-ticker previous price (for bg coloring) ---
 static double* g_prev_price = NULL; // allocated in setup_dashboard_ui()
@@ -66,8 +82,37 @@ int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last);
 
+#ifdef __3DS__
+static inline void present_frame(void) {
+    gfxFlushBuffers();
+    gfxSwapBuffers();
+    gspWaitForVBlank();
+}
+#else
+static inline void present_frame(void) { /* no-op on desktop */ }
+#endif
+
 // --- Main Application ---
 int main(void) {
+#ifdef __3DS__
+    // 3DS init
+    gfxInitDefault();
+    consoleInit(GFX_TOP, NULL);
+
+    // Initialize sockets for libcurl (required on 3DS)
+    u32* socBuffer = (u32*)memalign(0x1000, 0x100000);
+    if (!socBuffer) {
+        printf("%sSOC memalign failed%s\n", KRED, KNRM);
+        present_frame();
+    } else {
+        Result socRes = socInit(socBuffer, 0x100000);
+        if (R_FAILED(socRes)) {
+            printf("%sSOC init failed: 0x%08lX%s\n", KRED, socRes, KNRM);
+            present_frame();
+        }
+    }
+#endif
+
     // Register cleanup function to run on exit (e.g., Ctrl+C)
     atexit(cleanup_on_exit);
 
@@ -76,6 +121,7 @@ int main(void) {
 
     // Initial, one-time setup: clear screen, hide cursor, print static layout
     setup_dashboard_ui();
+    present_frame();
 
     while (1) {
         // Update the timestamp at the top of the dashboard
