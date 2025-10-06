@@ -177,10 +177,7 @@ while (aptMainLoop()) {
     gfxExit();
     return 0;
   
-  #endif 
-}
-  
-
+#else
     while (1) {
         // Update the timestamp at the top of the dashboard
         update_timestamp();
@@ -217,6 +214,7 @@ while (aptMainLoop()) {
     curl_global_cleanup();
     show_cursor(); // Restore cursor
     return 0;
+#endif
 }
 
 // --- Helper Functions ---
