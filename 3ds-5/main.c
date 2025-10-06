@@ -25,7 +25,7 @@
 #define SIGNAL_EMA_PERIOD 9
 
 // Add or remove stock tickers here
-const char *tickers[] = {"BTC-USD", "ETH-USD", "XRP-USD", "BNB-USD", "SOL-USD", "DOGE-USD", "ADA-USD", "LINK-USD", "XLM-USD", "AVAX-USD", "BCH-USD", "LTC-USD", "DOT-USD", "XMR-USD", "ATOM-USD"};
+const char *tickers[] = {"BTC-USD", "ETH-USD", "DX-Y.NYB", "^TNX", "^SPX", "^RUA", "GC=F","HRC=F", "CL=F", "NG=F", "NVDA", "UNH", "PFE", "TGT", "TRAK"};
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
