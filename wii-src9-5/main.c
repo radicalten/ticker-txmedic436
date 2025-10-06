@@ -38,7 +38,7 @@ static void wii_video_init(void) {
 #endif
 
 // --- Configuration ---
-#define UPDATE_INTERVAL_SECONDS 15
+#define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 // Keep MACD from 5m candles (5 days)
 #define API_URL_5M_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=5d&interval=5m&includePrePost=false"
