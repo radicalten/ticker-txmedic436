@@ -664,6 +664,7 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
            // Signal%
            color_signal, sig_buf, KNRM);
     fflush(stdout);
+  #endif
 
     // NEW: Store last_close_5m for next comparison
     if (g_prev_price) {
@@ -686,10 +687,12 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
   #ifdef __3DS__
     // Compact error line for 3DS
     printf("%-*s %s%-38s%s\x1b[K", COL_TKR, ticker, KRED, error_msg, KNRM);
-  #endif
+  #else
     // Print formatted error and clear rest of the line (no trailing newline)
     printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
+  #endif
     fflush(stdout);
+
 }
 
 
