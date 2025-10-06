@@ -537,7 +537,7 @@ void parse_and_print_stock_data(const char *json_5m, const char *json_1d, int ro
     char change_sign = (change_to_show >= 0) ? '+' : '-';
     char pct_sign = (pct_to_show >= 0) ? '+' : '-';
 
-    printf("%s%-10s%s | %s%10.2f%s | %s%c%10.2f%s | %s%c%6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+    printf("%s%-10s%s | %s%s%10.2f%s | %s%c%9.2f%s | %s%c%10.2f%%%s | %s%9s%s | %s%9s%s\033[K",
            // Ticker with optional background highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            // Price with optional bg highlighting for movement (5m price)
