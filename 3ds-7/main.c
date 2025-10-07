@@ -15,7 +15,7 @@
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 // Only 1d interval
-#define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=5d&interval=4h&includePrePost=true"
+#define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=4h&includePrePost=true"
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // MACD parameters (session-based, in "polls" units)
@@ -201,13 +201,6 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-
-        #ifdef __3DS__
-        // On 3DS, you may not have a CA bundle installed. Disable verification for quick testing.
-        // For production, install a CA bundle and re-enable these.
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
-        #endif
 
         res = curl_easy_perform(curl_handle);
 
@@ -540,7 +533,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Print narrowed row (fits 50 cols on 3DS top screen)
     // "%-8s | %9.2f | %+6.2f%% | %+5.2f|%+5.2f"
     printf("\033[%d;1H", row);
-    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
+    printf("%s%-8s%s | %9.2f | %s%+6.2f%%%s | %s%5s%s|%s%5s%s\033[K",
            tkr_pre, symbol, tkr_suf,
            last_close_1d,
            color_pct, pct_change_1d, KNRM,
@@ -591,7 +584,7 @@ void setup_dashboard_ui() {
 
     // Headers (fit 50 cols)
     // "Tkr      |     Price |   %Chg |   MACD|    Sig"
-    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("%-8s | %9s | %6s | %5s|%5s\n", "Tkr", "Price", "%Chg", "MACD", "Sig");
     printf("--------------------------------------------------\n");
 
     // Placeholders
