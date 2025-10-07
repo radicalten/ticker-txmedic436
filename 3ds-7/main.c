@@ -540,7 +540,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Print narrowed row (fits 50 cols on 3DS top screen)
     // "%-8s | %9.2f | %+6.2f%% | %+5.2f|%+5.2f"
     printf("\033[%d;1H", row);
-    printf("%s%-8s%s | %9.2f | %s%+6.2f%%%s | %s%5s%s|%s%5s%s\033[K",
+    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
            tkr_pre, symbol, tkr_suf,
            last_close_1d,
            color_pct, pct_change_1d, KNRM,
@@ -591,7 +591,7 @@ void setup_dashboard_ui() {
 
     // Headers (fit 50 cols)
     // "Tkr      |     Price |   %Chg |   MACD|    Sig"
-    printf("%-8s | %9s | %6s | %5s|%5s\n", "Tkr", "Price", "%Chg", "MACD", "Sig");
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------------------------\n");
 
     // Placeholders
