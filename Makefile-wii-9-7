@@ -1,0 +1,38 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
+include $(DEVKITPPC)/wii_rules
+CC 					:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
+MACHDEP := -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math -funroll-loops -fauto-inc-dec -finline-functions
+INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I/opt/devkitpro/libogc/include
+CFLAGS 	+= -O3 -flto \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS += $(CFLAGS) \
+-Wl,-Map,$(notdir $@).map \
+-L/opt/devkitpro/portlibs/wii/lib \
+-L/opt/devkitpro/portlibs/ppc/lib \
+-L/opt/devkitpro/libogc/lib \
+-L/opt/devkitpro/libogc/lib/wii \
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwiisocket -lwiikeyboard -lfat -lwiiuse -lbte -logc -lm
+TARGET  := myapp
+SRCDIR 	:= wii-src9-7
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+ELF2DOL     := elf2dol
+
+all: $(TARGET).dol
+$(TARGET).dol: $(TARGET).elf
+	$(ELF2DOL) $< $@
+
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+
+.PHONY: clean test
