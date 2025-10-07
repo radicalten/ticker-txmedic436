@@ -1,0 +1,40 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/3ds_rules
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
+INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS := $(CFLAGS) \
+-specs=3dsx.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/3ds/lib \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libctru/lib \
+-L/opt/devkitpro/libctru/lib/3ds \
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+TARGET  := myapp
+SRCDIR 	:= 3ds-7
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+all: $(TARGET).3dsx
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into 3DSX (requires devkitPro tools)
+$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
+	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
+
+.PHONY: all clean
