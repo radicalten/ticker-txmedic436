@@ -10,11 +10,8 @@
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-
-// Use 1h interval, include pre/post market
-// Range=1d provides recent 1h bars; adjust to 2d/5d if you want more history.
-#define API_URL_1H_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1h&includePrePost=true"
-
+// Only 1d interval
+#define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1h&includePrePost=true"
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
 // MACD parameters (session-based, in "polls" units)
@@ -59,7 +56,7 @@ typedef struct {
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
-void parse_and_print_stock_data_1h(const char *json_1h, int row);
+void parse_and_print_stock_data(const char *json_1d, int row);
 void setup_dashboard_ui();
 void update_timestamp();
 void run_countdown();
@@ -73,7 +70,7 @@ int ensure_series_capacity(Series* s, int min_cap);
 int series_append(Series* s, double v);
 
 // Helpers for extracting closes and computing MACD
-int extract_interval_closes(cJSON *result, double **out_closes, int *out_n);
+int extract_daily_closes(cJSON *result, double **out_closes, int *out_n);
 void compute_ema_series(const double *data, int n, int period, double *out);
 int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct);
 int compute_macd_last_two(const double *closes, int n,
@@ -90,18 +87,18 @@ int main(void) {
     while (1) {
         update_timestamp();
 
-        char url1h[512];
+        char url1d[512];
         for (int i = 0; i < num_tickers; i++) {
             int current_row = DATA_START_ROW + i;
 
-            snprintf(url1h, sizeof(url1h), API_URL_1H_FORMAT, tickers[i]);
+            snprintf(url1d, sizeof(url1d), API_URL_1D_FORMAT, tickers[i]);
 
-            char *json_1h = fetch_url(url1h);
-            if (json_1h) {
-                parse_and_print_stock_data_1h(json_1h, current_row);
-                free(json_1h);
+            char *json_1d = fetch_url(url1d);
+            if (json_1d) {
+                parse_and_print_stock_data(json_1d, current_row);
+                free(json_1d);
             } else {
-                print_error_on_line(tickers[i], "Failed to fetch 1h data", current_row);
+                print_error_on_line(tickers[i], "Failed to fetch 1d data", current_row);
             }
         }
 
@@ -168,9 +165,9 @@ char* fetch_url(const char *url) {
 
 /**
  * @brief Extracts close prices from the Yahoo chart JSON result object.
- *        Works for any interval (1m, 5m, 1h, 1d, etc.).
+ *        Works for any interval (1m, 5m, 1d, etc.).
  */
-int extract_interval_closes(cJSON *result, double **out_closes, int *out_n) {
+int extract_daily_closes(cJSON *result, double **out_closes, int *out_n) {
     if (!result || !out_closes || !out_n) return 0;
 
     cJSON *indicators = cJSON_GetObjectItemCaseSensitive(result, "indicators");
@@ -381,21 +378,21 @@ int series_append(Series* s, double v) {
 }
 
 /**
- * @brief Parses 1h JSON for price and 1-hour change, and computes MACD/Signal
+ * @brief Parses 1d JSON for price and daily change, and computes MACD/Signal
  *        from the LIVE session series (polled values appended each update).
  */
-void parse_and_print_stock_data_1h(const char *json_1h, int row) {
-    // Parse 1h JSON
-    cJSON *root1 = cJSON_Parse(json_1h);
+void parse_and_print_stock_data(const char *json_1d, int row) {
+    // Parse 1d JSON
+    cJSON *root1 = cJSON_Parse(json_1d);
     if (!root1) {
-        print_error_on_line("JSON", "Parse Error (1h)", row);
+        print_error_on_line("JSON", "Parse Error (1d)", row);
         return;
     }
 
     cJSON *chart1 = cJSON_GetObjectItemCaseSensitive(root1, "chart");
     cJSON *result_array1 = cJSON_GetObjectItemCaseSensitive(chart1, "result");
     if (!cJSON_IsArray(result_array1) || cJSON_GetArraySize(result_array1) == 0) {
-        char* err_desc = (char*)"Invalid 1h ticker or no data";
+        char* err_desc = (char*)"Invalid 1d ticker or no data";
         cJSON* error_obj = cJSON_GetObjectItemCaseSensitive(chart1, "error");
         if (error_obj && cJSON_GetObjectItemCaseSensitive(error_obj, "description")) {
             err_desc = cJSON_GetObjectItemCaseSensitive(error_obj, "description")->valuestring;
@@ -416,34 +413,34 @@ void parse_and_print_stock_data_1h(const char *json_1h, int row) {
 
     double *closes1 = NULL;
     int n1 = 0;
-    int ok1 = extract_interval_closes(result1, &closes1, &n1);
+    int ok1 = extract_daily_closes(result1, &closes1, &n1);
     if (!ok1 || n1 < 2) {
-        print_error_on_line(symbol, "Insufficient 1h data", row);
+        print_error_on_line(symbol, "Insufficient 1d data", row);
         if (closes1) free(closes1);
         cJSON_Delete(root1);
         return;
     }
 
-    // Latest 1h price and 1h change
-    double last_close_1h = closes1[n1 - 1];
-    double prev_close_1h = closes1[n1 - 2];
-    double change_1h = last_close_1h - prev_close_1h;
-    double pct_change_1h = (prev_close_1h != 0.0) ? (change_1h / prev_close_1h) * 100.0 : 0.0;
+    // Latest daily price and daily change
+    double last_close_1d = closes1[n1 - 1];
+    double prev_close_1d = closes1[n1 - 2];
+    double change_1d = last_close_1d - prev_close_1d;
+    double pct_change_1d = (prev_close_1d != 0.0) ? (change_1d / prev_close_1d) * 100.0 : 0.0;
 
     // Session series update (append the latest observed price)
     int ticker_index = row - DATA_START_ROW;
     if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0; // safety
     Series* s = &g_series[ticker_index];
-    series_append(s, last_close_1h);
+    series_append(s, last_close_1d);
 
     // Compute MACD/Signal from the session series
     double macd_prev = 0.0, macd_last = 0.0, signal_prev = 0.0, signal_last = 0.0;
     int has_macd = compute_macd_last_two(s->data, s->n, &macd_prev, &macd_last, &signal_prev, &signal_last);
 
     double macd_pct = 0.0, signal_pct = 0.0;
-    if (has_macd && last_close_1h != 0.0) {
-        macd_pct = (macd_last / last_close_1h) * 100.0;
-        signal_pct = (signal_last / last_close_1h) * 100.0;
+    if (has_macd && last_close_1d != 0.0) {
+        macd_pct = (macd_last / last_close_1d) * 100.0;
+        signal_pct = (signal_last / last_close_1d) * 100.0;
     }
 
     // Detect crossover at the latest session step
@@ -470,43 +467,43 @@ void parse_and_print_stock_data_1h(const char *json_1h, int row) {
     double prev_price_seen = (g_prev_price ? g_prev_price[ticker_index] : NAN);
     const char* price_bg = "";
     if (!isnan(prev_price_seen)) {
-        if (last_close_1h > prev_price_seen) price_bg = BGRN;
-        else if (last_close_1h < prev_price_seen) price_bg = BRED;
+        if (last_close_1d > prev_price_seen) price_bg = BGRN;
+        else if (last_close_1d < prev_price_seen) price_bg = BRED;
     }
 
     // Colors
-    const char* color_change = (change_1h >= 0) ? KGRN : KRED;
-    const char* color_pct = (pct_change_1h >= 0) ? KGRN : KRED;
+    const char* color_change = (change_1d >= 0) ? KGRN : KRED;
+    const char* color_pct = (pct_change_1d >= 0) ? KGRN : KRED;
     const char* color_macd = (has_macd && macd_pct >= 0) ? KGRN : KRED;
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
-    // MACD buffers (fixed percent formatting)
-    char macd_buf[16], sig_buf[16];
+    // MACD buffers
+    char macd_buf[20], sig_buf[20];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+7.3f%%", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+7.3f%%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "   N/A ");
-        snprintf(sig_buf, sizeof(sig_buf), "   N/A ");
+        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
     }
 
     // Print row
     printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+7.2f%%%s | %s%8s%s | %s%8s%s\033[K",
+    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
            // Ticker with cross highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            // Price with movement bg
-           price_bg, last_close_1h, KNRM,
-           // 1h Change and % Change
-           color_change, change_1h, KNRM,
-           color_pct, pct_change_1h, KNRM,
+           price_bg, last_close_1d, KNRM,
+           // Daily Change and %Change
+           color_change, change_1d, KNRM,
+           color_pct, pct_change_1d, KNRM,
            // MACD% and Signal% from session
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
     fflush(stdout);
 
     // Store last price for next comparison
-    if (g_prev_price) g_prev_price[ticker_index] = last_close_1h;
+    if (g_prev_price) g_prev_price[ticker_index] = last_close_1d;
 
     if (closes1) free(closes1);
     cJSON_Delete(root1);
@@ -536,20 +533,20 @@ void setup_dashboard_ui() {
         // Series entries start with data=NULL, n=0, cap=0
     }
 
-    printf("--- C Terminal Stock Dashboard (1h | MACD from live session polls) ---\n");
+    printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
     printf("\n"); // timestamp line
     printf("\n");
 
     // Headers
-    printf("%-10s | %10s | %10s | %7s | %8s | %8s\n",
-           "Tkr", "Price", "Chg(1h)", "%(1h)", "MACD", "Sig");
+    printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
+           "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("----------------------------------------------------------------------------------------------------\n");
 
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
         printf("\033[%d;1H", row);
-        printf("%-10s | %sFetching 1h data...%s\033[K", tickers[i], KYEL, KNRM);
+        printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
