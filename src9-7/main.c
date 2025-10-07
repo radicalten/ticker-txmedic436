@@ -421,11 +421,30 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
         return;
     }
 
-    // Latest daily price and daily change
+    // Latest price and change vs previousClose (with fallbacks)
     double last_close_1d = closes1[n1 - 1];
-    double prev_close_1d = closes1[n1 - 2];
-    double change_1d = last_close_1d - prev_close_1d;
-    double pct_change_1d = (prev_close_1d != 0.0) ? (change_1d / prev_close_1d) * 100.0 : 0.0;
+
+    double prev_close_ref = NAN;
+    if (meta1) {
+        cJSON *pc = cJSON_GetObjectItemCaseSensitive(meta1, "previousClose");
+        if (pc && cJSON_IsNumber(pc)) {
+            prev_close_ref = pc->valuedouble;
+        } else {
+            cJSON *cpc = cJSON_GetObjectItemCaseSensitive(meta1, "chartPreviousClose");
+            if (cpc && cJSON_IsNumber(cpc)) {
+                prev_close_ref = cpc->valuedouble;
+            } else {
+                cJSON *rmpc = cJSON_GetObjectItemCaseSensitive(meta1, "regularMarketPreviousClose");
+                if (rmpc && cJSON_IsNumber(rmpc)) {
+                    prev_close_ref = rmpc->valuedouble;
+                }
+            }
+        }
+    }
+
+    double base_prev_close = (!isnan(prev_close_ref)) ? prev_close_ref : closes1[n1 - 2];
+    double change_1d = last_close_1d - base_prev_close;
+    double pct_change_1d = (base_prev_close != 0.0) ? (change_1d / base_prev_close) * 100.0 : 0.0;
 
     // Session series update (append the latest observed price)
     int ticker_index = row - DATA_START_ROW;
@@ -490,14 +509,10 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Print row
     printf("\033[%d;1H", row);
     printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
-           // Ticker with cross highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
-           // Price with movement bg
            price_bg, last_close_1d, KNRM,
-           // Daily Change and %Change
            color_change, change_1d, KNRM,
            color_pct, pct_change_1d, KNRM,
-           // MACD% and Signal% from session
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
     fflush(stdout);
