@@ -2,7 +2,7 @@ name: 3DS-curl-v5
 on:
   push:
     branches:
-    - master
+    - main
 jobs:
   build-3ds:
     runs-on: ubuntu-latest
@@ -12,7 +12,7 @@ jobs:
       uses: actions/checkout@v4
     - name: Compile
       run: |
-        make -f Makefile-3ds-5
+        make -f Makefile-3ds-7
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
