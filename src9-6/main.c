@@ -489,7 +489,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
     // Print row
     printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%8s%s | %s%8s%s\033[K",
+    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
            // Ticker with cross highlight
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            // Price with movement bg
