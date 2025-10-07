@@ -7,6 +7,36 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+// Wii-specific init (guarded)
+#if defined(GEKKO) && defined(HW_RVL)
+#include <gccore.h>
+#include <wiiuse/wpad.h>
+#include <wiisocket.h>
+
+static void *xfb = NULL;
+static GXRModeObj *rmode = NULL;
+
+static void wii_video_init(void) {
+    VIDEO_Init();
+    WPAD_Init();
+
+    rmode = VIDEO_GetPreferredMode(NULL);
+    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    console_init(xfb, 0, 0, rmode->fbWidth, rmode->xfbHeight,
+                 rmode->fbWidth * VI_DISPLAY_PIX_SZ);
+
+    VIDEO_Configure(rmode);
+    VIDEO_SetNextFramebuffer(xfb);
+    VIDEO_SetBlack(FALSE);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
+
+    // Clear and home
+    printf("\x1b[2J\x1b[H");
+}
+#endif
+
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
@@ -80,6 +110,21 @@ int compute_macd_last_two(const double *closes, int n,
 // --- Main Application ---
 int main(void) {
     atexit(cleanup_on_exit);
+
+    // Wii video & network init
+    #if defined(GEKKO) && defined(HW_RVL)
+    wii_video_init();
+    // The original documentation for libwiisocket showed using multiple tries to init and get an ip.
+	// I don't think this is necessary, but I'm leaving it in just in case.
+	int socket_init_success = -1;
+	for (int attempts = 0;attempts < 3;attempts++) {
+		socket_init_success = wiisocket_init();
+		printf("attempt: %d wiisocket_init: %d\n", attempts, socket_init_success);
+		if (socket_init_success == 0)
+			break;
+	}
+    #endif
+    
     curl_global_init(CURL_GLOBAL_ALL);
 
     setup_dashboard_ui();
@@ -145,6 +190,13 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+
+        // On Wii, there's no CA store by default — disable verification or bundle a CA set.
+        // Don't do this in production for sensitive data.
+        #if defined(GEKKO) && defined(HW_RVL)
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+        #endif
 
         res = curl_easy_perform(curl_handle);
 
