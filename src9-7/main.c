@@ -8,7 +8,7 @@
 #include "cJSON.h"
 
 // --- Configuration ---
-#define UPDATE_INTERVAL_SECONDS 30
+#define UPDATE_INTERVAL_SECONDS 3
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 // Only 1d interval
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1h&includePrePost=true"
@@ -21,9 +21,7 @@
 
 // Add or remove stock tickers here
 const char *tickers[] = {
-    "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX", "^IXIC",
-    "GC=F", "CL=F", "NG=F", "NVDA", "INTC",
-    "AMD", "MU", "PFE", "UNH", "TGT", "TRAK"
+    "BTC-USD", "ETH-USD"
 };
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
