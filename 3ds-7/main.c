@@ -1,25 +1,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h> // For sleep()
-#include <time.h>   // For timestamp
-#include <math.h>   // For fabs(), isnan()
-#include <curl/curl.h>
+#include <time.h>
+#include <math.h>
+
+#ifndef __3DS__
+  #include <unistd.h>       // sleep()
+  #include <curl/curl.h>
+#else
+  #include <3ds.h>
+  #include <malloc.h>
+#endif
+
 #include "cJSON.h"
 
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-// Only 1d interval
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=4h&includePrePost=true"
-#define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
+
+// Layout: start table after 5 header lines
+#define DATA_START_ROW 6
 
 // MACD parameters (session-based, in "polls" units)
 #define FAST_EMA_PERIOD 12
 #define SLOW_EMA_PERIOD 26
 #define SIGNAL_EMA_PERIOD 9
 
-// Add or remove stock tickers here
+// Add or remove stock tickers here (note: ^SPX is really ^GSPC on Yahoo, but kept as-is)
 const char *tickers[] = {
     "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX", "^IXIC",
     "GC=F", "CL=F", "NG=F", "NVDA", "INTC",
@@ -28,12 +36,12 @@ const char *tickers[] = {
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
 // --- Color Definitions for Terminal ---
-#define KNRM  "\x1B[0m"  // Reset all attributes
-#define KRED  "\x1B[31m" // Red (fg)
-#define KGRN  "\x1B[32m" // Green (fg)
-#define KYEL  "\x1B[33m" // Yellow (fg)
-#define BRED  "\x1B[41m" // Red (bg)
-#define BGRN  "\x1B[42m" // Green (bg)
+#define KNRM  "\x1B[0m"   // Reset all attributes
+#define KRED  "\x1B[31m"  // Red (fg)
+#define KGRN  "\x1B[32m"  // Green (fg)
+#define KYEL  "\x1B[33m"  // Yellow (fg)
+#define BRED  "\x1B[41m"  // Red (bg)
+#define BGRN  "\x1B[42m"  // Green (bg)
 
 // --- Per-ticker previous price (for bg coloring) ---
 static double* g_prev_price = NULL; // allocated in setup_dashboard_ui()
@@ -53,13 +61,34 @@ typedef struct {
     size_t size;
 } MemoryStruct;
 
+// --- 3DS helpers/state ---
+#ifdef __3DS__
+  // SOC buffer for networking
+  #define SOC_ALIGN       0x1000
+  #define SOC_BUFFERSIZE  (1*1024*1024)
+  static u32* g_socBuf = NULL;
+
+  static inline void sleep_seconds(int s) {
+      // libctru provides svcSleepThread in nanoseconds
+      for (int i=0;i<s;i++) svcSleepThread(1000000000ULL);
+  }
+  static inline void ui_present(void) {
+      gfxFlushBuffers();
+      gspWaitForVBlank();
+      gfxSwapBuffers();
+  }
+#else
+  static inline void sleep_seconds(int s) { sleep(s); }
+  static inline void ui_present(void) { /* no-op on desktop */ }
+#endif
+
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
 void parse_and_print_stock_data(const char *json_1d, int row);
 void setup_dashboard_ui();
 void update_timestamp();
-void run_countdown();
+void run_countdown(int *should_quit);
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
 void hide_cursor();
 void show_cursor();
@@ -79,11 +108,65 @@ int compute_macd_last_two(const double *closes, int n,
 
 // --- Main Application ---
 int main(void) {
-    atexit(cleanup_on_exit);
-    curl_global_init(CURL_GLOBAL_ALL);
+#ifdef __3DS__
+    // Init 3DS video + console
+    gfxInitDefault();
+    consoleInit(GFX_TOP, NULL);
 
+    // Network init (SOC + HTTPC)
+    g_socBuf = (u32*)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
+    if (!g_socBuf || R_FAILED(socInit(g_socBuf, SOC_BUFFERSIZE))) {
+        printf("%sNetwork init failed%s\n", KRED, KNRM);
+        ui_present();
+        sleep_seconds(3);
+        gfxExit();
+        return 1;
+    }
+    if (R_FAILED(httpcInit(0))) {
+        printf("%sHTTPC init failed%s\n", KRED, KNRM);
+        ui_present();
+        sleep_seconds(3);
+        socExit();
+        free(g_socBuf); g_socBuf = NULL;
+        gfxExit();
+        return 1;
+    }
+#else
+    curl_global_init(CURL_GLOBAL_ALL);
+#endif
+
+    atexit(cleanup_on_exit);
     setup_dashboard_ui();
 
+#ifdef __3DS__
+    int should_quit = 0;
+    while (aptMainLoop() && !should_quit) {
+        // Exit on START
+        hidScanInput();
+        u32 kDown = hidKeysDown();
+        if (kDown & KEY_START) break;
+
+        update_timestamp();
+
+        for (int i = 0; i < num_tickers; i++) {
+            int current_row = DATA_START_ROW + i;
+
+            char url1d[512];
+            snprintf(url1d, sizeof(url1d), API_URL_1D_FORMAT, tickers[i]);
+
+            char *json_1d = fetch_url(url1d);
+            if (json_1d) {
+                parse_and_print_stock_data(json_1d, current_row);
+                free(json_1d);
+            } else {
+                print_error_on_line(tickers[i], "Fetch failed", current_row);
+            }
+            ui_present();
+        }
+
+        run_countdown(&should_quit);
+    }
+#else
     while (1) {
         update_timestamp();
 
@@ -102,16 +185,22 @@ int main(void) {
             }
         }
 
-        run_countdown();
+        run_countdown(NULL);
     }
 
     curl_global_cleanup();
+#endif
+
     show_cursor();
+#ifdef __3DS__
+    gfxExit();
+#endif
     return 0;
 }
 
 // --- Helper Functions ---
 
+#ifndef __3DS__
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     MemoryStruct *mem = (MemoryStruct *)userp;
@@ -129,8 +218,10 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
 
     return realsize;
 }
+#endif
 
 char* fetch_url(const char *url) {
+#ifndef __3DS__
     CURL *curl_handle;
     CURLcode res;
     MemoryStruct chunk;
@@ -145,6 +236,8 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
 
         res = curl_easy_perform(curl_handle);
 
@@ -161,11 +254,69 @@ char* fetch_url(const char *url) {
 
     free(chunk.memory);
     return NULL;
+#else
+    // 3DS HTTPC path
+    Result rc = 0;
+    httpcContext context;
+    u32 statuscode = 0;
+
+    rc = httpcOpenContext(&context, HTTPC_METHOD_GET, url, 1);
+    if (R_FAILED(rc)) return NULL;
+
+    // Disable TLS verification to maximize compatibility with modern HTTPS
+    httpcSetSSLOpt(&context, SSLCOPT_DisableVerify);
+    httpcAddRequestHeaderField(&context, "User-Agent", USER_AGENT);
+    httpcAddRequestHeaderField(&context, "Accept", "*/*");
+
+    rc = httpcBeginRequest(&context);
+    if (R_FAILED(rc)) { httpcCloseContext(&context); return NULL; }
+
+    rc = httpcGetResponseStatusCode(&context, &statuscode, 0);
+    if (R_FAILED(rc) || statuscode != 200) {
+        httpcCloseContext(&context);
+        return NULL;
+    }
+
+    u32 dlSize = 0;
+    rc = httpcGetDownloadSizeState(&context, NULL, &dlSize);
+    if (R_FAILED(rc) || dlSize == 0) {
+        // Some endpoints may not return content-length; attempt a reasonable cap
+        dlSize = 1024 * 1024; // 1MB cap
+    }
+
+    char *buf = (char*)malloc(dlSize + 1);
+    if (!buf) { httpcCloseContext(&context); return NULL; }
+
+    u32 total = 0;
+    while (total < dlSize) {
+        u32 justRead = 0;
+        rc = httpcReceiveData(&context, (u8*)buf + total, dlSize - total);
+        if (R_FAILED(rc)) {
+            // If we got partial data, still try to null-terminate and use it
+            break;
+        }
+        // httpcReceiveData blocks until either it read all requested or request finished;
+        // query actual downloaded amount:
+        u32 curDownloaded = 0, curSize = 0;
+        httpcGetDownloadSizeState(&context, &curDownloaded, &curSize);
+        if (curDownloaded <= total) {
+            // Nothing more; break
+            total = curDownloaded;
+            break;
+        }
+        total = curDownloaded;
+        if (curSize < dlSize) dlSize = curSize;
+        if (curDownloaded >= curSize) break;
+    }
+
+    buf[total] = 0;
+    httpcCloseContext(&context);
+    return buf;
+#endif
 }
 
 /**
  * @brief Extracts close prices from the Yahoo chart JSON result object.
- *        Works for any interval (1m, 5m, 1d, etc.).
  */
 int extract_daily_closes(cJSON *result, double **out_closes, int *out_n) {
     if (!result || !out_closes || !out_n) return 0;
@@ -207,24 +358,15 @@ int extract_daily_closes(cJSON *result, double **out_closes, int *out_n) {
     return 1;
 }
 
-/**
- * @brief Computes an EMA series for data[] into out[].
- *        out[i] is defined starting at i = period-1.
- */
 void compute_ema_series(const double *data, int n, int period, double *out) {
     if (!data || !out || n <= 0 || period <= 0 || period > n) return;
 
     double k = 2.0 / (period + 1.0);
 
-    // Seed EMA with SMA of first 'period'
     double sum = 0.0;
-    for (int i = 0; i < period; i++) {
-        sum += data[i];
-    }
+    for (int i = 0; i < period; i++) sum += data[i];
     double ema = sum / period;
-    for (int i = 0; i < period - 1; i++) {
-        out[i] = 0.0; // not used
-    }
+    for (int i = 0; i < period - 1; i++) out[i] = 0.0;
     out[period - 1] = ema;
 
     for (int i = period; i < n; i++) {
@@ -233,10 +375,6 @@ void compute_ema_series(const double *data, int n, int period, double *out) {
     }
 }
 
-/**
- * @brief Computes MACD% and Signal% relative to the last close.
- *        Not used directly for session-only series, but kept for completeness.
- */
 int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct) {
     if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD)) return 0;
 
@@ -257,10 +395,7 @@ int compute_macd_percent(const double *closes, int n, double *macd_pct, double *
     }
 
     double *macd_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!macd_line) {
-        free(ema_fast); free(ema_slow);
-        return 0;
-    }
+    if (!macd_line) { free(ema_fast); free(ema_slow); return 0; }
 
     for (int i = 0; i < macd_count; i++) {
         int idx = macd_start + i;
@@ -298,10 +433,6 @@ int compute_macd_percent(const double *closes, int n, double *macd_pct, double *
     return 1;
 }
 
-/**
- * @brief Computes the last two values of MACD and Signal lines (raw, not %).
- *        Uses FAST_EMA_PERIOD, SLOW_EMA_PERIOD, SIGNAL_EMA_PERIOD.
- */
 int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last) {
@@ -350,10 +481,7 @@ int compute_macd_last_two(const double *closes, int n,
     *signal_last = signal_line[macd_count - 1];
     *signal_prev = signal_line[macd_count - 2];
 
-    free(ema_fast);
-    free(ema_slow);
-    free(macd_line);
-    free(signal_line);
+    free(ema_fast); free(ema_slow); free(macd_line); free(signal_line);
     return 1;
 }
 
@@ -382,7 +510,6 @@ int series_append(Series* s, double v) {
  *        from the LIVE session series (polled values appended each update).
  */
 void parse_and_print_stock_data(const char *json_1d, int row) {
-    // Parse 1d JSON
     cJSON *root1 = cJSON_Parse(json_1d);
     if (!root1) {
         print_error_on_line("JSON", "Parse Error (1d)", row);
@@ -421,34 +548,28 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
         return;
     }
 
-    // Latest price and change vs previousClose (with fallbacks)
     double last_close_1d = closes1[n1 - 1];
 
     double prev_close_ref = NAN;
     if (meta1) {
         cJSON *pc = cJSON_GetObjectItemCaseSensitive(meta1, "previousClose");
-        if (pc && cJSON_IsNumber(pc)) {
-            prev_close_ref = pc->valuedouble;
-        } else {
+        if (pc && cJSON_IsNumber(pc)) prev_close_ref = pc->valuedouble;
+        else {
             cJSON *cpc = cJSON_GetObjectItemCaseSensitive(meta1, "chartPreviousClose");
-            if (cpc && cJSON_IsNumber(cpc)) {
-                prev_close_ref = cpc->valuedouble;
-            } else {
+            if (cpc && cJSON_IsNumber(cpc)) prev_close_ref = cpc->valuedouble;
+            else {
                 cJSON *rmpc = cJSON_GetObjectItemCaseSensitive(meta1, "regularMarketPreviousClose");
-                if (rmpc && cJSON_IsNumber(rmpc)) {
-                    prev_close_ref = rmpc->valuedouble;
-                }
+                if (rmpc && cJSON_IsNumber(rmpc)) prev_close_ref = rmpc->valuedouble;
             }
         }
     }
-
     double base_prev_close = (!isnan(prev_close_ref)) ? prev_close_ref : closes1[n1 - 2];
     double change_1d = last_close_1d - base_prev_close;
     double pct_change_1d = (base_prev_close != 0.0) ? (change_1d / base_prev_close) * 100.0 : 0.0;
 
-    // Session series update (append the latest observed price)
+    // Session series update
     int ticker_index = row - DATA_START_ROW;
-    if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0; // safety
+    if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0;
     Series* s = &g_series[ticker_index];
     series_append(s, last_close_1d);
 
@@ -473,13 +594,8 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     const char* ticker_bg_prefix = "";
     const char* ticker_bg_suffix = "";
     if (has_macd) {
-        if (bullish_cross) {
-            ticker_bg_prefix = BGRN;
-            ticker_bg_suffix = KNRM;
-        } else if (bearish_cross) {
-            ticker_bg_prefix = BRED;
-            ticker_bg_suffix = KNRM;
-        }
+        if (bullish_cross) { ticker_bg_prefix = BGRN; ticker_bg_suffix = KNRM; }
+        else if (bearish_cross) { ticker_bg_prefix = BRED; ticker_bg_suffix = KNRM; }
     }
 
     // Price cell background vs previous fetch
@@ -497,24 +613,37 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
     // MACD buffers
-    char macd_buf[20], sig_buf[20];
+    char macd_buf[16], sig_buf[16];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+5.2f%%", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+5.2f%%", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
+        snprintf(macd_buf, sizeof(macd_buf), "%5s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%5s", "N/A");
     }
 
-    // Print row
-    printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+    // Print row (3DS-friendly narrow layout; desktop keeps wider table)
+    printf("\x1b[%d;1H", row);
+#ifdef __3DS__
+    // 3DS console ~50 cols; avoid wrapping. Use spaces instead of pipes.
+    // Layout widths: Tkr(6) Price(9.2) Chg(7.2) %(6.2) MACD(6) Sig(6) => ~46 cols (+colors)
+    printf("%s%-6.6s%s %s%9.2f%s %s%+7.2f%s %s%+6.2f%%%s %s%6s%s %s%6s%s\x1b[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
            color_pct, pct_change_1d, KNRM,
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
+#else
+    // Original wide layout
+    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\x1b[K",
+           ticker_bg_prefix, symbol, ticker_bg_suffix,
+           price_bg, last_close_1d, KNRM,
+           color_change, change_1d, KNRM,
+           color_pct, pct_change_1d, KNRM,
+           color_macd, macd_buf, KNRM,
+           color_signal, sig_buf, KNRM);
+#endif
     fflush(stdout);
 
     // Store last price for next comparison
@@ -525,14 +654,19 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 }
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
-    printf("\033[%d;1H", row);
-    printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
+    printf("\x1b[%d;1H", row);
+#ifdef __3DS__
+    // Keep under 50 columns
+    printf("%-6.6s %s%-40.40s%s\x1b[K", ticker, KRED, error_msg, KNRM);
+#else
+    printf("%-10s | %s%-80s%s\x1b[K", ticker, KRED, error_msg, KNRM);
+#endif
     fflush(stdout);
 }
 
 void setup_dashboard_ui() {
     hide_cursor();
-    printf("\033[2J\033[H");
+    printf("\x1b[2J\x1b[H"); // Clear screen + home cursor
 
     // Allocate prev price storage
     if (!g_prev_price) {
@@ -545,58 +679,99 @@ void setup_dashboard_ui() {
     // Allocate session series storage
     if (!g_series) {
         g_series = (Series*)calloc(num_tickers, sizeof(Series));
-        // Series entries start with data=NULL, n=0, cap=0
     }
 
+#ifdef __3DS__
+    printf("%s--- 3DS Stock Dashboard (1d | MACD live) --- %s\n", KYEL, KNRM);
+    printf("Press START to exit, A to update now.\n");
+    printf("\n"); // timestamp line
+    printf("\n");
+    // Headers (narrow)
+    printf("%-6s %9s %8s %6s %6s %6s\n", "Tkr", "Price", "Chg", "%", "MACD", "Sig");
+    printf("----------------------------------------------\n");
+#else
     printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
     printf("\n"); // timestamp line
     printf("\n");
-
-    // Headers
+    // Headers (wide)
     printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
            "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("----------------------------------------------------------------------------------------------------\n");
+#endif
 
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
-        printf("\033[%d;1H", row);
-        printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
+        printf("\x1b[%d;1H", row);
+#ifdef __3DS__
+        printf("%-6.6s %sFetching...%s\x1b[K", tickers[i], KYEL, KNRM);
+#else
+        printf("%-10s | %sFetching 1d data...%s\x1b[K", tickers[i], KYEL, KNRM);
+#endif
     }
     fflush(stdout);
+    ui_present();
 }
 
 void update_timestamp() {
     time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
+    struct tm *tmv = localtime(&t);
     char time_str[64];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tmv);
 
-    printf("\033[2;1H");
-    printf("Last updated: %s\033[K", time_str);
+    printf("\x1b[2;1H");
+#ifdef __3DS__
+    printf("Last updated: %s    \x1b[K", time_str);
+#else
+    printf("Last updated: %s\x1b[K", time_str);
+#endif
     fflush(stdout);
+    ui_present();
 }
 
-void run_countdown() {
+void run_countdown(int *should_quit) {
     int update_line = DATA_START_ROW + num_tickers + 1;
 
+#ifdef __3DS__
+    // Let user press A to update immediately, START to exit
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
-        printf("\033[%d;1H", update_line);
-        printf("\033[KUpdating in %2d seconds...", i);
+        printf("\x1b[%d;1H", update_line);
+        printf("\x1b[KUpdating in %2d seconds... (A=now, START=exit)", i);
         fflush(stdout);
-        sleep(1);
+        ui_present();
+
+        // Poll keys each second
+        hidScanInput();
+        u32 kDown = hidKeysDown();
+        if (kDown & KEY_START) {
+            if (should_quit) *should_quit = 1;
+            return;
+        }
+        if (kDown & KEY_A) break;
+
+        sleep_seconds(1);
     }
-    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    printf("\x1b[%d;1H\x1b[KUpdating now...           ", update_line);
     fflush(stdout);
+    ui_present();
+#else
+    for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
+        printf("\x1b[%d;1H", update_line);
+        printf("\x1b[KUpdating in %2d seconds...", i);
+        fflush(stdout);
+        sleep_seconds(1);
+    }
+    printf("\x1b[%d;1H\x1b[KUpdating now...           ", update_line);
+    fflush(stdout);
+#endif
 }
 
 void hide_cursor() {
-    printf("\033[?25l");
+    printf("\x1b[?25l");
     fflush(stdout);
 }
-
 void show_cursor() {
-    printf("\033[?25h");
+    printf("\x1b[?25h");
     fflush(stdout);
 }
 
@@ -615,4 +790,12 @@ void cleanup_on_exit() {
         free(g_series);
         g_series = NULL;
     }
+
+#ifdef __3DS__
+    httpcExit();
+    socExit();
+    if (g_socBuf) { free(g_socBuf); g_socBuf = NULL; }
+#else
+    // curl_global_cleanup() is called in main on desktop
+#endif
 }
