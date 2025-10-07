@@ -3,7 +3,7 @@ CFLAGS 	:= -O3 -flto
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
-SRCS    := $(wildcard src9-6/*.c)
+SRCS    := $(wildcard src9-7/*.c)
 OBJS    := $(patsubst %.c,%.o,$(SRCS))
 all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
