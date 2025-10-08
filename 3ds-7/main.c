@@ -207,6 +207,13 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
+        #ifdef __3DS__
+        // On 3DS, you may not have a CA bundle installed. Disable verification for quick testing.
+        // For production, install a CA bundle and re-enable these.
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+        #endif
+
         res = curl_easy_perform(curl_handle);
 
         if (res != CURLE_OK) {
