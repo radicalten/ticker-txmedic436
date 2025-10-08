@@ -1,33 +1,31 @@
-// 3DS port of your ANSI+libcurl dashboard
-// Build: devkitPro + libctru + portlibs (curl, cJSON). See notes below.
-
-#include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <math.h>
+#include <time.h>   // For timestamp
+#include <math.h>   // For fabs(), isnan()
 #include <curl/curl.h>
 #include "cJSON.h"
+
+#ifdef __3DS__
+#include <3ds.h>
+#include <malloc.h>
+#else
+#include <unistd.h> // For sleep()
+#endif
 
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=4h&includePrePost=true"
+// Keep data table starting at row 6 (fits 3DS console height with 16 tickers)
 #define DATA_START_ROW 6
 
-// MACD parameters (session-based)
+// MACD parameters (session-based, in "polls" units)
 #define FAST_EMA_PERIOD 12
 #define SLOW_EMA_PERIOD 26
 #define SIGNAL_EMA_PERIOD 9
 
-// TLS options (choose one)
-// 1) Secure: place a CA bundle at romfs:/cacert.pem and set this to 1
-// 2) Insecure: set to 0 and we’ll disable peer/host verification (not recommended)
-#define USE_ROMFS_CA_BUNDLE 0
-#define CA_BUNDLE_PATH "romfs:/cacert.pem"
-
-// --- Tickers ---
+// Add or remove stock tickers here
 const char *tickers[] = {
     "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX", "^IXIC",
     "GC=F", "CL=F", "NG=F", "NVDA", "INTC",
@@ -35,39 +33,31 @@ const char *tickers[] = {
 };
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
-// --- ANSI Colors ---
-#define KNRM  "\x1B[0m"
-#define KRED  "\x1B[31m"
-#define KGRN  "\x1B[32m"
-#define KYEL  "\x1B[33m"
-#define BRED  "\x1B[41m"
-#define BGRN  "\x1B[42m"
+// --- Color Definitions for Terminal (ANSI) ---
+#define KNRM  "\x1B[0m"  // Reset all attributes
+#define KRED  "\x1B[31m" // Red (fg)
+#define KGRN  "\x1B[32m" // Green (fg)
+#define KYEL  "\x1B[33m" // Yellow (fg)
+#define BRED  "\x1B[41m" // Red (bg)
+#define BGRN  "\x1B[42m" // Green (bg)
 
 // --- Per-ticker previous price (for bg coloring) ---
-static double* g_prev_price = NULL;
+static double* g_prev_price = NULL; // allocated in setup_dashboard_ui()
 
-// --- Per-ticker session series (polled values) ---
+// --- Per-ticker session series (live polled values) ---
 typedef struct {
     double *data;
     int n;
     int cap;
 } Series;
 
-static Series* g_series = NULL;
+static Series* g_series = NULL; // allocated in setup_dashboard_ui()
 
-// --- HTTP response buffer ---
+// --- Struct to hold HTTP response data ---
 typedef struct {
     char *memory;
     size_t size;
 } MemoryStruct;
-
-// --- 3DS networking buffer ---
-#define SOC_ALIGN      0x1000
-#define SOC_BUFFERSIZE 0x100000
-static u32* g_socBuf = NULL;
-
-// --- Control flags ---
-static bool g_should_quit = false;
 
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
@@ -75,17 +65,17 @@ char* fetch_url(const char *url);
 void parse_and_print_stock_data(const char *json_1d, int row);
 void setup_dashboard_ui();
 void update_timestamp();
-void run_countdown();
+void update_status_line(int seconds_left);
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
 void hide_cursor();
 void show_cursor();
 void cleanup_on_exit();
 
-// Series helpers
+// Helpers: series ops
 int ensure_series_capacity(Series* s, int min_cap);
 int series_append(Series* s, double v);
 
-// JSON/MACD helpers
+// Helpers for extracting closes and computing MACD
 int extract_daily_closes(cJSON *result, double **out_closes, int *out_n);
 void compute_ema_series(const double *data, int n, int period, double *out);
 int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct);
@@ -93,48 +83,116 @@ int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last);
 
-// 3DS init/exit
-static int init_3ds_services(void);
-static void exit_3ds_services(void);
+#ifdef __3DS__
+// 3DS SOC buffer
+static u32* g_socbuf = NULL;
+#endif
 
-// --- Main ---
-int main(int argc, char** argv) {
-    if (init_3ds_services() != 0) {
-        printf("3DS init failed. Press START to exit.\n");
+// --- Main Application ---
+int main(void) {
+    atexit(cleanup_on_exit);
+
+#ifdef __3DS__
+    // 3DS init
+    gfxInitDefault();
+    consoleInit(GFX_TOP, NULL);
+
+    // Initialize networking (SOC) for curl
+    g_socbuf = (u32*)memalign(0x1000, 0x100000);
+    if (!g_socbuf) {
+        printf("SOC memalign failed\nPress START to exit.\n");
         while (aptMainLoop()) {
             hidScanInput();
             if (hidKeysDown() & KEY_START) break;
             gspWaitForVBlank();
+            gfxFlushBuffers();
+            gfxSwapBuffers();
         }
-        exit_3ds_services();
-        return 1;
+        gfxExit();
+        return 0;
+    }
+    if (socInit(g_socbuf, 0x100000) != 0) {
+        printf("socInit failed\nPress START to exit.\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gspWaitForVBlank();
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+        }
+        gfxExit();
+        return 0;
     }
 
-    atexit(cleanup_on_exit);
     curl_global_init(CURL_GLOBAL_DEFAULT);
-
-#if USE_ROMFS_CA_BUNDLE
-    romfsInit();
-#endif
-
     setup_dashboard_ui();
-    printf("\nPress START to exit.\n");
-    fflush(stdout);
 
-    // Main fetch loop (frame-agnostic)
-    while (aptMainLoop() && !g_should_quit) {
+    u64 interval_ms = (u64)UPDATE_INTERVAL_SECONDS * 1000ULL;
+    u64 next_update = osGetTime(); // first update immediately
+
+    while (aptMainLoop()) {
         hidScanInput();
         u32 kDown = hidKeysDown();
-        if (kDown & KEY_START) {
-            g_should_quit = true;
-            break;
+        if (kDown & KEY_START) break;
+
+        u64 now = osGetTime();
+        int seconds_left = (next_update > now) ? (int)((next_update - now + 999) / 1000) : 0;
+
+        if (now >= next_update) {
+            // Fire update
+            update_timestamp();
+
+            char url1d[512];
+            printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
+            for (int i = 0; i < num_tickers; i++) {
+                int current_row = DATA_START_ROW + i;
+
+                snprintf(url1d, sizeof(url1d), API_URL_1D_FORMAT, tickers[i]);
+
+                char *json_1d = fetch_url(url1d);
+                if (json_1d) {
+                    parse_and_print_stock_data(json_1d, current_row);
+                    free(json_1d);
+                } else {
+                    print_error_on_line(tickers[i], "Fetch failed", current_row);
+                }
+
+                // Let the screen stay responsive during long updates
+                gspWaitForVBlank();
+                gfxFlushBuffers();
+                gfxSwapBuffers();
+            }
+
+            next_update = osGetTime() + interval_ms;
+            seconds_left = UPDATE_INTERVAL_SECONDS;
         }
 
+        update_status_line(seconds_left);
+
+        gspWaitForVBlank();
+        gfxFlushBuffers();
+        gfxSwapBuffers();
+    }
+
+    curl_global_cleanup();
+    socExit();
+    if (g_socbuf) { free(g_socbuf); g_socbuf = NULL; }
+    gfxExit();
+    return 0;
+
+#else
+    // Desktop/original behavior
+    curl_global_init(CURL_GLOBAL_ALL);
+
+    setup_dashboard_ui();
+
+    while (1) {
         update_timestamp();
 
         char url1d[512];
-        for (int i = 0; i < num_tickers && !g_should_quit; i++) {
+        for (int i = 0; i < num_tickers; i++) {
             int current_row = DATA_START_ROW + i;
+
             snprintf(url1d, sizeof(url1d), API_URL_1D_FORMAT, tickers[i]);
 
             char *json_1d = fetch_url(url1d);
@@ -144,64 +202,27 @@ int main(int argc, char** argv) {
             } else {
                 print_error_on_line(tickers[i], "Failed to fetch 1d data", current_row);
             }
-
-            // Make sure screen stays responsive
-            gfxFlushBuffers();
-            gfxSwapBuffers();
-            gspWaitForVBlank();
-
-            // Allow quick exit during heavy loops
-            hidScanInput();
-            if (hidKeysDown() & KEY_START) { g_should_quit = true; break; }
         }
 
-        if (g_should_quit) break;
-
-        run_countdown();
-
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
+        // Simple countdown (blocking) on desktop; 3DS uses non-blocking loop
+        int update_line = DATA_START_ROW + num_tickers + 1;
+        for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
+            printf("\033[%d;1H\033[KUpdating in %2d s...", update_line, i);
+            fflush(stdout);
+            sleep(1);
+        }
+        printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+        fflush(stdout);
     }
 
     curl_global_cleanup();
-#if USE_ROMFS_CA_BUNDLE
-    romfsExit();
-#endif
-    exit_3ds_services();
     show_cursor();
     return 0;
+#endif
 }
 
-// --- 3DS helpers ---
-static int init_3ds_services(void) {
-    gfxInitDefault();
-    consoleInit(GFX_TOP, NULL);
+// --- Helper Functions ---
 
-    // Init network (SOC)
-    g_socBuf = (u32*)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
-    if (!g_socBuf) {
-        printf("memalign(SOC) failed\n");
-        return -1;
-    }
-    Result rc = socInit(g_socBuf, SOC_BUFFERSIZE);
-    if (R_FAILED(rc)) {
-        printf("socInit failed: 0x%08lX\n", rc);
-        return -2;
-    }
-    return 0;
-}
-
-static void exit_3ds_services(void) {
-    if (g_socBuf) {
-        socExit();
-        free(g_socBuf);
-        g_socBuf = NULL;
-    }
-    gfxExit();
-}
-
-// --- HTTP ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     MemoryStruct *mem = (MemoryStruct *)userp;
@@ -216,6 +237,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     memcpy(&(mem->memory[mem->size]), contents, realsize);
     mem->size += realsize;
     mem->memory[mem->size] = 0;
+
     return realsize;
 }
 
@@ -234,18 +256,14 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-
-#if USE_ROMFS_CA_BUNDLE
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 1L);
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 2L);
-        curl_easy_setopt(curl_handle, CURLOPT_CAINFO, CA_BUNDLE_PATH);
-#else
-        // Insecure fallback (use only if you can’t ship a CA bundle)
+#ifdef __3DS__
+        // Often necessary on 3DS homebrew due to missing CA bundle:
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
 #endif
 
         res = curl_easy_perform(curl_handle);
+
         if (res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
             free(chunk.memory);
@@ -261,7 +279,10 @@ char* fetch_url(const char *url) {
     return NULL;
 }
 
-// --- JSON + MACD ---
+/**
+ * @brief Extracts close prices from the Yahoo chart JSON result object.
+ *        Works for any interval (1m, 5m, 1d, etc.).
+ */
 int extract_daily_closes(cJSON *result, double **out_closes, int *out_n) {
     if (!result || !out_closes || !out_n) return 0;
 
@@ -302,16 +323,24 @@ int extract_daily_closes(cJSON *result, double **out_closes, int *out_n) {
     return 1;
 }
 
+/**
+ * @brief Computes an EMA series for data[] into out[].
+ *        out[i] is defined starting at i = period-1.
+ */
 void compute_ema_series(const double *data, int n, int period, double *out) {
     if (!data || !out || n <= 0 || period <= 0 || period > n) return;
 
     double k = 2.0 / (period + 1.0);
 
+    // Seed EMA with SMA of first 'period'
     double sum = 0.0;
-    for (int i = 0; i < period; i++) sum += data[i];
+    for (int i = 0; i < period; i++) {
+        sum += data[i];
+    }
     double ema = sum / period;
-
-    for (int i = 0; i < period - 1; i++) out[i] = 0.0;
+    for (int i = 0; i < period - 1; i++) {
+        out[i] = 0.0; // not used
+    }
     out[period - 1] = ema;
 
     for (int i = period; i < n; i++) {
@@ -320,22 +349,33 @@ void compute_ema_series(const double *data, int n, int period, double *out) {
     }
 }
 
+/**
+ * @brief Computes MACD% and Signal% relative to the last close.
+ */
 int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct) {
     if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD)) return 0;
 
     double *ema_fast = (double *)malloc(sizeof(double) * n);
     double *ema_slow = (double *)malloc(sizeof(double) * n);
-    if (!ema_fast || !ema_slow) { free(ema_fast); free(ema_slow); return 0; }
-
+    if (!ema_fast || !ema_slow) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
     compute_ema_series(closes, n, FAST_EMA_PERIOD, ema_fast);
     compute_ema_series(closes, n, SLOW_EMA_PERIOD, ema_slow);
 
     int macd_start = SLOW_EMA_PERIOD - 1;
     int macd_count = n - macd_start;
-    if (macd_count <= 0) { free(ema_fast); free(ema_slow); return 0; }
+    if (macd_count <= 0) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
 
     double *macd_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!macd_line) { free(ema_fast); free(ema_slow); return 0; }
+    if (!macd_line) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
 
     for (int i = 0; i < macd_count; i++) {
         int idx = macd_start + i;
@@ -343,12 +383,15 @@ int compute_macd_percent(const double *closes, int n, double *macd_pct, double *
     }
 
     if (macd_count < SIGNAL_EMA_PERIOD) {
-        free(ema_fast); free(ema_slow); free(macd_line); return 0;
+        free(ema_fast); free(ema_slow); free(macd_line);
+        return 0;
     }
 
     double *signal_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!signal_line) { free(ema_fast); free(ema_slow); free(macd_line); return 0; }
-
+    if (!signal_line) {
+        free(ema_fast); free(ema_slow); free(macd_line);
+        return 0;
+    }
     compute_ema_series(macd_line, macd_count, SIGNAL_EMA_PERIOD, signal_line);
 
     double last_close = closes[n - 1];
@@ -363,10 +406,16 @@ int compute_macd_percent(const double *closes, int n, double *macd_pct, double *
     *macd_pct = (macd_last / last_close) * 100.0;
     *signal_pct = (signal_last / last_close) * 100.0;
 
-    free(ema_fast); free(ema_slow); free(macd_line); free(signal_line);
+    free(ema_fast);
+    free(ema_slow);
+    free(macd_line);
+    free(signal_line);
     return 1;
 }
 
+/**
+ * @brief Computes the last two values of MACD and Signal lines (raw, not %).
+ */
 int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last) {
@@ -374,18 +423,25 @@ int compute_macd_last_two(const double *closes, int n,
 
     double *ema_fast = (double *)malloc(sizeof(double) * n);
     double *ema_slow = (double *)malloc(sizeof(double) * n);
-    if (!ema_fast || !ema_slow) { free(ema_fast); free(ema_slow); return 0; }
-
+    if (!ema_fast || !ema_slow) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
     compute_ema_series(closes, n, FAST_EMA_PERIOD, ema_fast);
     compute_ema_series(closes, n, SLOW_EMA_PERIOD, ema_slow);
 
     int macd_start = SLOW_EMA_PERIOD - 1;
     int macd_count = n - macd_start;
-    if (macd_count <= 0) { free(ema_fast); free(ema_slow); return 0; }
+    if (macd_count <= 0) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
 
     double *macd_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!macd_line) { free(ema_fast); free(ema_slow); return 0; }
-
+    if (!macd_line) {
+        free(ema_fast); free(ema_slow);
+        return 0;
+    }
     for (int i = 0; i < macd_count; i++) {
         int idx = macd_start + i;
         macd_line[i] = ema_fast[idx] - ema_slow[idx];
@@ -393,12 +449,14 @@ int compute_macd_last_two(const double *closes, int n,
 
     if (macd_count < SIGNAL_EMA_PERIOD + 1) {
         free(ema_fast); free(ema_slow); free(macd_line);
-        return 0;
+        return 0; // need at least two matured signal values
     }
 
     double *signal_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!signal_line) { free(ema_fast); free(ema_slow); free(macd_line); return 0; }
-
+    if (!signal_line) {
+        free(ema_fast); free(ema_slow); free(macd_line);
+        return 0;
+    }
     compute_ema_series(macd_line, macd_count, SIGNAL_EMA_PERIOD, signal_line);
 
     *macd_last = macd_line[macd_count - 1];
@@ -406,7 +464,10 @@ int compute_macd_last_two(const double *closes, int n,
     *signal_last = signal_line[macd_count - 1];
     *signal_prev = signal_line[macd_count - 2];
 
-    free(ema_fast); free(ema_slow); free(macd_line); free(signal_line);
+    free(ema_fast);
+    free(ema_slow);
+    free(macd_line);
+    free(signal_line);
     return 1;
 }
 
@@ -430,8 +491,11 @@ int series_append(Series* s, double v) {
     return 1;
 }
 
-// --- UI / Dashboard ---
+/**
+ * @brief Parses 1d JSON for price/change and updates a compact row (fits 3DS).
+ */
 void parse_and_print_stock_data(const char *json_1d, int row) {
+    // Parse 1d JSON
     cJSON *root1 = cJSON_Parse(json_1d);
     if (!root1) {
         print_error_on_line("JSON", "Parse Error (1d)", row);
@@ -470,18 +534,23 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
         return;
     }
 
+    // Latest price and change vs previousClose (with fallbacks)
     double last_close_1d = closes1[n1 - 1];
 
     double prev_close_ref = NAN;
     if (meta1) {
         cJSON *pc = cJSON_GetObjectItemCaseSensitive(meta1, "previousClose");
-        if (pc && cJSON_IsNumber(pc)) prev_close_ref = pc->valuedouble;
-        else {
+        if (pc && cJSON_IsNumber(pc)) {
+            prev_close_ref = pc->valuedouble;
+        } else {
             cJSON *cpc = cJSON_GetObjectItemCaseSensitive(meta1, "chartPreviousClose");
-            if (cpc && cJSON_IsNumber(cpc)) prev_close_ref = cpc->valuedouble;
-            else {
+            if (cpc && cJSON_IsNumber(cpc)) {
+                prev_close_ref = cpc->valuedouble;
+            } else {
                 cJSON *rmpc = cJSON_GetObjectItemCaseSensitive(meta1, "regularMarketPreviousClose");
-                if (rmpc && cJSON_IsNumber(rmpc)) prev_close_ref = rmpc->valuedouble;
+                if (rmpc && cJSON_IsNumber(rmpc)) {
+                    prev_close_ref = rmpc->valuedouble;
+                }
             }
         }
     }
@@ -490,12 +559,13 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     double change_1d = last_close_1d - base_prev_close;
     double pct_change_1d = (base_prev_close != 0.0) ? (change_1d / base_prev_close) * 100.0 : 0.0;
 
-    // Session series update
+    // Session series update (append the latest observed price)
     int ticker_index = row - DATA_START_ROW;
-    if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0;
+    if (ticker_index < 0 || ticker_index >= num_tickers) ticker_index = 0; // safety
     Series* s = &g_series[ticker_index];
     series_append(s, last_close_1d);
 
+    // Compute MACD/Signal from the session series
     double macd_prev = 0.0, macd_last = 0.0, signal_prev = 0.0, signal_last = 0.0;
     int has_macd = compute_macd_last_two(s->data, s->n, &macd_prev, &macd_last, &signal_prev, &signal_last);
 
@@ -505,19 +575,27 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
         signal_pct = (signal_last / last_close_1d) * 100.0;
     }
 
+    // Detect crossover at the latest session step
     int bullish_cross = 0, bearish_cross = 0;
     if (has_macd) {
         bullish_cross = (macd_prev <= signal_prev) && (macd_last > signal_last);
         bearish_cross = (macd_prev >= signal_prev) && (macd_last < signal_last);
     }
 
+    // Ticker background based on cross
     const char* ticker_bg_prefix = "";
     const char* ticker_bg_suffix = "";
     if (has_macd) {
-        if (bullish_cross) { ticker_bg_prefix = BGRN; ticker_bg_suffix = KNRM; }
-        else if (bearish_cross) { ticker_bg_prefix = BRED; ticker_bg_suffix = KNRM; }
+        if (bullish_cross) {
+            ticker_bg_prefix = BGRN;
+            ticker_bg_suffix = KNRM;
+        } else if (bearish_cross) {
+            ticker_bg_prefix = BRED;
+            ticker_bg_suffix = KNRM;
+        }
     }
 
+    // Price cell background vs previous fetch
     double prev_price_seen = (g_prev_price ? g_prev_price[ticker_index] : NAN);
     const char* price_bg = "";
     if (!isnan(prev_price_seen)) {
@@ -525,24 +603,26 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
         else if (last_close_1d < prev_price_seen) price_bg = BRED;
     }
 
+    // Colors
     const char* color_change = (change_1d >= 0) ? KGRN : KRED;
     const char* color_pct = (pct_change_1d >= 0) ? KGRN : KRED;
     const char* color_macd = (has_macd && macd_pct >= 0) ? KGRN : KRED;
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
-    char macd_buf[20], sig_buf[20];
+    // MACD buffers
+    char macd_buf[12], sig_buf[12];
     if (has_macd) {
-        // Fixed: print % with %%
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%%", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+5.2f", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+5.2f", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
+        snprintf(macd_buf, sizeof(macd_buf), "%5s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%5s", "N/A");
     }
 
-    // Print row (ANSI cursor position + format preserved)
+    // Compact row output (fits 3DS top screen width ~50 cols)
+    // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+    printf("%s%-6.6s%s %s%8.2f%s %s%+7.2f%s %s%+5.2f%%%s %s%5s%s %s%5s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
@@ -551,6 +631,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
            color_signal, sig_buf, KNRM);
     fflush(stdout);
 
+    // Store last price for next comparison
     if (g_prev_price) g_prev_price[ticker_index] = last_close_1d;
 
     if (closes1) free(closes1);
@@ -559,14 +640,13 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     printf("\033[%d;1H", row);
-    printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
+    printf("%-6.6s %s%-40.40s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
 
 void setup_dashboard_ui() {
     hide_cursor();
-    // Clear + home (ANSI)
-    printf("\033[2J\033[H");
+    printf("\033[2J\033[H"); // Clear screen, home cursor
 
     // Allocate prev price storage
     if (!g_prev_price) {
@@ -581,55 +661,38 @@ void setup_dashboard_ui() {
         g_series = (Series*)calloc(num_tickers, sizeof(Series));
     }
 
-    printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
+    // Title + timestamp placeholders
+    printf("3DS Stock Dashboard (1d | MACD from live polls)\n");
     printf("\n"); // timestamp line
     printf("\n");
 
-    // Headers
-    printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
-           "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-    printf("----------------------------------------------------------------------------------------------------\n");
+    // Headers (compact for 3DS width)
+    printf("%-6s %8s %7s %6s %5s %5s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("--------------------------------------------------\n");
 
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
         printf("\033[%d;1H", row);
-        printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
+        printf("%-6.6s %sFetching...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
 
 void update_timestamp() {
     time_t t = time(NULL);
-    struct tm *tmv = localtime(&t);
+    struct tm *tm = localtime(&t);
     char time_str[64];
-    if (tmv) strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tmv);
-    else snprintf(time_str, sizeof(time_str), "unknown time");
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
     printf("\033[2;1H");
     printf("Last updated: %s\033[K", time_str);
     fflush(stdout);
 }
 
-void run_countdown() {
+void update_status_line(int seconds_left) {
     int update_line = DATA_START_ROW + num_tickers + 1;
-
-    for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
-        printf("\033[%d;1H", update_line);
-        printf("\033[KUpdating in %2d seconds...", i);
-        fflush(stdout);
-
-        // Keep UI responsive and allow quitting
-        for (int f = 0; f < 60; ++f) { // ~1s at 60 Hz
-            hidScanInput();
-            if (hidKeysDown() & KEY_START) { g_should_quit = true; return; }
-            gfxFlushBuffers();
-            gfxSwapBuffers();
-            gspWaitForVBlank();
-        }
-        svcSleepThread(1000000LL * 1000LL); // ~1ms granularity, combined with VBlank loop above
-    }
-    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
     fflush(stdout);
 }
 
