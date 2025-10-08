@@ -138,12 +138,14 @@ int main(void) {
         u64 now = osGetTime();
         int seconds_left = (next_update > now) ? (int)((next_update - now + 999) / 1000) : 0;
 
+        update_status_line(seconds_left);
+        
         if (now >= next_update) {
             // Fire update
             update_timestamp();
-
+            
             char url1d[512];
-            //printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
+            printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
             for (int i = 0; i < num_tickers; i++) {
                 int current_row = DATA_START_ROW + i;
 
@@ -166,9 +168,7 @@ int main(void) {
             next_update = osGetTime() + interval_ms;
             seconds_left = UPDATE_INTERVAL_SECONDS;
         }
-
-        update_status_line(seconds_left);
-
+        
         gspWaitForVBlank();
         gfxFlushBuffers();
         gfxSwapBuffers();
@@ -692,8 +692,7 @@ void update_timestamp() {
 
 void update_status_line(int seconds_left) {
     int update_line = DATA_START_ROW + num_tickers + 1;
-    printf("\033[%d;1H", update_line);
-    printf("\033[KUpdating in %2d s  (START=Exit)", seconds_left);
+    printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
     fflush(stdout);
     #ifdef __3DS__
         svcSleepThread(1000000000LL);
