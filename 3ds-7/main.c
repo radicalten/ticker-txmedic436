@@ -527,11 +527,11 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     double *closes1 = NULL;
     int n1 = 0;
     int ok1 = extract_daily_closes(result1, &closes1, &n1);
-    if (!ok1 || n1 < 2) {
-        print_error_on_line(symbol, "Insufficient 1d data", row);
-        if (closes1) free(closes1);
-        cJSON_Delete(root1);
-        return;
+    //if (!ok1 || n1 < 2) {
+        //print_error_on_line(symbol, "Insufficient 1d data", row);
+        //if (closes1) free(closes1);
+        //cJSON_Delete(root1);
+        //return;
     }
 
     // Latest price and change vs previousClose (with fallbacks)
