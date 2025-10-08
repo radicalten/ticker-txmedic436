@@ -622,7 +622,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Compact row output (fits 3DS top screen width ~50 cols)
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     printf("\033[%d;1H", row);
-    printf("%s%-6.6s%s %s%8.2f%s %s%+7.2f%s %s%+5.2f%%%s %s%5s%s %s%5s%s\033[K",
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
