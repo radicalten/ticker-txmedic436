@@ -667,7 +667,7 @@ void setup_dashboard_ui() {
     printf("\n");
 
     // Headers (compact for 3DS width)
-    printf("%-6s %8s %7s %6s %5s %5s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------------------------\n");
 
     // Placeholders
