@@ -528,7 +528,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     int n1 = 0;
     int ok1 = extract_daily_closes(result1, &closes1, &n1);
     if (!ok1 || n1 < 2) {
-        //print_error_on_line(symbol, "Insufficient 1d data", row);
+        print_error_on_line(symbol, "Insufficient 1d data", row);
         if (closes1) free(closes1);
         cJSON_Delete(root1);
         return;
@@ -692,7 +692,7 @@ void update_timestamp() {
 
 void update_status_line(int seconds_left) {
     int update_line = DATA_START_ROW + num_tickers + 1;
-    printf("\033[%d;1H\033[KUpdating in %2d s", update_line, seconds_left);
+    printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
     fflush(stdout);
     #ifdef __3DS__
         svcSleepThread(1000000000LL);
