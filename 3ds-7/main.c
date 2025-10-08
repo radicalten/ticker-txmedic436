@@ -138,12 +138,7 @@ int main(void) {
         u64 now = osGetTime();
         int seconds_left = (next_update > now) ? (int)((next_update - now + 999) / 1000) : 0;
 
-        //update_status_line(seconds_left);
-        
-        int update_line = DATA_START_ROW + num_tickers + 1;
-        printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
-        fflush(stdout);
-        svcSleepThread(1000000000LL);
+        update_status_line(seconds_left);
         
         if (now >= next_update) {
             // Fire update
