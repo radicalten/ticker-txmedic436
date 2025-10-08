@@ -2,7 +2,7 @@ name: OSX-14-gpt5-ticker
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build:
     runs-on: macos-14
