@@ -138,10 +138,12 @@ int main(void) {
         u64 now = osGetTime();
         int seconds_left = (next_update > now) ? (int)((next_update - now + 999) / 1000) : 0;
 
+        update_status_line(seconds_left);
+        
         if (now >= next_update) {
             // Fire update
             update_timestamp();
-
+            
             char url1d[512];
             printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
             for (int i = 0; i < num_tickers; i++) {
@@ -166,9 +168,7 @@ int main(void) {
             next_update = osGetTime() + interval_ms;
             seconds_left = UPDATE_INTERVAL_SECONDS;
         }
-
-        update_status_line(seconds_left);
-
+        
         gspWaitForVBlank();
         gfxFlushBuffers();
         gfxSwapBuffers();
