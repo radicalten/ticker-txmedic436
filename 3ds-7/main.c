@@ -693,7 +693,7 @@ void update_timestamp() {
 void update_status_line(int seconds_left) {
     int update_line = DATA_START_ROW + num_tickers + 1;
     printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
-    fflush(stdout);
+    //fflush(stdout);
     #ifdef __3DS__
         svcSleepThread(1000000000LL);
 #else
