@@ -1,18 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <math.h>   // For fabs(), isnan()
 #include <curl/curl.h>
 #include "cJSON.h"
 
+#ifdef __3DS__
+#include <3ds.h>
+#include <malloc.h>
+#else
+#include <unistd.h> // For sleep()
+#endif
+
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-// Only 1d interval
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=4h&includePrePost=true"
-#define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
+// Keep data table starting at row 6 (fits 3DS console height with 16 tickers)
+#define DATA_START_ROW 6
 
 // MACD parameters (session-based, in "polls" units)
 #define FAST_EMA_PERIOD 12
@@ -27,7 +33,7 @@ const char *tickers[] = {
 };
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
-// --- Color Definitions for Terminal ---
+// --- Color Definitions for Terminal (ANSI) ---
 #define KNRM  "\x1B[0m"  // Reset all attributes
 #define KRED  "\x1B[31m" // Red (fg)
 #define KGRN  "\x1B[32m" // Green (fg)
@@ -59,7 +65,7 @@ char* fetch_url(const char *url);
 void parse_and_print_stock_data(const char *json_1d, int row);
 void setup_dashboard_ui();
 void update_timestamp();
-void run_countdown();
+void update_status_line(int seconds_left);
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
 void hide_cursor();
 void show_cursor();
@@ -77,9 +83,105 @@ int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last);
 
+#ifdef __3DS__
+// 3DS SOC buffer
+static u32* g_socbuf = NULL;
+#endif
+
 // --- Main Application ---
 int main(void) {
     atexit(cleanup_on_exit);
+
+#ifdef __3DS__
+    // 3DS init
+    gfxInitDefault();
+    consoleInit(GFX_TOP, NULL);
+
+    // Initialize networking (SOC) for curl
+    g_socbuf = (u32*)memalign(0x1000, 0x100000);
+    if (!g_socbuf) {
+        printf("SOC memalign failed\nPress START to exit.\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gspWaitForVBlank();
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+        }
+        gfxExit();
+        return 0;
+    }
+    if (socInit(g_socbuf, 0x100000) != 0) {
+        printf("socInit failed\nPress START to exit.\n");
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START) break;
+            gspWaitForVBlank();
+            gfxFlushBuffers();
+            gfxSwapBuffers();
+        }
+        gfxExit();
+        return 0;
+    }
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    setup_dashboard_ui();
+
+    u64 interval_ms = (u64)UPDATE_INTERVAL_SECONDS * 1000ULL;
+    u64 next_update = osGetTime(); // first update immediately
+
+    while (aptMainLoop()) {
+        hidScanInput();
+        u32 kDown = hidKeysDown();
+        if (kDown & KEY_START) break;
+
+        u64 now = osGetTime();
+        int seconds_left = (next_update > now) ? (int)((next_update - now + 999) / 1000) : 0;
+
+        if (now >= next_update) {
+            // Fire update
+            update_timestamp();
+
+            char url1d[512];
+            printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
+            for (int i = 0; i < num_tickers; i++) {
+                int current_row = DATA_START_ROW + i;
+
+                snprintf(url1d, sizeof(url1d), API_URL_1D_FORMAT, tickers[i]);
+
+                char *json_1d = fetch_url(url1d);
+                if (json_1d) {
+                    parse_and_print_stock_data(json_1d, current_row);
+                    free(json_1d);
+                } else {
+                    print_error_on_line(tickers[i], "Fetch failed", current_row);
+                }
+
+                // Let the screen stay responsive during long updates
+                gspWaitForVBlank();
+                gfxFlushBuffers();
+                gfxSwapBuffers();
+            }
+
+            next_update = osGetTime() + interval_ms;
+            seconds_left = UPDATE_INTERVAL_SECONDS;
+        }
+
+        update_status_line(seconds_left);
+
+        gspWaitForVBlank();
+        gfxFlushBuffers();
+        gfxSwapBuffers();
+    }
+
+    curl_global_cleanup();
+    socExit();
+    if (g_socbuf) { free(g_socbuf); g_socbuf = NULL; }
+    gfxExit();
+    return 0;
+
+#else
+    // Desktop/original behavior
     curl_global_init(CURL_GLOBAL_ALL);
 
     setup_dashboard_ui();
@@ -102,12 +204,21 @@ int main(void) {
             }
         }
 
-        run_countdown();
+        // Simple countdown (blocking) on desktop; 3DS uses non-blocking loop
+        int update_line = DATA_START_ROW + num_tickers + 1;
+        for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
+            printf("\033[%d;1H\033[KUpdating in %2d s...", update_line, i);
+            fflush(stdout);
+            sleep(1);
+        }
+        printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+        fflush(stdout);
     }
 
     curl_global_cleanup();
     show_cursor();
     return 0;
+#endif
 }
 
 // --- Helper Functions ---
@@ -145,6 +256,11 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+#ifdef __3DS__
+        // Often necessary on 3DS homebrew due to missing CA bundle:
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+#endif
 
         res = curl_easy_perform(curl_handle);
 
@@ -235,7 +351,6 @@ void compute_ema_series(const double *data, int n, int period, double *out) {
 
 /**
  * @brief Computes MACD% and Signal% relative to the last close.
- *        Not used directly for session-only series, but kept for completeness.
  */
 int compute_macd_percent(const double *closes, int n, double *macd_pct, double *signal_pct) {
     if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD)) return 0;
@@ -300,7 +415,6 @@ int compute_macd_percent(const double *closes, int n, double *macd_pct, double *
 
 /**
  * @brief Computes the last two values of MACD and Signal lines (raw, not %).
- *        Uses FAST_EMA_PERIOD, SLOW_EMA_PERIOD, SIGNAL_EMA_PERIOD.
  */
 int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
@@ -378,8 +492,7 @@ int series_append(Series* s, double v) {
 }
 
 /**
- * @brief Parses 1d JSON for price and daily change, and computes MACD/Signal
- *        from the LIVE session series (polled values appended each update).
+ * @brief Parses 1d JSON for price/change and updates a compact row (fits 3DS).
  */
 void parse_and_print_stock_data(const char *json_1d, int row) {
     // Parse 1d JSON
@@ -497,18 +610,19 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
     // MACD buffers
-    char macd_buf[20], sig_buf[20];
+    char macd_buf[12], sig_buf[12];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+5.2f", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+5.2f", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
+        snprintf(macd_buf, sizeof(macd_buf), "%5s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%5s", "N/A");
     }
 
-    // Print row
+    // Compact row output (fits 3DS top screen width ~50 cols)
+    // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
@@ -526,13 +640,13 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     printf("\033[%d;1H", row);
-    printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
+    printf("%-6.6s %s%-40.40s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
 
 void setup_dashboard_ui() {
     hide_cursor();
-    printf("\033[2J\033[H");
+    printf("\033[2J\033[H"); // Clear screen, home cursor
 
     // Allocate prev price storage
     if (!g_prev_price) {
@@ -545,23 +659,22 @@ void setup_dashboard_ui() {
     // Allocate session series storage
     if (!g_series) {
         g_series = (Series*)calloc(num_tickers, sizeof(Series));
-        // Series entries start with data=NULL, n=0, cap=0
     }
 
-    printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
+    // Title + timestamp placeholders
+    printf("3DS Stock Dashboard (1d | MACD from live polls)\n");
     printf("\n"); // timestamp line
     printf("\n");
 
-    // Headers
-    printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
-           "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-    printf("----------------------------------------------------------------------------------------------------\n");
+    // Headers (compact for 3DS width)
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("--------------------------------------------------\n");
 
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
         printf("\033[%d;1H", row);
-        printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
+        printf("%-6.6s %sFetching...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
@@ -577,24 +690,9 @@ void update_timestamp() {
     fflush(stdout);
 }
 
-void run_countdown() {
+void update_status_line(int seconds_left) {
     int update_line = DATA_START_ROW + num_tickers + 1;
-
-    for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
-        printf("\033[%d;1H", update_line);
-        printf("\033[KUpdating in %2d seconds...", i);
-        fflush(stdout);
-        
-        #ifdef __3DS__
-        gspWaitForVBlank();
-        svcSleepThread(1000000000LL);
-        hidScanInput();
-        if (hidKeysDown() & KEY_START) return 0;
-#else
-        sleep(1);
-#endif
-    }
-    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    printf("\033[%d;1H\033[KUpdating in %2d s  (START=Exit)", update_line, seconds_left);
     fflush(stdout);
 }
 
