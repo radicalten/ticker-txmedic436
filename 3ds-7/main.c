@@ -645,7 +645,7 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
 }
 
 void setup_dashboard_ui() {
-    //hide_cursor();
+    hide_cursor();
     printf("\033[2J\033[H"); // Clear screen, home cursor
 
     // Allocate prev price storage
