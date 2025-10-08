@@ -486,7 +486,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
             if (cpc && cJSON_IsNumber(cpc)) {
                 prev_close_ref = cpc->valuedouble;
             } else {
-                cJSON *rmpc = cJSON_GetObjectItemCaseSensitive(meta1, "regularMarketPreviousClose");
+                cJSON *rmpc = cJSON_GetObjectItemCaseSensitive(meta1, "regularMarketPrice");
                 if (rmpc && cJSON_IsNumber(rmpc)) {
                     prev_close_ref = rmpc->valuedouble;
                 }
