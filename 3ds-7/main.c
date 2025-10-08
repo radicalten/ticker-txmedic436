@@ -143,7 +143,7 @@ int main(void) {
             update_timestamp();
 
             char url1d[512];
-            printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 2);
+            //printf("\033[%d;1H\033[KUpdating now...", DATA_START_ROW + num_tickers + 1);
             for (int i = 0; i < num_tickers; i++) {
                 int current_row = DATA_START_ROW + i;
 
