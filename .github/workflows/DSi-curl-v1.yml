@@ -4,7 +4,7 @@ on:
     branches:
     - main
 jobs:
-  build-3ds:
+  build-nds:
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm:latest
     steps:
