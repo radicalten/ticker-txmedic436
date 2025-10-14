@@ -14,6 +14,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libnds/lib \
 -L/opt/devkitpro/libnds/lib/nds \
+-L/opt/devkitpro/calico/lib \
 -lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
