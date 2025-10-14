@@ -4,7 +4,7 @@ export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -DARM9 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
-INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libnds/include -I/opt/devkitpro/calico/include
+INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libnds/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
@@ -13,7 +13,6 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libnds/lib \
--L/opt/devkitpro/calico/lib \
 -lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
