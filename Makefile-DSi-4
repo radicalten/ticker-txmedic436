@@ -13,7 +13,7 @@ LDFLAGS := $(CFLAGS) \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/portlibs/calico/lib \
+-L/opt/devkitpro/calico/lib \
 -L/opt/devkitpro/portlibs/libnds/lib \
 -lcurl -lz -lwolfssl -ldswifi9 -lcalico_ds9 -lnds9 -lm
 TARGET  := myapp
