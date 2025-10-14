@@ -12,13 +12,11 @@ jobs:
       uses: actions/checkout@v4
     - name: Download custom packages
       run: |
-          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/libwiisocket-0.1-1-any.pkg.tar.gz -o libwiisocket-0.1-1-any.pkg.tar.gz
-          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-curl-8.16.0-1-any.pkg.tar.gz -o wii-curl-8.16.0-1-any.pkg.tar.gz
-          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-mbedtls-3.6.4-1-any.pkg.tar.gz -o wii-mbedtls-3.6.4-1-any.pkg.tar.gz
+          curl -L https://github.com/cavv-dev/nds-curl/releases/download/curl-7.83.0%2Bwolfssl-5.7.6/nds-wolfssl-5.7.6-2-any.pkg.tar.zst -o nds-wolfssl-5.7.6-2-any.pkg.tar.zst 
+          curl -L https://github.com/cavv-dev/nds-curl/releases/download/curl-7.83.0%2Bwolfssl-5.7.6/nds-curl-7.83.0-1-any.pkg.tar.zst -o nds-curl-7.83.0-1-any.pkg.tar.zst  
     - name: Install custom packages
       run: |
-            sudo dkp-pacman -U --noconfirm wii-curl-8.16.0-1-any.pkg.tar.gz libwiisocket-0.1-1-any.pkg.tar.gz wii-mbedtls-3.6.4-1-any.pkg.tar.gz
-            sudo dkp-pacman -Ql  
+            sudo dkp-pacman -U --noconfirm nds-curl-7.83.0-1-any.pkg.tar.zst nds-wolfssl-5.7.6-2-any.pkg.tar.zst
     - name: Compile
       run: |
         make -f Makefile-DSi
