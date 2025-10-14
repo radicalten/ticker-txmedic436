@@ -1,0 +1,49 @@
+pkgname=nds-curl
+pkgver=7.83.0
+pkgrel=1
+pkgdesc="Library for transferring data with URLs"
+arch=(any)
+url="https://curl.se/"
+license=(MIT)
+groups=(nds-portlibs)
+depends=(nds-zlib nds-wolfssl)
+makedepends=(nds-pkg-config dkp-toolchain-vars)
+options=(!strip libtool staticlibs)
+source=("https://curl.se/download/curl-${pkgver}.tar.xz"
+        "${pkgname}.patch")
+sha256sums=("bbff0e6b5047e773f3c3b084d80546cc1be4e354c09e419c2d0ef6116253511a"
+            "15f5f3684cce0664e58cb87a20255058b41c4140133b1586ffbc30c46c31983d")
+
+build() {
+  cd curl-$pkgver
+
+  source /opt/devkitpro/ndsvars.sh
+
+  patch -Np1 -i "$srcdir/$pkgname.patch"
+  
+  ./configure CFLAGS="${CFLAGS}" \
+    CPPFLAGS="-DWOLFSSL_NDS -I${DEVKITPRO}/calico/include -I${DEVKITPRO}/libnds/include/sys/ ${CPPFLAGS}" \
+    LIBS="-ldswifi9 -lcalico_ds9" \
+    LDFLAGS="-specs=${DEVKITPRO}/calico/share/ds9.specs -L${DEVKITPRO}/calico/lib ${LDFLAGS}" \
+    --prefix=$PORTLIBS_PREFIX --host=arm-none-eabi \
+    --disable-shared --enable-static \
+    --disable-ipv6 --disable-unix-sockets \
+    --disable-manual --disable-ntlm-wb \
+    --disable-threaded-resolver --disable-socketpair \
+    --with-wolfssl=$PORTLIBS_PREFIX
+  
+  make -C lib
+}
+
+package() {
+  cd curl-$pkgver
+
+  source /opt/devkitpro/ndsvars.sh
+
+  make DESTDIR="$pkgdir" -C lib install
+  make DESTDIR="$pkgdir" -C include install
+  make DESTDIR="$pkgdir" install-binSCRIPTS install-pkgconfigDATA
+
+  mkdir -p "$pkgdir"$PORTLIBS_PREFIX/licenses/$pkgname
+  install -m644 COPYING "$pkgdir"$PORTLIBS_PREFIX/licenses/$pkgname/COPYING
+}

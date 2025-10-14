@@ -1,0 +1,12 @@
+diff -NBaur a/lib/nonblock.c b/lib/nonblock.c
+--- a/lib/nonblock.c    2022-04-25 09:28:11.000000000 +0200
++++ b/lib/nonblock.c    2025-01-20 22:22:57.788730600 +0100
+@@ -47,7 +47,7 @@
+ int curlx_nonblock(curl_socket_t sockfd,    /* operate on this */
+                    int nonblock   /* TRUE or FALSE */)
+ {
+-#if defined(HAVE_FCNTL_O_NONBLOCK)
++#if defined(HAVE_FCNTL_O_NONBLOCK) && !defined(__NDS__)
+   /* most recent unix versions */
+   int flags;
+   flags = sfcntl(sockfd, F_GETFL, 0);
