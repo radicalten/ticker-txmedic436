@@ -3,7 +3,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-MACHDEP := -DWOLFSSL_NDS -D__NDS__ -DARM9 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
+MACHDEP := -D__NDS__ -DARM9 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
 INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
 -I/opt/devkitpro/libnds/include/sys/
 CFLAGS 	:= -O3 -flto \
@@ -15,7 +15,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/calico/lib \
 -L/opt/devkitpro/libnds/lib \
--lcurl -lz -lwolfssl -ldswifi9 -lcalico_ds9 -lnds9 -lm
+-lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lcalico_ds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
