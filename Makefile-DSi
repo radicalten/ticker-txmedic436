@@ -12,8 +12,8 @@ LDFLAGS := $(CFLAGS) \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/nds9/lib \
--L/opt/devkitpro/nds9/lib/nds \
+-L/opt/devkitpro/libnds/lib \
+-L/opt/devkitpro/libnds/lib/nds \
 -lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
