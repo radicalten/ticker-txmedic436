@@ -12,8 +12,8 @@ LDFLAGS := $(CFLAGS) \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/libctru/lib \
--L/opt/devkitpro/libctru/lib/nds \
+-L/opt/devkitpro/nds9/lib \
+-L/opt/devkitpro/nds9/lib/nds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= 3ds-7
