@@ -10,6 +10,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+- name: Install custom packages
+      run: |
+        sudo dkp-pacman -Ql 
     - name: Compile
       run: |
         make -f Makefile-dsi
