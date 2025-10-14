@@ -7,6 +7,10 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+//NDS Specific from nds-curl
+#include <nds.h>
+#include <dswifi9.h>
+
 #include <stdbool.h>
 #ifdef __unix__
   #include <sys/ioctl.h>
