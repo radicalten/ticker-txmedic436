@@ -16,7 +16,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/nds9/lib/nds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lnds9 -lm
 TARGET  := myapp
-SRCDIR 	:= 3ds-7
+SRCDIR 	:= dsi-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
