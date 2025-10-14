@@ -1,0 +1,41 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/ds_rules
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+MACHDEP := -D__NDS__ -DARM9 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
+INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
+-I/opt/devkitpro/libnds/include
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS := $(CFLAGS) \
+-specs=ds_arm9.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/nds/lib \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/calico/lib \
+-L/opt/devkitpro/libnds/lib \
+-lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
+TARGET  := myapp
+SRCDIR 	:= dsi-1
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+all: $(TARGET).nds
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into nds (requires devkitPro tools)
+$(TARGET).nds: $(TARGET).elf
+	ndstool $(TARGET).elf $(TARGET).nds 
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).nds $(TARGET).map $(OBJECTS)
+
+.PHONY: all clean
