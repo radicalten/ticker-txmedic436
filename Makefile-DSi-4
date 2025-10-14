@@ -16,7 +16,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/calico/lib \
 -L/opt/devkitpro/portlibs/libnds/lib \
 -L/opt/devkitpro/libnds/lib \
--lcurl -lz -lwolfssl -ldswifi9 -lcalico_ds9 -lnds9 -lm
+-lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lcalico_ds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
