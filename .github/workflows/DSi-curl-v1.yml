@@ -15,7 +15,7 @@ jobs:
         sudo dkp-pacman -Ql 
     - name: Compile
       run: |
-        make -f Makefile-dsi
+        make -f Makefile-DSi
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
