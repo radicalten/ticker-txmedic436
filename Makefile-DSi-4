@@ -5,7 +5,7 @@ include $(DEVKITARM)/ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__NDS__ -DARM9 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
 INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
--I/opt/devkitpro/libnds/include -I/opt/devkitpro/calico/include/calico/arm
+-I/opt/devkitpro/libnds/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
