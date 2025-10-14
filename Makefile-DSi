@@ -14,7 +14,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/nds9/lib \
 -L/opt/devkitpro/nds9/lib/nds \
--lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lwolfssl -ldswifi9 -lnds9 -lm
+-lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
