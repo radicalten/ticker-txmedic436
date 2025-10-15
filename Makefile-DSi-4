@@ -9,14 +9,14 @@ INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
--specs=ds_arm9.specs \
+-specs=ds9.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/devkitARM/arm-none-eabi/lib \
 -L/opt/devkitpro/calico/lib \
 -L/opt/devkitpro/libnds/lib \
--lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lcalico_ds9 -lds_arm9.specs -lm
+-lcurl -lz -lwolfssl -ldswifi9 -lnds9 -lm
 TARGET  := myapp
 SRCDIR 	:= dsi-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
