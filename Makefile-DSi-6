@@ -25,7 +25,7 @@ OBJECTS = $(SOURCES:.c=.o)
 #---------------------------------------------------------------------------------
 # Game/App information for ndstool
 #---------------------------------------------------------------------------------
-GAME_TITLE      := My NDS App
+GAME_TITLE      := MyApp
 GAME_SUBTITLE1  := Built with libcurl
 GAME_SUBTITLE2  := devkitARM
 #GAME_ICON       := $(CURDIR)/icon.bmp
@@ -39,7 +39,7 @@ $(TARGET).elf: $(OBJECTS)
 
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).elf
-	@ndstool -c $@ -9 $< \
+	ndstool -c $@ -9 $< \
 		-b "$(GAME_TITLE);$(GAME_SUBTITLE1);$(GAME_SUBTITLE2)" \
 		-g CURL 0001 \
 		-z 80040000 -u 00000000
