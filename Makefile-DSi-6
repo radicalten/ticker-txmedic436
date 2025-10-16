@@ -22,6 +22,15 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
+#---------------------------------------------------------------------------------
+# Game/App information for ndstool
+#---------------------------------------------------------------------------------
+GAME_TITLE      := My NDS App
+GAME_SUBTITLE1  := Built with libcurl
+GAME_SUBTITLE2  := devkitARM
+#GAME_ICON       := $(CURDIR)/icon.bmp
+#---------------------------------------------------------------------------------
+
 all: $(TARGET).nds
 
 # Build ELF
@@ -30,7 +39,10 @@ $(TARGET).elf: $(OBJECTS)
 
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).elf
-	$(TARGET).elf $(TARGET).nds 
+	@ndstool -c $@ -9 $< \
+		-b "$(GAME_TITLE);$(GAME_SUBTITLE1);$(GAME_SUBTITLE2)" \
+		-g CURL 0001 \
+		-z 80040000 -u 00000000
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
