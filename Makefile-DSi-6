@@ -28,14 +28,18 @@ all: $(TARGET).nds
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Package ELF into nds (requires devkitPro tools)
-$(TARGET).nds: $(TARGET).elf
-	ndstool -c $(TARGET).elf -9 $(TARGET).nds 
+# Convert ELF to ARM9 binary
+$(TARGET).arm9: $(TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+
+# Package ARM9 binary into NDS ROM
+$(TARGET).nds: $(TARGET).arm9
+	ndstool -c $@ -9 $<
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).nds $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).arm9 $(TARGET).nds $(TARGET).map $(OBJECTS)
 
 .PHONY: all clean
