@@ -22,20 +22,16 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
-# Default ARM7 ELF from libnds
-# ARM7_ELF := $(DEVKITPRO)/libnds/default_arm7/arm7.elf
-
 all: $(TARGET).nds
 
-# Build ELF (ARM9)
+# Build ELF
 $(TARGET).elf: $(OBJECTS)
-	$(CC) $(OBJECTS) -o $@ $(CFLAGS) $(LDFLAGS)
+	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Package into .nds (needs both ARM9 and ARM7)
-$(TARGET).nds: $(TARGET).elf 
-	ndstool -c $@ -9 $(TARGET).elf 
+# Package ELF into nds (requires devkitPro tools)
+$(TARGET).nds: $(TARGET).elf
+	ndstool $(TARGET).elf $(TARGET).nds 
 
-# Compile objects
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
