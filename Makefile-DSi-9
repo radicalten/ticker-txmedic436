@@ -37,7 +37,7 @@ $(TARGET).elf: $(OBJECTS)
 
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).elf
-	ndstool -u 00030004 -c $(TARGET).nds -7 $(ARM7BIN) -9 $(TARGET).elf
+	ndstool -c $(TARGET).nds -7 $(ARM7BIN) -9 $(TARGET).elf
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
