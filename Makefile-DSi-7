@@ -13,7 +13,7 @@ CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
 -specs=ds_arm9.specs \
--Wl,-Map,$(TARGET).arm9i.map \
+-Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/calico/lib \
@@ -55,6 +55,6 @@ $(TARGET).nds: $(TARGET).elf
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).nds $(TARGET).arm9i.map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).nds $(TARGET).map $(OBJECTS)
 
 .PHONY: all clean
