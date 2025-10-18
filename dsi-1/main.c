@@ -11,8 +11,8 @@
 #include <nds.h>
 #include <dswifi9.h>
 #include <sys/socket.h>
-#include <netinet/in.h> // from from dswifi/httpget/source/httpget.c
-#include <netdb.h> // from dswifi/httpget/source/httpget.c
+//#include <netinet/in.h> // from from dswifi/httpget/source/httpget.c
+//#include <netdb.h> // from dswifi/httpget/source/httpget.c
 
 #include <stdbool.h>
 #ifdef __unix__
