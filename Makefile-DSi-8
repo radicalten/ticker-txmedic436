@@ -3,9 +3,9 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
 # Use built-in ARM7 unless you provide your own
-export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_bobtail.elf
+#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_bobtail.elf
 #export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_lykoi.elf
-#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_maine.elf
+export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_maine.elf
 #export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_ragdoll.elf
 #export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_sphynx.elf
 
