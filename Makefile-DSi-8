@@ -1,0 +1,65 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/ds_rules
+#export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
+#export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
+export LIBNDS    := $(DEVKITPRO)/libnds
+# Use built-in ARM7 unless you provide your own
+export ARM7BIN   := $(LIBNDS)/default.arm7
+
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
+INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
+-I/opt/devkitpro/libnds/include
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS := $(CFLAGS) \
+-specs=/opt/devkitpro/calico/share/ds9.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/nds/lib \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/calico/lib \
+-L/opt/devkitpro/libnds/lib \
+-lcurl -lz -lwolfssl -ldswifi9 -lcalico_ds9 -lnds9 -lm
+TARGET  := myapp
+SRCDIR 	:= dsi-1
+C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+SOURCES = $(C_SOURCES) 
+OBJECTS = $(SOURCES:.c=.o)
+
+# GAME_ICON is the image used to create the game icon, leave blank to use default rule
+GAME_ICON :=
+
+# specify a directory which contains the nitro filesystem
+# this is relative to the Makefile
+NITRO_FILES :=
+
+# These set the information text in the nds file
+#GAME_TITLE     := My Wonderful Homebrew
+#GAME_SUBTITLE1 := built with devkitARM
+#GAME_SUBTITLE2 := http://devitpro.org
+
+all: $(TARGET).nds
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into nds (requires devkitPro tools)
+$(TARGET).nds: $(TARGET).elf
+	ndstool -u 00030004 -c $(TARGET).nds -7 $(ARM7BIN) -9 $(TARGET).elf
+
+	#ndstool -c $(TARGET).nds -7 $(TARGET).elf -9 $(TARGET).elf \
+	#-b $(GAME_ICON) "$(GAME_TITLE);$(GAME_SUBTITLE1);$(GAME_SUBTITLE2)" \
+	#$(_ADDFILES)
+	
+#ndstool -u 00030004 -c $(TARGET).nds -7 $(TARGET).arm7.elf -9 $(TARGET).arm9i.elf
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).nds $(TARGET).map $(OBJECTS)
+
+.PHONY: all clean
