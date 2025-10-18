@@ -38,8 +38,9 @@ $(TARGET).elf: $(OBJECTS)
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).elf
 	ndstool -c $(TARGET).nds -7 $(ARM7BIN) -9 $(TARGET).elf
-	objdump -d /opt/devkitpro/calico/bin/ds7_maine.elf
-#readelf -h /opt/devkitpro/calico/bin/ds7_maine.elf
+	readelf -h /opt/devkitpro/calico/bin/ds7_maine.elf
+	readelf -S /opt/devkitpro/calico/bin/ds7_maine.elf
+	strings /opt/devkitpro/calico/bin/ds7_maine.elf
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
