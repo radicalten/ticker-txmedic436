@@ -6,7 +6,7 @@ include $(DEVKITARM)/ds_rules
 #export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
 
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-MACHDEP := -D__DSi__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
+MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
 INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
 -I/opt/devkitpro/libnds/include
 CFLAGS 	:= -O3 -flto \
