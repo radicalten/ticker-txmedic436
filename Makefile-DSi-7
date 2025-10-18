@@ -6,13 +6,13 @@ export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
 export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
 
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -ffunction-sections -fdata-sections
+MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
 INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
 -I/opt/devkitpro/libnds/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
--specs=/opt/devkitpro/calico/share/ds9.specs \
+-specs=ds_arm9.specs \
 -Wl,-Map,$(TARGET).arm9i.map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
