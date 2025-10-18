@@ -33,7 +33,7 @@ $(TARGET).arm9i.elf: $(OBJECTS)
 
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).arm9i.elf
-	ndstool -u 00030004 -c $(TARGET).nds -9 $(TARGET).arm9i.elf
+	ndstool -u 00030004 -c $(TARGET).nds -7 $(TARGET).arm7.elf -9 $(TARGET).arm9i.elf
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
