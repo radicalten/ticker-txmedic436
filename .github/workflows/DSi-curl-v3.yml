@@ -1,4 +1,4 @@
-name: DSi-curl-v2
+name: DSi-curl-v3
 on:
   push:
     branches:
