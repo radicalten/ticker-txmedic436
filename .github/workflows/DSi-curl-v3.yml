@@ -21,7 +21,7 @@ jobs:
             #sudo dkp-pacman -S --noconfirm --ask 4 nds-dev
     - name: Compile
       run: |
-        make -f Makefile-DSi-7
+        make -f Makefile-DSi-8
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
