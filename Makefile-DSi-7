@@ -2,8 +2,8 @@
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
-export ARM9ELF	:=	$(TOPDIR)/$(TARGET).arm9.elf
-export ARM9iELF	:=	$(TOPDIR)/$(TARGET).arm9i.elf
+export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
+export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
 
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
@@ -28,12 +28,12 @@ OBJECTS = $(SOURCES:.c=.o)
 all: $(TARGET).nds
 
 # Build ELF
-$(TARGET).elf: $(OBJECTS)
+$(TARGET).arm9i.elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Package ELF into nds (requires devkitPro tools)
-$(TARGET).nds: $(TARGET).elf
-	ndstool -c $(TARGET).nds -9 $(TARGET).elf 
+$(TARGET).nds: $(TARGET).arm9i.elf
+	ndstool -c $(TARGET).nds -9 $(TARGET).arm9i.elf
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
