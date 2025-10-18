@@ -17,7 +17,7 @@ jobs:
     - name: Install custom packages
       run: |
             sudo dkp-pacman -U --noconfirm nds-curl-7.83.0-1-any.pkg.tar.zst nds-wolfssl-5.7.6-2-any.pkg.tar.zst
-            sudo dkp-pacman -S --noconfirm nds-dev
+            sudo dkp-pacman -S --noconfirm --ask 4 nds-dev
             sudo dkp-pacman -Ql 
     - name: Compile
       run: |
