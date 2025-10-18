@@ -18,10 +18,9 @@ jobs:
       run: |
             sudo dkp-pacman -U --noconfirm nds-curl-7.83.0-1-any.pkg.tar.zst nds-wolfssl-5.7.6-2-any.pkg.tar.zst
             sudo dkp-pacman -Ql 
-            #sudo dkp-pacman -S --noconfirm --ask 4 nds-dev
     - name: Compile
       run: |
-        make -f Makefile-DSi-8
+        make -f Makefile-DSi-9
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
