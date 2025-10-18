@@ -2,6 +2,9 @@
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
+export ARM9ELF	:=	$(TOPDIR)/$(TARGET).arm9.elf
+export ARM9iELF	:=	$(TOPDIR)/$(TARGET).arm9i.elf
+
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
 INCLUDES += -I/opt/devkitpro/portlibs/nds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/calico/include \
