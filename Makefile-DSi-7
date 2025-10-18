@@ -2,8 +2,8 @@
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
-export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
-export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
+#export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
+#export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
 
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
