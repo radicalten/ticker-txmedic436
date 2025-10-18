@@ -11,6 +11,7 @@
 #include <nds.h>
 #include <dswifi9.h>
 #include <sys/socket.h>
+#include <wfc.h> // from devkitpro/source/dswifi9.c
 //#include <netinet/in.h> // from from dswifi/httpget/source/httpget.c
 //#include <netdb.h> // from dswifi/httpget/source/httpget.c
 
