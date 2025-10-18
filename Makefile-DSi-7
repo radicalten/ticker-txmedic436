@@ -25,6 +25,18 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
+# GAME_ICON is the image used to create the game icon, leave blank to use default rule
+GAME_ICON :=
+
+# specify a directory which contains the nitro filesystem
+# this is relative to the Makefile
+NITRO_FILES :=
+
+# These set the information text in the nds file
+#GAME_TITLE     := My Wonderful Homebrew
+#GAME_SUBTITLE1 := built with devkitARM
+#GAME_SUBTITLE2 := http://devitpro.org
+
 all: $(TARGET).nds
 
 # Build ELF
@@ -32,8 +44,12 @@ $(TARGET).arm9i.elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Package ELF into nds (requires devkitPro tools)
-$(TARGET).nds: $(TARGET).arm9i.elf
-	ndstool -u 00030004 -c $(TARGET).nds -7 $(TARGET).arm7.elf -9 $(TARGET).arm9i.elf
+$(TARGET).nds: $(TARGET).elf
+ndstool	-c $(TARGET).nds -7 $(TARGET).elf -9 $(TARGET).elf \
+	-b $(GAME_ICON) "$(GAME_TITLE);$(GAME_SUBTITLE1);$(GAME_SUBTITLE2)" \
+	$(_ADDFILES)
+	
+#ndstool -u 00030004 -c $(TARGET).nds -7 $(TARGET).arm7.elf -9 $(TARGET).arm9i.elf
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
