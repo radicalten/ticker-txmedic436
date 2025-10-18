@@ -2,11 +2,12 @@
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/ds_rules
-#export ARM9ELF	:=	$(CURDIR)/$(TARGET).arm9.elf
-#export ARM9iELF	:=	$(CURDIR)/$(TARGET).arm9i.elf
-export LIBNDS    := $(DEVKITPRO)/libnds
 # Use built-in ARM7 unless you provide your own
-export ARM7BIN   := $(LIBNDS)/default.arm7
+export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_bobtail.elf
+#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_lykoi.elf
+#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_maine.elf
+#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_ragdoll.elf
+#export ARM7BIN   := /opt/devkitpro/calico/bin/ds7_sphynx.elf
 
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__NDS__ -DARM9 -D__ARM_ARCH=5 -march=armv5te -mtune=arm946e-s -mthumb -ffunction-sections -fdata-sections
