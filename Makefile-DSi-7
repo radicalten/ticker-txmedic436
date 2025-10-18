@@ -40,7 +40,7 @@ NITRO_FILES :=
 all: $(TARGET).nds
 
 # Build ELF
-$(TARGET).arm9i.elf: $(OBJECTS)
+$(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Package ELF into nds (requires devkitPro tools)
