@@ -45,7 +45,7 @@ $(TARGET).elf: $(OBJECTS)
 
 # Package ELF into nds (requires devkitPro tools)
 $(TARGET).nds: $(TARGET).elf
-	ndstool -u 00030004 -c $(TARGET).nds -9 $(TARGET).elf
+	ndstool -u 00030004 -c $(TARGET).nds -7 $(ARM7BIN) -9 $(TARGET).elf
 
 	#ndstool -c $(TARGET).nds -7 $(TARGET).elf -9 $(TARGET).elf \
 	#-b $(GAME_ICON) "$(GAME_TITLE);$(GAME_SUBTITLE1);$(GAME_SUBTITLE2)" \
