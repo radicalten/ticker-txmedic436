@@ -13,7 +13,7 @@ CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
 -specs=/opt/devkitpro/calico/share/ds9.specs \
--Wl,-Map,$(TARGET).map \
+-Wl,-Map,arm9i.map \
 -L/opt/devkitpro/portlibs/nds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/calico/lib \
