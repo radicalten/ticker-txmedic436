@@ -825,7 +825,7 @@ static void nds_init_console_and_wifi(void) {
         status = Wifi_AssocStatus();
         if (status != lastStatus) {
             // Print the current status string
-            printf("\x1b[8;1HWiFi Status: %-20s\x1b[K", Wifi_AssocStatus(status));
+            printf("\x1b[8;1HWiFi Status: %-20s\x1b[K", Wifi_AssocStatus());
             lastStatus = status;
             fflush(stdout);
         }
