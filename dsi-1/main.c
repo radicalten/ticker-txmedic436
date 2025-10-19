@@ -12,8 +12,9 @@
   #include <nds.h>
   #include <dswifi9.h>
   #include <sys/socket.h>
-  #include <wfc.h>
   #include <netdb.h>
+  #include <netinet/in.h> // For struct in_addr
+  #include <arpa/inet.h>  // For inet_ntoa
 #endif
 
 // --- Configuration ---
@@ -731,7 +732,7 @@ void detect_terminal() {
     g_screen_cols = 32;
     g_screen_rows = 24;
     g_compact_mode = 1;
-    // NDS console doesn't support hiding cursor with ?25l/h reliably
+    // NDS console doesn't support hiding cursor with ?25l/?25h reliably
     g_can_hide_cursor = 0;
     return;
 #endif
@@ -792,7 +793,7 @@ static void portable_sleep_seconds(int s) {
 #endif
 }
 
-// --- NDS console and WiFi init ---
+// --- NDS console and WiFi init (Updated for dswifi9) ---
 static void nds_init_console_and_wifi(void) {
 #if defined(ARM9) || defined(__NDS__)
     // Basic libnds init for console output
@@ -800,34 +801,62 @@ static void nds_init_console_and_wifi(void) {
     irqEnable(IRQ_VBLANK);
     consoleDemoInit();
 
-    // Clear and place cursor home
-    printf("\033[2J\033[H");
+    // Clear screen and show connection info
+    printf("\x1b[2J\x1b[H"); // Clear screen, cursor home
     printf("Initializing WiFi...\n");
+    printf("Using dswifi9. Please ensure\n");
+    printf("a valid wifi.cfg file exists\n");
+    printf("on your flashcard.\n\n");
 
-    // Init WiFi and auto-connect using firmware settings
-    wfcInit();
-    wfcLoadFromNvram();
-    wfcBeginAutoConnect();
+    // Initialize the WiFi hardware, but don't connect yet.
+    if (!Wifi_InitDefault(false)) {
+        printf("Failed to initialize WiFi hardware.\n");
+        goto wifi_fail_loop;
+    }
 
+    printf("Attempting to auto-connect...\n");
+    int status = Wifi_AssocStatus();
     int lastStatus = -1;
-    while (1) {
-        int status = wfcGetStatus();
+
+    // Start the auto-connect process. It will use the wifi.cfg file.
+    Wifi_AutoConnect();
+
+    while (status != ASSOCSTATUS_ASSOCIATED) {
+        status = Wifi_AssocStatus();
         if (status != lastStatus) {
-            printf("\033[3;1HWiFi status: %d\033[K", status);
+            // Print the current status string
+            printf("\x1b[8;1HWiFi Status: %-20s\x1b[K", Wifi_AssocStatusToString(status));
             lastStatus = status;
             fflush(stdout);
         }
-        if (status == ASSOCSTATUS_ASSOCIATED) break;
 
+        // Allow user to cancel the connection attempt
         scanKeys();
         if (keysDown() & KEY_START) {
-            printf("\nAborted WiFi connect.\n");
-            break;
+            printf("\n\nWiFi connection cancelled by user.\n");
+            goto wifi_fail_loop;
         }
+
+        // Wait for the next frame
         swiWaitForVBlank();
     }
 
-    printf("\033[4;1HWiFi: %s\033[K", (wfcGetStatus() == ASSOCSTATUS_ASSOCIATED) ? "Connected" : "Not connected");
-    fflush(stdout);
+    // Success!
+    printf("\n\nWiFi Connected!\n");
+    struct in_addr ip = Wifi_GetIPInfo(NULL, NULL, NULL, NULL);
+    printf("IP Address: %s\n", inet_ntoa(ip));
+
+    // Give the user a moment to see the IP before the app clears the screen
+    for (int i = 0; i < 120; i++) swiWaitForVBlank(); // Wait ~2 seconds
+    return; // Continue to the main application
+
+wifi_fail_loop:
+    // If we get here, WiFi failed or was cancelled.
+    printf("\nPress START to exit.");
+    while (1) {
+        swiWaitForVBlank();
+        scanKeys();
+        if (keysDown() & KEY_START) exit(0);
+    }
 #endif
 }
