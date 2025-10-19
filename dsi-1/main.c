@@ -547,7 +547,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     // DSi = 24 rows x 32 columns chg removed to fit on DSi
     printf("\033[%d;0H", row);
-    printf("%s%-8s%s%s%9.2f%s%s%+4.2f%%%s%s%4s%s%s%4s%s\033[K",
+    printf("%s%-8s%s%s%6.2f%s%s%+4.2f%%%s%s%4s%s%s%4s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_pct, pct_change_1d, KNRM,
@@ -594,7 +594,7 @@ void setup_dashboard_ui() {
     printf("\n"); // timestamp line
   
     // Headers (compact for DSi width) DSi = 24 rows x 32 columns
-    printf("%-8s%9s%6s%4s%4s\n", "Tkr", "Price", "%Chg", "MAC", "Sig");
+    printf("%-8s%6s%6s%4s%4s\n", "Tkr", "Price", "%Chg", "MAC", "Sig");
     printf("--------------------------------\n");
   
     // Placeholders
