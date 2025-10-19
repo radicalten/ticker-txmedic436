@@ -736,15 +736,6 @@ void detect_terminal() {
     return;
 #endif
 
-    // Try to detect window size (POSIX)
-#ifdef TIOCGWINSZ
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
-        if (ws.ws_col > 0) g_screen_cols = ws.ws_col;
-        if (ws.ws_row > 0) g_screen_rows = ws.ws_row;
-    }
-#endif
-
     const char* force = getenv("FORCE_COMPACT");
     if (force && (force[0]=='1' || force[0]=='t' || force[0]=='T' || strcmp(force,"true")==0)) {
         g_compact_mode = 1;
