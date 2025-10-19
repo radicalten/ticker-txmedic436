@@ -829,11 +829,11 @@ static void nds_init_console_and_wifi(void) {
 
     // Init WiFi and auto-connect using firmware settings
     //Wifi_InitDefault(WIFIINIT_OPTION_USELED);
-    Wifi_AutoConnect();
+    wfcBeginAutoConnect();
 
     int lastStatus = -1;
     while (1) {
-        int status = Wifi_AssocStatus();
+        int status = wfcGetStatus();
         if (status != lastStatus) {
             printf("\033[3;1HWiFi status: %d\033[K", status);
             lastStatus = status;
@@ -849,7 +849,7 @@ static void nds_init_console_and_wifi(void) {
         swiWaitForVBlank();
     }
 
-    printf("\033[4;1HWiFi: %s\033[K", (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) ? "Connected" : "Not connected");
+    printf("\033[4;1HWiFi: %s\033[K", (wfcGetStatus() == ASSOCSTATUS_ASSOCIATED) ? "Connected" : "Not connected");
     fflush(stdout);
 #endif
 }
