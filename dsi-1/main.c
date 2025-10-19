@@ -592,9 +592,9 @@ void setup_dashboard_ui() {
 
     printf("DSi Stock Dash (MACD live polls)\n");
     printf("\n"); // timestamp line
-    printf("\n");
 
     // Headers (compact for 3DS width)
+    // DSi = 24 rows x 32 columns
     printf("%-4s|%4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------\n");
   
@@ -614,7 +614,7 @@ void update_timestamp() {
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
     printf("\033[2;1H");
-    printf("Last updated: %s\033[K", time_str);
+    printf("Last update:%s\033[K", time_str);
     fflush(stdout);
 }
 
