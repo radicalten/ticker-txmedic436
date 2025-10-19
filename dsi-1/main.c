@@ -547,7 +547,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     // DSi = 24 rows x 32 columns chg removed to fit on DSi
     printf("\033[%d;0H", row);
-    printf("%s%-8s%s%s%9.2f%s%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
+    printf("%s%-8s%s%s%9.2f%s|%s%+3.2f%%%s%s%3s%s|%s%3s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_pct, pct_change_1d, KNRM,
