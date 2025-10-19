@@ -612,17 +612,17 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // MACD buffers
     char macd_buf[12], sig_buf[12];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+5.2f", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+5.2f", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+1.2f", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+1.2f", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "%5s", "N/A");
-        snprintf(sig_buf, sizeof(sig_buf), "%5s", "N/A");
+        snprintf(macd_buf, sizeof(macd_buf), "%3s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%3s", "N/A");
     }
 
     // Compact row output (fits 3DS top screen width ~50 cols)
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     printf("\033[%d;1H", row);
-    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
+    printf("%s%-4s%s|%s%4.2f%s|%s%+4.2f%s|%s%+4.2f%%%s|%s%4s%s|%s%4s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
@@ -667,7 +667,7 @@ void setup_dashboard_ui() {
     printf("\n");
 
     // Headers (compact for 3DS width)
-    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("%-4s|%4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------------------------\n");
 
     // Placeholders
