@@ -1,12 +1,3 @@
-// Build notes (DSi/TWL):
-// - Add to CFLAGS: -DUSE_CALICO
-// - Link with calico and curl: LIBS += -lcalico -lcurl
-// - Choose DSi System Settings slot via env var DSI_WIFI_SLOT=4|5|6 (default 4)
-//
-// Security note:
-// - On DSi there is no CA store by default. Either disable TLS verification (as below)
-//   or bundle a CA cert file and use CURLOPT_CAINFO to verify certificates.
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,21 +9,10 @@
 
 #if defined(ARM9) || defined(__NDS__)
   #include <nds.h>
-
-  // DSi WPA2 via calico (enable with -DUSE_CALICO). DS fallback uses dswifi9.
-  #if defined(USE_CALICO)
-    #include <calico.h>
-    #include <calico/net.h>
-    #include <calico/wifi.h>
-    #include <sys/socket.h>
-    #include <netdb.h>
-    #include <arpa/inet.h>
-  #else
-    #include <dswifi9.h>
-    #include <sys/socket.h>
-    #include <netdb.h>
-    #include <arpa/inet.h>
-  #endif
+  #include <dswifi9.h>
+  #include <sys/socket.h>
+  #include <netdb.h>
+  #include <arpa/inet.h>
 #else
   #include <unistd.h> // sleep() on POSIX
 #endif
@@ -117,15 +97,11 @@ void detect_terminal();
 void print_hr(int row);
 void format_price_compact(double v, char* out, size_t out_sz);
 
-// Portable sleep and network pump
+// Portable sleep
 static void portable_sleep_seconds(int s);
-static inline void service_net_pump(void);
 
 // NDS init
 static void nds_init_console_and_wifi(void);
-#if defined(ARM9) || defined(__NDS__)
-static int dsi_calico_autoconnect(int slot);
-#endif
 
 // --- Main Application ---
 int main(void) {
@@ -212,8 +188,6 @@ char* fetch_url(const char *url) {
         #if defined(ARM9) || defined(__NDS__)
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
-        // Or better: bundle a cert and verify:
-        // curl_easy_setopt(curl_handle, CURLOPT_CAINFO, "romfs:/cacert.pem");
         #endif
 
         res = curl_easy_perform(curl_handle);
@@ -707,7 +681,6 @@ void run_countdown() {
         // Check for START to quit during countdown
         scanKeys();
         if (keysDown() & KEY_START) break;
-        service_net_pump();
 #endif
 
         portable_sleep_seconds(1);
@@ -804,23 +777,13 @@ void format_price_compact(double v, char* out, size_t out_sz) {
     }
 }
 
-// --- Portable sleep & network pump ---
-static inline void service_net_pump(void) {
-#if defined(ARM9) || defined(__NDS__)
-  #if defined(USE_CALICO)
-    // If your calico build provides a poll/tick function, call it here.
-    // Example (uncomment if available): calicoNetPoll();
-  #endif
-#endif
-}
-
+// --- Portable sleep ---
 static void portable_sleep_seconds(int s) {
 #if defined(ARM9) || defined(__NDS__)
     // 60 VBlanks per second on NDS
     if (s < 0) s = 0;
     int frames = s * 60;
     for (int i = 0; i < frames; ++i) {
-        service_net_pump();
         swiWaitForVBlank();
     }
 #else
@@ -831,54 +794,6 @@ static void portable_sleep_seconds(int s) {
 }
 
 // --- NDS console and WiFi init ---
-#if defined(ARM9) || defined(__NDS__)
-static int dsi_calico_autoconnect(int slot) {
-#if defined(USE_CALICO)
-    printf("calico: init...\n");
-    // Initialize calico core (adjust names to match your headers if needed)
-    if (calicoInit() != 0) {
-        printf("calico: init failed\n");
-        return 0;
-    }
-
-    if (calicoNetInit() != 0) {
-        printf("calico: net init failed\n");
-        return 0;
-    }
-
-    // Connect using DSi System Settings slot (4–6 are WPA-capable).
-    printf("calico: connecting using DSi connection slot %d...\n", slot);
-    if (calicoWifiConnectSystemSlot(slot) != 0) {
-        printf("calico: connect (slot %d) failed\n", slot);
-        return 0;
-    }
-
-    // Wait for network up (DHCP assigned)
-    const int timeout_ms = 15000;
-    int elapsed = 0;
-    while (!calicoNetIsUp()) {
-        service_net_pump();
-        swiWaitForVBlank();
-        elapsed += 16; // ~16ms per VBlank
-        if (elapsed >= timeout_ms) break;
-    }
-
-    if (!calicoNetIsUp()) {
-        printf("calico: timed out waiting for IP\n");
-        return 0;
-    }
-
-    struct in_addr addr;
-    addr.s_addr = calicoNetGetIPv4();
-    printf("WiFi: Connected (%s)\n", inet_ntoa(addr));
-    return 1;
-#else
-    (void)slot;
-    return 0;
-#endif
-}
-#endif
-
 static void nds_init_console_and_wifi(void) {
 #if defined(ARM9) || defined(__NDS__)
     // Basic libnds init for console output
@@ -888,58 +803,35 @@ static void nds_init_console_and_wifi(void) {
 
     // Clear and place cursor home
     printf("\033[2J\033[H");
-    printf("Initializing WiFi...\n");
+    printf("Initializing WiFi (dswifi9)...\n");
 
-    if (isDSiMode()) {
-    #if defined(USE_CALICO)
-        // Choose slot via env var or default to 4
-        int slot = 4;
-        const char* s = getenv("DSI_WIFI_SLOT");
-        if (s && *s) {
-            int v = atoi(s);
-            if (v >= 4 && v <= 6) slot = v;
+    int lastStatus = -1;
+    while (1) {
+        int status = Wifi_AssocStatus();
+        if (status != lastStatus) {
+            printf("\033[3;1HWiFi status: %d\033[K", status);
+            lastStatus = status;
+            fflush(stdout);
         }
 
-        if (!dsi_calico_autoconnect(slot)) {
-            printf("WiFi: Not connected (calico)\n");
-        }
-    #else
-        printf("This is DSi mode. Rebuild with -DUSE_CALICO to enable WPA2 (calico).\n");
-    #endif
-    } else {
-        // DS mode fallback (dswifi, WEP/Open only)
-        printf("DS mode: using dswifi9 (WEP/Open).\n");
-        if (!Wifi_InitDefault(false)) {
-            printf("WiFi init failed.\n");
-        }
-        int lastStatus = -1;
-        while (1) {
-            int status = Wifi_AssocStatus();
-            if (status != lastStatus) {
-                printf("\033[3;1HWiFi status: %d\033[K", status);
-                lastStatus = status;
-                fflush(stdout);
-            }
+        if (status == ASSOCSTATUS_ASSOCIATED) break;
+        if (status == ASSOCSTATUS_CANNOTCONNECT) break;
 
-            if (status == ASSOCSTATUS_ASSOCIATED) break;
-            if (status == ASSOCSTATUS_CANNOTCONNECT) break;
-
-            scanKeys();
-            if (keysDown() & KEY_START) {
-                printf("\nAborted WiFi connect.\n");
-                break;
-            }
-            swiWaitForVBlank();
+        scanKeys();
+        if (keysDown() & KEY_START) {
+            printf("\nAborted WiFi connect.\n");
+            break;
         }
-
-        if (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) {
-            struct in_addr addr;
-            addr.s_addr = Wifi_GetIP();
-            printf("\033[4;1HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
-        } else {
-            printf("\033[4;1HWiFi: Not connected\033[K");
-        }
-        fflush(stdout);
+        swiWaitForVBlank();
     }
+
+    if (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) {
+        struct in_addr addr;
+        addr.s_addr = Wifi_GetIP();
+        printf("\033[4;1HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
+    } else {
+        printf("\033[4;1HWiFi: Not connected\033[K");
+    }
+    fflush(stdout);
 #endif
 }
