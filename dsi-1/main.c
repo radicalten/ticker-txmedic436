@@ -83,6 +83,12 @@ int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last);
 
+
+#if defined(ARM9) || defined(__NDS__)
+// NDS init
+static void nds_init_console_and_wifi(void);
+#endif
+
 // --- Main Application ---
 int main(void) {
   #if defined(ARM9) || defined(__NDS__)
