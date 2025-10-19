@@ -85,6 +85,8 @@ int compute_macd_last_two(const double *closes, int n,
 
 
 #if defined(ARM9) || defined(__NDS__)
+// Portable sleep
+static void portable_sleep_seconds(int s);
 // NDS init
 static void nds_init_console_and_wifi(void);
 #endif
@@ -615,7 +617,7 @@ void run_countdown() {
         fflush(stdout);
         #if defined(ARM9) || defined(__NDS__)
         // 60 VBlanks per second on NDS
-        swiWaitForVBlank();
+        portable_sleep_seconds(1);
         #else
         sleep(1);
         #endif
@@ -649,6 +651,23 @@ void cleanup_on_exit() {
         free(g_series);
         g_series = NULL;
     }
+}
+
+
+// --- Portable sleep ---
+static void portable_sleep_seconds(int s) {
+#if defined(ARM9) || defined(__NDS__)
+    // 60 VBlanks per second on NDS
+    if (s < 0) s = 0;
+    int frames = s * 60;
+    for (int i = 0; i < frames; ++i) {
+        swiWaitForVBlank();
+    }
+#else
+    if (s > 0) {
+        sleep(s);
+    }
+#endif
 }
 
 // --- NDS console and WiFi init ---
