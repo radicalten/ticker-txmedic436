@@ -560,7 +560,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     printf("\033[%d;1H", row);
-    printf("%-6.6s %s%-32s%s\033[K", ticker, KRED, error_msg, KNRM);
+    printf("%-6.6s %s%-20s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
 
