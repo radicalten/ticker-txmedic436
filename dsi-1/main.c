@@ -529,18 +529,19 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
     // MACD buffers
-    char macd_buf[20], sig_buf[20];
+    char macd_buf[12], sig_buf[12];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%+5.2f", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+5.2f", signal_pct);
     } else {
-        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
+        snprintf(macd_buf, sizeof(macd_buf), "%5s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%5s", "N/A");
     }
-
-    // Print row
+  
+    // Compact row output (fits 3DS top screen width ~50 cols)
+    // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     printf("\033[%d;1H", row);
-    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+    printf("%s%-8s%s|%s%9.2f%s|%s%+9.2f%s|%s%+6.2f%%%s|%s%6s%s|%s%6s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
