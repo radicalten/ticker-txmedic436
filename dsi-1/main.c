@@ -829,6 +829,7 @@ static void nds_init_console_and_wifi(void) {
 
     // Init WiFi and auto-connect using firmware settings
     //Wifi_InitDefault(WIFIINIT_OPTION_USELED);
+    wfcInit(void)
     wfcBeginAutoConnect();
 
     int lastStatus = -1;
