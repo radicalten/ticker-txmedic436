@@ -630,10 +630,14 @@ void run_countdown() {
     fflush(stdout);
 }
 
+#if defined(ARM9) || defined(__NDS__)
+// DS/DSi cannot hide cursor, causes guru meditation error
+#else
 void hide_cursor() {
     printf("\033[?25l");
     fflush(stdout);
 }
+#endif 
 
 void show_cursor() {
     printf("\033[?25h");
