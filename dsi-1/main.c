@@ -190,6 +190,13 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
+        // On DS(i), there's no CA store by default — disable verification or bundle a CA set.
+        // Don't do this in production for sensitive data.
+        #if defined(GEKKO) && defined(HW_RVL)
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+        #endif
+
         res = curl_easy_perform(curl_handle);
 
         if (res != CURLE_OK) {
