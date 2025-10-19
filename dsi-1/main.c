@@ -589,10 +589,11 @@ void setup_dashboard_ui() {
         g_series = (Series*)calloc(num_tickers, sizeof(Series));
         // Series entries start with data=NULL, n=0, cap=0
     }
-
+    
     printf("DSi Stock Dash (MACD live polls)\n");
-    // Headers (compact for 3DS width)
-    // DSi = 24 rows x 32 columns
+    printf("\n"); // timestamp line
+  
+    // Headers (compact for DSi width) DSi = 24 rows x 32 columns
     printf("%-4s|%4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
     printf("--------------------------------\n");
   
