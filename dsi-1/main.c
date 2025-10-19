@@ -11,6 +11,10 @@
   #include <nds.h>
   #include <dswifi9.h>
   #include <sys/socket.h>
+
+// Top/bottom PrintConsole instances for DS
+static PrintConsole g_topConsole;
+static PrintConsole g_bottomConsole;
 #endif
 
 // --- Configuration ---
@@ -659,10 +663,42 @@ static void nds_init_console_and_wifi(void) {
     // Basic libnds init for console output
     defaultExceptionHandler();
     irqEnable(IRQ_VBLANK);
-    consoleDemoInit();
+
+    // Route the main engine to the TOP LCD and sub to the BOTTOM LCD
+    lcdMainOnTop();
+
+    // Top screen (main engine) console
+    videoSetMode(MODE_0_2D);
+    vramSetBankA(VRAM_A_MAIN_BG);
+    consoleInit(&g_topConsole,
+                0,                          // BG layer
+                BgType_Text4bpp,            // Text console
+                BgSize_T_256x256,           // 32x32 tiles
+                31,                         // Map base
+                0,                          // Tile base
+                true,                       // main display (TOP)
+                true);                      // load font graphics
+    consoleSelect(&g_topConsole);
+
+    // Bottom screen (sub engine) — blank black background
+    videoSetModeSub(MODE_0_2D);
+    vramSetBankC(VRAM_C_SUB_BG);
+    consoleInit(&g_bottomConsole,
+                0,
+                BgType_Text4bpp,
+                BgSize_T_256x256,
+                31,
+                0,
+                false,                      // sub display (BOTTOM)
+                true);
+    consoleSelect(&g_bottomConsole);
+    consoleClear();
+    BG_PALETTE_SUB[0] = RGB15(0,0,0);       // Black background
+    consoleSelect(&g_topConsole);           // Ensure all prints go to TOP
+
     Wifi_InitDefault(1);
   
-    // Clear and place cursor home
+    // Clear and place cursor home on TOP screen
     printf("\033[2J\033[H");
     printf("Initializing WiFi (dswifi9)...\n");
 
