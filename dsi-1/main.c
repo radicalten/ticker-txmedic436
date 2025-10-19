@@ -612,7 +612,7 @@ void update_timestamp() {
     char time_str[64];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
-    printf("\033[2;0H");
+    printf("\033[1;0H");
     printf("Last update:%s\033[K", time_str);
     fflush(stdout);
 }
