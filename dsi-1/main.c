@@ -549,7 +549,6 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     printf("%s%-4s%s|%s%3.2f%s|%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
-           color_change, KNRM,
            color_pct, pct_change_1d, KNRM,
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
