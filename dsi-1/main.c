@@ -85,6 +85,10 @@ int compute_macd_last_two(const double *closes, int n,
 
 // --- Main Application ---
 int main(void) {
+  #if defined(ARM9) || defined(__NDS__)
+    nds_init_console_and_wifi();
+  #endif
+  
     atexit(cleanup_on_exit);
     curl_global_init(CURL_GLOBAL_ALL);
 
@@ -109,6 +113,13 @@ int main(void) {
         }
 
         run_countdown();
+
+    #if defined(ARM9) || defined(__NDS__)
+        // Allow exit on START in NDS builds
+        scanKeys();
+        if (keysDown() & KEY_START) break;
+    #endif
+      
     }
 
     curl_global_cleanup();
@@ -151,6 +162,13 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+
+        // On DS(i), there's no CA store by default — disable verification or bundle a CA set.
+        // Don't do this in production for sensitive data.
+        #if defined(ARM9) || defined(__NDS__)
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+        #endif
 
         res = curl_easy_perform(curl_handle);
 
