@@ -546,7 +546,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Compact row output (fits 3DS top screen width ~50 cols)
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
     // DSi = 24 rows x 32 columns chg removed to fit on DSi
-    printf("\033[%d;1H", row);
+    printf("\033[%d;0H", row);
     printf("%s%-4s%s|%s%3.2f%s|%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
@@ -563,7 +563,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 }
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
-    printf("\033[%d;1H", row);
+    printf("\033[%d;0H", row);
     printf("%-6.6s %s%-20s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
@@ -600,7 +600,7 @@ void setup_dashboard_ui() {
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
-        printf("\033[%d;1H", row);
+        printf("\033[%d;0H", row);
         printf("%-6.6s %sFetching...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
@@ -612,7 +612,7 @@ void update_timestamp() {
     char time_str[64];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
-    printf("\033[2;1H");
+    printf("\033[2;0H");
     printf("Last update:%s\033[K", time_str);
     fflush(stdout);
 }
@@ -621,12 +621,12 @@ void run_countdown() {
     int update_line = DATA_START_ROW + num_tickers + 1;
 
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
-        printf("\033[%d;1H", update_line);
+        printf("\033[%d;0H", update_line);
         printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
         sleep(1);
     }
-    printf("\033[%d;1H\033[KUpdating now...           ", update_line);
+    printf("\033[%d;0H\033[KUpdating now...           ", update_line);
     fflush(stdout);
 }
 
@@ -710,7 +710,7 @@ static void nds_init_console_and_wifi(void) {
     while (1) {
         int status = Wifi_AssocStatus();
         if (status != lastStatus) {
-            printf("\033[3;1HWiFi status: %d\033[K", status);
+            printf("\033[3;0HWiFi status: %d\033[K", status);
             lastStatus = status;
             fflush(stdout);
         }
@@ -729,9 +729,9 @@ static void nds_init_console_and_wifi(void) {
     if (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) {
         struct in_addr addr;
         addr.s_addr = Wifi_GetIP();
-        printf("\033[4;1HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
+        printf("\033[4;0HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
     } else {
-        printf("\033[4;1HWiFi: Not connected\033[K");
+        printf("\033[4;0HWiFi: Not connected\033[K");
     }
     fflush(stdout);
 #endif
