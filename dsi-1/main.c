@@ -21,6 +21,8 @@
   #include <nds.h>
   #include <dswifi9.h>
   #include <sys/socket.h>
+  #include <wfc.h>
+  #include <netdb.h>
 #endif
 
 // --- Configuration ---
