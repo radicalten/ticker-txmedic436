@@ -1,23 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <math.h>   // For fabs(), isnan()
 #include <curl/curl.h>
 #include "cJSON.h"
-#include <stdbool.h>
-
-#if defined(ARM9) || defined(__NDS__)
-  #include <nds.h>
-  #include <dswifi9.h>
-  #include <sys/socket.h>
-#else
-  #include <unistd.h> // sleep() on POSIX
-#endif
 
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
+// Only 1d interval
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=5d&interval=4h&includePrePost=true"
 #define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
 
@@ -60,12 +53,6 @@ typedef struct {
     size_t size;
 } MemoryStruct;
 
-// --- Terminal/DSi friendly globals ---
-static int g_screen_cols = 80;
-static int g_screen_rows = 24;
-static int g_compact_mode = 0;     // enabled for very narrow terminals like DSi
-static int g_can_hide_cursor = 1;  // many tiny/vt100 emulators ignore ?25l/?25h
-
 // --- Function Prototypes ---
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
 char* fetch_url(const char *url);
@@ -90,27 +77,11 @@ int compute_macd_last_two(const double *closes, int n,
                           double *macd_prev, double *macd_last,
                           double *signal_prev, double *signal_last);
 
-// Terminal helpers
-void detect_terminal();
-void print_hr(int row);
-void format_price_compact(double v, char* out, size_t out_sz);
-
-// Portable sleep
-static void portable_sleep_seconds(int s);
-
-// NDS init
-static void nds_init_console_and_wifi(void);
-
 // --- Main Application ---
 int main(void) {
-#if defined(ARM9) || defined(__NDS__)
-    nds_init_console_and_wifi();
-#endif
-
     atexit(cleanup_on_exit);
     curl_global_init(CURL_GLOBAL_ALL);
 
-    detect_terminal();
     setup_dashboard_ui();
 
     while (1) {
@@ -127,17 +98,11 @@ int main(void) {
                 parse_and_print_stock_data(json_1d, current_row);
                 free(json_1d);
             } else {
-                print_error_on_line(tickers[i], "Fetch failed", current_row);
+                print_error_on_line(tickers[i], "Failed to fetch 1d data", current_row);
             }
         }
 
         run_countdown();
-
-#if defined(ARM9) || defined(__NDS__)
-        // Allow exit on START in NDS builds
-        scanKeys();
-        if (keysDown() & KEY_START) break;
-#endif
     }
 
     curl_global_cleanup();
@@ -151,7 +116,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     size_t realsize = size * nmemb;
     MemoryStruct *mem = (MemoryStruct *)userp;
 
-    char *ptr = (char*)realloc(mem->memory, mem->size + realsize + 1);
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
     if (ptr == NULL) {
         printf("error: not enough memory (realloc returned NULL)\n");
         return 0;
@@ -170,7 +135,7 @@ char* fetch_url(const char *url) {
     CURLcode res;
     MemoryStruct chunk;
 
-    chunk.memory = (char*)malloc(1);
+    chunk.memory = malloc(1);
     chunk.size = 0;
 
     curl_handle = curl_easy_init();
@@ -180,13 +145,6 @@ char* fetch_url(const char *url) {
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-
-        // On DS(i), there's no CA store by default — disable verification or bundle a CA set.
-        // Don't do this in production for sensitive data.
-        #if defined(ARM9) || defined(__NDS__)
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
-        #endif
 
         res = curl_easy_perform(curl_handle);
 
@@ -427,19 +385,19 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Parse 1d JSON
     cJSON *root1 = cJSON_Parse(json_1d);
     if (!root1) {
-        print_error_on_line("JSON", "Parse error", row);
+        print_error_on_line("JSON", "Parse Error (1d)", row);
         return;
     }
 
     cJSON *chart1 = cJSON_GetObjectItemCaseSensitive(root1, "chart");
     cJSON *result_array1 = cJSON_GetObjectItemCaseSensitive(chart1, "result");
     if (!cJSON_IsArray(result_array1) || cJSON_GetArraySize(result_array1) == 0) {
-        char* err_desc = (char*)"Invalid ticker or no data";
+        char* err_desc = (char*)"Invalid 1d ticker or no data";
         cJSON* error_obj = cJSON_GetObjectItemCaseSensitive(chart1, "error");
         if (error_obj && cJSON_GetObjectItemCaseSensitive(error_obj, "description")) {
             err_desc = cJSON_GetObjectItemCaseSensitive(error_obj, "description")->valuestring;
         }
-        print_error_on_line("API", err_desc, row);
+        print_error_on_line("API Error", err_desc, row);
         cJSON_Delete(root1);
         return;
     }
@@ -457,7 +415,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     int n1 = 0;
     int ok1 = extract_daily_closes(result1, &closes1, &n1);
     if (!ok1 || n1 < 2) {
-        print_error_on_line(symbol, "Insufficient data", row);
+        print_error_on_line(symbol, "Insufficient 1d data", row);
         if (closes1) free(closes1);
         cJSON_Delete(root1);
         return;
@@ -538,38 +496,25 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     const char* color_macd = (has_macd && macd_pct >= 0) ? KGRN : KRED;
     const char* color_signal = (has_macd && signal_pct >= 0) ? KGRN : KRED;
 
-    printf("\033[%d;1H", row);
-
-    if (g_compact_mode) {
-        // Compact row: "SYMBOL(8) PRICE(7) %CHG(7) MACD%(7)" -> fits ~32 cols
-        char price_buf[16];
-        format_price_compact(last_close_1d, price_buf, sizeof(price_buf));
-
-        printf("%s%-8.8s%s %s%7s%s %s%+5.2f%%%s %s%+5.2f%%%s\033[K",
-               ticker_bg_prefix, symbol, ticker_bg_suffix,
-               price_bg, price_buf, KNRM,
-               color_pct, pct_change_1d, KNRM,
-               color_macd, has_macd ? macd_pct : 0.0, KNRM);
+    // MACD buffers
+    char macd_buf[20], sig_buf[20];
+    if (has_macd) {
+        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%+6.3f%", signal_pct);
     } else {
-        // WIDE layout
-        char macd_buf[20], sig_buf[20];
-        if (has_macd) {
-            snprintf(macd_buf, sizeof(macd_buf), "%+6.3f%%", macd_pct);
-            snprintf(sig_buf,  sizeof(sig_buf),  "%+6.3f%%", signal_pct);
-        } else {
-            snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-            snprintf(sig_buf,  sizeof(sig_buf),  "%6s", "N/A");
-        }
-
-        printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
-               ticker_bg_prefix, symbol, ticker_bg_suffix,
-               price_bg, last_close_1d, KNRM,
-               color_change, change_1d, KNRM,
-               color_pct, pct_change_1d, KNRM,
-               color_macd, macd_buf, KNRM,
-               color_signal, sig_buf, KNRM);
+        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
+        snprintf(sig_buf, sizeof(sig_buf), "%6s", "N/A");
     }
 
+    // Print row
+    printf("\033[%d;1H", row);
+    printf("%s%-10s%s | %s%10.2f%s | %s%+10.2f%s | %s%+6.2f%%%s | %s%6s%s | %s%6s%s\033[K",
+           ticker_bg_prefix, symbol, ticker_bg_suffix,
+           price_bg, last_close_1d, KNRM,
+           color_change, change_1d, KNRM,
+           color_pct, pct_change_1d, KNRM,
+           color_macd, macd_buf, KNRM,
+           color_signal, sig_buf, KNRM);
     fflush(stdout);
 
     // Store last price for next comparison
@@ -581,16 +526,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     printf("\033[%d;1H", row);
-    if (g_compact_mode) {
-        // SYMBOL(8) + space + error (truncated to fit screen)
-        int avail = (g_screen_cols > 10) ? (g_screen_cols - 9) : 16;
-        char buf[256];
-        snprintf(buf, sizeof(buf), "%s", error_msg ? error_msg : "Error");
-        if ((int)strlen(buf) > avail) buf[avail] = '\0';
-        printf("%-8.8s %s%s%s\033[K", ticker, KRED, buf, KNRM);
-    } else {
-        printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
-    }
+    printf("%-10s | %s%-80s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
 
@@ -612,54 +548,32 @@ void setup_dashboard_ui() {
         // Series entries start with data=NULL, n=0, cap=0
     }
 
-    if (g_compact_mode) {
-        printf("--- DSi Stock Dash (MACD from live polls) ---\n");
-    } else {
-        printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
-    }
-
+    printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
     printf("\n"); // timestamp line
     printf("\n");
 
     // Headers
-    if (g_compact_mode) {
-        printf("%-8.8s %7s %7s %7s\n", "Symbol", "Price", "%Chg", "MACD%");
-        print_hr(5);
-    } else {
-        printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
-               "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-        print_hr(5);
-    }
+    printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
+           "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("----------------------------------------------------------------------------------------------------\n");
 
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
         printf("\033[%d;1H", row);
-        if (g_compact_mode) {
-            printf("%-8.8s %sFetching...%s\033[K", tickers[i], KYEL, KNRM);
-        } else {
-            printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
-        }
+        printf("%-10s | %sFetching 1d data...%s\033[K", tickers[i], KYEL, KNRM);
     }
     fflush(stdout);
 }
 
 void update_timestamp() {
     time_t t = time(NULL);
-    struct tm *tmv = localtime(&t);
+    struct tm *tm = localtime(&t);
     char time_str[64];
-    if (tmv) {
-        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tmv);
-    } else {
-        snprintf(time_str, sizeof(time_str), "N/A");
-    }
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
 
     printf("\033[2;1H");
-    if (g_compact_mode) {
-        printf("Updated: %s\033[K", time_str);
-    } else {
-        printf("Last updated: %s\033[K", time_str);
-    }
+    printf("Last updated: %s\033[K", time_str);
     fflush(stdout);
 }
 
@@ -668,37 +582,22 @@ void run_countdown() {
 
     for (int i = UPDATE_INTERVAL_SECONDS; i > 0; i--) {
         printf("\033[%d;1H", update_line);
-        if (g_compact_mode) {
-            printf("\033[KUpdate in %2d s...", i);
-        } else {
-            printf("\033[KUpdating in %2d seconds...", i);
-        }
+        printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
-
-#if defined(ARM9) || defined(__NDS__)
-        // Check for START to quit during countdown
-        scanKeys();
-        if (keysDown() & KEY_START) break;
-#endif
-
-        portable_sleep_seconds(1);
+        sleep(1);
     }
     printf("\033[%d;1H\033[KUpdating now...           ", update_line);
     fflush(stdout);
 }
 
 void hide_cursor() {
-    if (g_can_hide_cursor) {
-        printf("\033[?25l");
-        fflush(stdout);
-    }
+    printf("\033[?25l");
+    fflush(stdout);
 }
 
 void show_cursor() {
-    if (g_can_hide_cursor) {
-        printf("\033[?25h");
-        fflush(stdout);
-    }
+    printf("\033[?25h");
+    fflush(stdout);
 }
 
 void cleanup_on_exit() {
@@ -716,125 +615,4 @@ void cleanup_on_exit() {
         free(g_series);
         g_series = NULL;
     }
-}
-
-// --- Terminal helpers ---
-
-void detect_terminal() {
-    // Defaults
-    g_screen_cols = 80;
-    g_screen_rows = 24;
-
-#if defined(ARM9) || defined(__NDS__)
-    // NDS console is ~32x24 chars; always use compact mode
-    g_screen_cols = 32;
-    g_screen_rows = 24;
-    g_compact_mode = 1;
-    // NDS console doesn't support hiding cursor with ?25l/h reliably
-    g_can_hide_cursor = 0;
-    return;
-#endif
-
-    const char* force = getenv("FORCE_COMPACT");
-    if (force && (force[0]=='1' || force[0]=='t' || force[0]=='T' || strcmp(force,"true")==0)) {
-        g_compact_mode = 1;
-    } else {
-        g_compact_mode = (g_screen_cols <= 40);
-    }
-
-    // Many small vt100-ish emulators ignore cursor visibility sequences
-    g_can_hide_cursor = !g_compact_mode;
-}
-
-void print_hr(int row) {
-    // Draw a horizontal rule of '-' up to the screen width
-    int cols = g_screen_cols > 0 ? g_screen_cols : 80;
-    printf("\033[%d;1H", row);
-    for (int i = 0; i < cols; i++) putchar('-');
-    printf("\n");
-    fflush(stdout);
-}
-
-void format_price_compact(double v, char* out, size_t out_sz) {
-    // 7-char friendly price formatting
-    if (!out || out_sz < 8) return;
-    if (fabs(v) < 10000.0) {
-        snprintf(out, out_sz, "%7.2f", v);
-    } else if (fabs(v) < 1000000.0) {
-        double k = v / 1000.0;
-        if (fabs(k) < 100.0)
-            snprintf(out, out_sz, "%5.1fk", k); // e.g., " 12.3k"
-        else
-            snprintf(out, out_sz, "%5.0fk", k); // e.g., " 123k"
-    } else {
-        double m = v / 1000000.0;
-        if (fabs(m) < 100.0)
-            snprintf(out, out_sz, "%5.1fM", m); // e.g., "  1.2M"
-        else
-            snprintf(out, out_sz, "%5.0fM", m); // e.g., " 123M"
-    }
-}
-
-// --- Portable sleep ---
-static void portable_sleep_seconds(int s) {
-#if defined(ARM9) || defined(__NDS__)
-    // 60 VBlanks per second on NDS
-    if (s < 0) s = 0;
-    int frames = s * 60;
-    for (int i = 0; i < frames; ++i) {
-        swiWaitForVBlank();
-    }
-#else
-    if (s > 0) {
-        sleep(s);
-    }
-#endif
-}
-
-// --- NDS console and WiFi init ---
-static void nds_init_console_and_wifi(void) {
-#if defined(ARM9) || defined(__NDS__)
-    // Basic libnds init for console output
-    defaultExceptionHandler();
-    irqEnable(IRQ_VBLANK);
-    consoleDemoInit();
-    
-    Wifi_InitDefault(1);
-    //Wifi_GetIP();
-  
-    // Clear and place cursor home
-    printf("\033[2J\033[H");
-    printf("Initializing WiFi (dswifi9)...\n");
-
-
-
-    int lastStatus = -1;
-    while (1) {
-        int status = Wifi_AssocStatus();
-        if (status != lastStatus) {
-            printf("\033[3;1HWiFi status: %d\033[K", status);
-            lastStatus = status;
-            fflush(stdout);
-        }
-
-        if (status == ASSOCSTATUS_ASSOCIATED) break;
-        if (status == ASSOCSTATUS_CANNOTCONNECT) break;
-
-        scanKeys();
-        if (keysDown() & KEY_START) {
-            printf("\nAborted WiFi connect.\n");
-            break;
-        }
-        swiWaitForVBlank();
-    }
-
-    if (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) {
-        struct in_addr addr;
-        addr.s_addr = Wifi_GetIP();
-        printf("\033[4;1HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
-    } else {
-        printf("\033[4;1HWiFi: Not connected\033[K");
-    }
-    fflush(stdout);
-#endif
 }
