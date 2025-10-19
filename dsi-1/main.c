@@ -578,7 +578,7 @@ void setup_dashboard_ui() {
         // Series entries start with data=NULL, n=0, cap=0
     }
 
-    printf("--- C Terminal Stock Dashboard (1d only | MACD from live session polls) ---\n");
+    printf("--- DSi Stock Dash (MACD live polls) ---\n");;
     printf("\n"); // timestamp line
     printf("\n");
 
@@ -615,9 +615,6 @@ void run_countdown() {
         fflush(stdout);
         #if defined(ARM9) || defined(__NDS__)
         // 60 VBlanks per second on NDS
-        if (s < 0) s = 0;
-        int frames = s * 60;
-        for (int i = 0; i < frames; ++i) {
         swiWaitForVBlank();
     }
         #else
