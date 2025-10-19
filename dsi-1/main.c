@@ -592,6 +592,7 @@ void setup_dashboard_ui() {
     
     printf("DSi Stock Dash (MACD live polls)\n");
     printf("\n"); // timestamp line
+    printf("\n");
   
     // Headers (compact for DSi width) DSi = 24 rows x 32 columns
     printf("%-8s%-9s%-7s%-4s%-4s\n", "Tkr", "Price", "%Chg", "MACD", "Sig");
