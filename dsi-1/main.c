@@ -588,7 +588,7 @@ void setup_dashboard_ui() {
 
     // Headers (compact for 3DS width)
     printf("%-4s|%4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-    printf("----------------------------------\n");
+    printf("--------------------------------\n");
   
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
