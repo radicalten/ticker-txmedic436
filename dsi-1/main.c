@@ -613,7 +613,16 @@ void run_countdown() {
         printf("\033[%d;1H", update_line);
         printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
+        #if defined(ARM9) || defined(__NDS__)
+        // 60 VBlanks per second on NDS
+        if (s < 0) s = 0;
+        int frames = s * 60;
+        for (int i = 0; i < frames; ++i) {
+        swiWaitForVBlank();
+    }
+        #else
         sleep(1);
+        #endif
     }
     printf("\033[%d;1H\033[KUpdating now...           ", update_line);
     fflush(stdout);
