@@ -7,6 +7,12 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+#if defined(ARM9) || defined(__NDS__)
+  #include <nds.h>
+  #include <dswifi9.h>
+  #include <sys/socket.h>
+#endif
+
 // --- Configuration ---
 #define UPDATE_INTERVAL_SECONDS 30
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
