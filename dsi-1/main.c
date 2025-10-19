@@ -798,10 +798,15 @@ static void nds_init_console_and_wifi(void) {
     defaultExceptionHandler();
     irqEnable(IRQ_VBLANK);
     consoleDemoInit();
-
+    
+    Wifi_InitDefault();
+    Wifi_GetIP();
+  
     // Clear and place cursor home
     printf("\033[2J\033[H");
     printf("Initializing WiFi (dswifi9)...\n");
+
+
 
     int lastStatus = -1;
     while (1) {
