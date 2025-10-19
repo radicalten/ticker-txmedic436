@@ -7,15 +7,6 @@
 #include "cJSON.h"
 #include <stdbool.h>
 
-#if defined(__unix__) || defined(__APPLE__)
-  #include <unistd.h> // For sleep()
-  #include <sys/ioctl.h>
-  #include <termios.h>
-  #include <sys/types.h>
-  #include <sys/stat.h>
-  #include <fcntl.h>
-#endif
-
 // Nintendo DS/DSi (ARM9) includes
 #if defined(ARM9) || defined(__NDS__)
   #include <nds.h>
