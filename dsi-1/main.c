@@ -11,9 +11,9 @@
   #include <nds.h>
   #include <dswifi9.h>
   #include <sys/socket.h>
-  #include <netdb.h>
-  #include <arpa/inet.h>
-  #include <calico.h>
+  //#include <netdb.h>
+  //#include <arpa/inet.h>
+  //#include <calico.h>
 #else
   #include <unistd.h> // sleep() on POSIX
 #endif
