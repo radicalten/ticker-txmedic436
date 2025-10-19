@@ -582,11 +582,10 @@ void setup_dashboard_ui() {
     printf("\n"); // timestamp line
     printf("\n");
 
-    // Headers
-    printf("%-10s | %10s | %10s | %7s | %6s | %6s\n",
-           "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-    printf("----------------------------------------------------------------------------------------------------\n");
-
+    // Headers (compact for 3DS width)
+    printf("%-8s|%9s|%9s|%7s|%6s|%6s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("--------------------------------------------------\n");
+  
     // Placeholders
     for (int i = 0; i < num_tickers; i++) {
         int row = DATA_START_ROW + i;
