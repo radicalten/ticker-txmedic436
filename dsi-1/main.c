@@ -18,7 +18,7 @@
 #define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
 // Only 1d interval
 #define API_URL_1D_FORMAT "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=5d&interval=4h&includePrePost=true"
-#define DATA_START_ROW 6 // The row number where the first stock ticker will be printed
+#define DATA_START_ROW 5 // The row number where the first stock ticker will be printed
 
 // MACD parameters (session-based, in "polls" units)
 #define FAST_EMA_PERIOD 12
