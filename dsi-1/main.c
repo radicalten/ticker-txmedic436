@@ -800,7 +800,7 @@ static void nds_init_console_and_wifi(void) {
     consoleDemoInit();
     
     Wifi_InitDefault(1);
-    Wifi_GetIP();
+    //Wifi_GetIP();
   
     // Clear and place cursor home
     printf("\033[2J\033[H");
