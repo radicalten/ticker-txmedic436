@@ -540,8 +540,9 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
     // Compact row output (fits 3DS top screen width ~50 cols)
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
+    // DSi = 24 rows x 32 columns
     printf("\033[%d;1H", row);
-    printf("%s%-4s%s|%s%4.2f%s|%s%+4.2f%s|%s%+4.2f%%%s|%s%4s%s|%s%4s%s\033[K",
+    printf("%s%-4s%s|%s%3.2f%s|%s%+3.2f%s|%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
            color_change, change_1d, KNRM,
@@ -559,7 +560,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
 void print_error_on_line(const char* ticker, const char* error_msg, int row) {
     printf("\033[%d;1H", row);
-    printf("%-6.6s %s%-40.40s%s\033[K", ticker, KRED, error_msg, KNRM);
+    printf("%-6.6s %s%-32s%s\033[K", ticker, KRED, error_msg, KNRM);
     fflush(stdout);
 }
 
