@@ -67,7 +67,7 @@ void setup_dashboard_ui();
 void update_timestamp();
 void run_countdown();
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
-void hide_cursor();
+//void hide_cursor();
 void show_cursor();
 void cleanup_on_exit();
 
@@ -565,7 +565,7 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
 }
 
 void setup_dashboard_ui() {
-    hide_cursor();
+    //hide_cursor();
     printf("\033[2J\033[H");
 
     // Allocate prev price storage
