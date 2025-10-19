@@ -622,3 +622,47 @@ void cleanup_on_exit() {
         g_series = NULL;
     }
 }
+
+// --- NDS console and WiFi init ---
+static void nds_init_console_and_wifi(void) {
+#if defined(ARM9) || defined(__NDS__)
+    // Basic libnds init for console output
+    defaultExceptionHandler();
+    irqEnable(IRQ_VBLANK);
+    consoleDemoInit();
+    Wifi_InitDefault(1);
+  
+    // Clear and place cursor home
+    printf("\033[2J\033[H");
+    printf("Initializing WiFi (dswifi9)...\n");
+
+    int lastStatus = -1;
+    while (1) {
+        int status = Wifi_AssocStatus();
+        if (status != lastStatus) {
+            printf("\033[3;1HWiFi status: %d\033[K", status);
+            lastStatus = status;
+            fflush(stdout);
+        }
+
+        if (status == ASSOCSTATUS_ASSOCIATED) break;
+        if (status == ASSOCSTATUS_CANNOTCONNECT) break;
+
+        scanKeys();
+        if (keysDown() & KEY_START) {
+            printf("\nAborted WiFi connect.\n");
+            break;
+        }
+        swiWaitForVBlank();
+    }
+
+    if (Wifi_AssocStatus() == ASSOCSTATUS_ASSOCIATED) {
+        struct in_addr addr;
+        addr.s_addr = Wifi_GetIP();
+        printf("\033[4;1HWiFi: Connected (%s)\033[K", inet_ntoa(addr));
+    } else {
+        printf("\033[4;1HWiFi: Not connected\033[K");
+    }
+    fflush(stdout);
+#endif
+}
