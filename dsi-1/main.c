@@ -799,7 +799,7 @@ static void nds_init_console_and_wifi(void) {
     irqEnable(IRQ_VBLANK);
     consoleDemoInit();
     
-    Wifi_InitDefault(useFirmwareSettings);
+    Wifi_InitDefault(1);
     Wifi_GetIP();
   
     // Clear and place cursor home
