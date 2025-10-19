@@ -13,6 +13,7 @@
   #include <sys/socket.h>
   #include <netdb.h>
   #include <arpa/inet.h>
+  #include <calico.h>
 #else
   #include <unistd.h> // sleep() on POSIX
 #endif
