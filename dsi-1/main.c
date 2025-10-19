@@ -816,8 +816,6 @@ static void nds_init_console_and_wifi(void) {
 #if defined(ARM9) || defined(__NDS__)
     // Basic libnds init for console output
     defaultExceptionHandler();
-    //irqInit();
-    //fifoInit();
     irqEnable(IRQ_VBLANK);
     consoleDemoInit();
 
@@ -825,11 +823,9 @@ static void nds_init_console_and_wifi(void) {
     printf("\033[2J\033[H");
     printf("Initializing WiFi...\n");
 
-    //powerOn(POWER_WIFI);
-
     // Init WiFi and auto-connect using firmware settings
-    //Wifi_InitDefault(WIFIINIT_OPTION_USELED);
     wfcInit();
+    wfcLoadFromNvram();
     wfcBeginAutoConnect();
 
     int lastStatus = -1;
