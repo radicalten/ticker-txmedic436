@@ -594,7 +594,7 @@ void setup_dashboard_ui() {
     printf("\n"); // timestamp line
   
     // Headers (compact for DSi width) DSi = 24 rows x 32 columns
-    printf("%-4s|%6s|%4s|%4s|%4s\n", "Tkr", "Price", "%Chg", "MACD", "Sig");
+    printf("%-8s|%9s|%5s|%3s|%3s\n", "Tkr", "Price", "%Chg", "MAC", "Sig");
     printf("--------------------------------\n");
   
     // Placeholders
