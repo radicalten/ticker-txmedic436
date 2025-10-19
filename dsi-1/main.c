@@ -67,7 +67,11 @@ void setup_dashboard_ui();
 void update_timestamp();
 void run_countdown();
 void print_error_on_line(const char* ticker, const char* error_msg, int row);
-//void hide_cursor();
+#if defined(ARM9) || defined(__NDS__)
+// DS/DSi cannot hide cursor, causes guru meditation error
+#else
+void hide_cursor();
+#endif
 void show_cursor();
 void cleanup_on_exit();
 
@@ -565,7 +569,11 @@ void print_error_on_line(const char* ticker, const char* error_msg, int row) {
 }
 
 void setup_dashboard_ui() {
-    //hide_cursor();
+    #if defined(ARM9) || defined(__NDS__)
+    // DS/DSi cannot hide cursor, causes guru meditation error
+    #else
+    hide_cursor();
+    #endif
     printf("\033[2J\033[H");
 
     // Allocate prev price storage
@@ -582,7 +590,7 @@ void setup_dashboard_ui() {
         // Series entries start with data=NULL, n=0, cap=0
     }
 
-    printf("--- DSi Stock Dash (MACD live polls) ---\n");;
+    printf("DSi Stock Dash (MACD live polls)\n");
     printf("\n"); // timestamp line
     printf("\n");
 
