@@ -544,12 +544,12 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
 
     // Compact row output (fits 3DS top screen width ~50 cols)
     // Columns: Tkr(6) Price(8) Chg(7) %Chg(6 incl %) MACD(5) Sig(5) + 1-space gaps
-    // DSi = 24 rows x 32 columns
+    // DSi = 24 rows x 32 columns chg removed to fit on DSi
     printf("\033[%d;1H", row);
-    printf("%s%-4s%s|%s%3.2f%s|%s%+3.2f%s|%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
+    printf("%s%-4s%s|%s%3.2f%s|%s%+3.2f%%%s|%s%3s%s|%s%3s%s\033[K",
            ticker_bg_prefix, symbol, ticker_bg_suffix,
            price_bg, last_close_1d, KNRM,
-           color_change, change_1d, KNRM,
+           color_change, KNRM,
            color_pct, pct_change_1d, KNRM,
            color_macd, macd_buf, KNRM,
            color_signal, sig_buf, KNRM);
@@ -594,7 +594,7 @@ void setup_dashboard_ui() {
     printf("\n"); // timestamp line
   
     // Headers (compact for DSi width) DSi = 24 rows x 32 columns
-    printf("%-4s|%4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
+    printf("%-4s|%4s|%4s|%4s|%4s\n", "Tkr", "Price", "%Chg", "MACD", "Sig");
     printf("--------------------------------\n");
   
     // Placeholders
