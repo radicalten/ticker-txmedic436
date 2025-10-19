@@ -805,14 +805,6 @@ static void nds_init_console_and_wifi(void) {
     printf("\033[2J\033[H");
     printf("Initializing WiFi (dswifi9)...\n");
 
-    // Initialize dswifi using the firmware WFC profile(s)
-    if (!Wifi_InitDefault(WIFIINIT_OPTION_USE_WFC_DATA)) {
-        printf("Wifi_InitDefault failed.\n");
-        printf("WiFi: Not connected\n");
-        fflush(stdout);
-        return;
-    }
-
     int lastStatus = -1;
     while (1) {
         int status = Wifi_AssocStatus();
