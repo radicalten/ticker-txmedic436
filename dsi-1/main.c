@@ -192,7 +192,7 @@ char* fetch_url(const char *url) {
 
         // On DS(i), there's no CA store by default — disable verification or bundle a CA set.
         // Don't do this in production for sensitive data.
-        #if defined(GEKKO) && defined(HW_RVL)
+        #if defined(ARM9) || defined(__NDS__)
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYHOST, 0L);
         #endif
