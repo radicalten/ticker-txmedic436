@@ -616,7 +616,6 @@ void run_countdown() {
         #if defined(ARM9) || defined(__NDS__)
         // 60 VBlanks per second on NDS
         swiWaitForVBlank();
-    }
         #else
         sleep(1);
         #endif
