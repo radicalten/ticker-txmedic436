@@ -121,7 +121,7 @@ int main(void) {
                 parse_and_print_stock_data(json_1d, current_row);
                 free(json_1d);
             } else {
-                print_error_on_line(tickers[i], "Failed to fetch 1d data", current_row);
+                print_error_on_line(tickers[i], "Failed to fetch", current_row);
             }
         }
 
