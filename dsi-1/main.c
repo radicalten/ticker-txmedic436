@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h> // For sleep()
 #include <time.h>   // For timestamp
 #include <math.h>   // For fabs(), isnan()
 #include <curl/curl.h>
@@ -15,6 +14,8 @@
 // Top/bottom PrintConsole instances for DS
 static PrintConsole g_topConsole;
 static PrintConsole g_bottomConsole;
+#else
+#include <unistd.h> // For sleep()
 #endif
 
 // --- Configuration ---
@@ -93,7 +94,8 @@ int compute_macd_last_two(const double *closes, int n,
 
 
 #if defined(ARM9) || defined(__NDS__)
-static void nds_init_console_and_wifi(void);
+static void portable_sleep_seconds(int s); // Portable sleep
+static void nds_init_console_and_wifi(void); // NDS init
 #endif
 
 // --- Main Application ---
@@ -630,7 +632,12 @@ void run_countdown() {
         printf("\033[%d;0H", update_line);
         printf("\033[KUpdating in %2d seconds...", i);
         fflush(stdout);
+        #if defined(ARM9) || defined(__NDS__)
+        // 60 VBlanks per second on NDS
+        portable_sleep_seconds(1);
+        #else
         sleep(1);
+        #endif
     }
     printf("\033[%d;0H\033[KUpdating now...           ", update_line);
     fflush(stdout);
@@ -665,6 +672,22 @@ void cleanup_on_exit() {
         free(g_series);
         g_series = NULL;
     }
+}
+
+// --- Portable sleep ---
+static void portable_sleep_seconds(int s) {
+#if defined(ARM9) || defined(__NDS__)
+    // 60 VBlanks per second on NDS
+    if (s < 0) s = 0;
+    int frames = s * 60;
+    for (int i = 0; i < frames; ++i) {
+        swiWaitForVBlank();
+    }
+#else
+    if (s > 0) {
+        sleep(s);
+    }
+#endif
 }
 
 // --- NDS console and WiFi init ---
