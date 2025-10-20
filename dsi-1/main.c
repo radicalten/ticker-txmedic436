@@ -507,8 +507,8 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     }
 
     // Ticker background based on cross
-    const char* ticker_bg_prefix = "";
-    const char* ticker_bg_suffix = "";
+    const char* ticker_bg_prefix = (change_1d >= 0) ? KGRN : KRED;
+    const char* ticker_bg_suffix = (change_1d >= 0) ? KGRN : KRED;
     if (has_macd) {
         if (bullish_cross) {
             ticker_bg_prefix = BGRN;
