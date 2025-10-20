@@ -542,8 +542,8 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // MACD buffers
     char macd_buf[12], sig_buf[12];
     if (has_macd) {
-        snprintf(macd_buf, sizeof(macd_buf), "%+4.2f", macd_pct);
-        snprintf(sig_buf, sizeof(sig_buf), "%+4.2f", signal_pct);
+        snprintf(macd_buf, sizeof(macd_buf), "%4.2f", macd_pct);
+        snprintf(sig_buf, sizeof(sig_buf), "%4.2f", signal_pct);
     } else {
         snprintf(macd_buf, sizeof(macd_buf), "%4s", "N/A");
         snprintf(sig_buf, sizeof(sig_buf), "%4s", "N/A");
