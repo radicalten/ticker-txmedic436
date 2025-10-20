@@ -522,7 +522,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Price cell background vs previous fetch
     // Colors
     double prev_price_seen = (g_prev_price ? g_prev_price[ticker_index] : NAN);
-    const char* price_bg = "";
+    const char* price_bg = (change_1d >= 0) ? KGRN : KRED;
     const char* color_change = (change_1d >= 0) ? KGRN : KRED;
     const char* color_pct = (pct_change_1d >= 0) ? KGRN : KRED;
     const char* color_macd = (has_macd && macd_pct >= 0) ? KGRN : KRED;
