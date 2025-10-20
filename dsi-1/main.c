@@ -522,6 +522,7 @@ void parse_and_print_stock_data(const char *json_1d, int row) {
     // Price cell background vs previous fetch
     double prev_price_seen = (g_prev_price ? g_prev_price[ticker_index] : NAN);
     const char* price_bg = "";
+    const char* color_pct = "";
     if (!isnan(prev_price_seen)) {
         if (last_close_1d > prev_price_seen){ 
           price_bg = BGRN;
