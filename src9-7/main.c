@@ -21,9 +21,9 @@
 
 // Add or remove stock tickers here
 const char *tickers[] = {
-    "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX", "^IXIC",
+    "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX",
     "GC=F", "CL=F", "NG=F", "NVDA", "INTC",
-    "AMD", "MU", "PFE", "UNH", "TGT", "TRAK"
+    "AMD", "MU", "OKLO", "RKLB", "IREN", "CRML", "ABAT"
 };
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
