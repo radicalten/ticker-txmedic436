@@ -31,9 +31,9 @@ static PrintConsole g_bottomConsole;
 
 // Add or remove stock tickers here
 const char *tickers[] = {
-    "BTC-USD", "ETH-USD", "DX-Y.NYB",
+    "BTC-USD", "ETH-USD",
     "NVDA", "INTC",
-    "AMD", "MU", "OKLO", "RKLB", "IREN", "CRML", "ABAT"
+    "OKLO", "RKLB", "IREN", "ABAT"
 };
 const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
