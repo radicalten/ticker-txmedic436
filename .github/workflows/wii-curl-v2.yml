@@ -2,7 +2,7 @@ name: Wii-curl-v2
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build-wii:
     runs-on: ubuntu-latest
