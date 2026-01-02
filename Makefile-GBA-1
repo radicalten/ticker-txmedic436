@@ -14,7 +14,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libctru/lib/3ds \
--lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lgba -lm
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lmm -ltonc -lm
 TARGET  := myapp
 SRCDIR 	:= GBA-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
