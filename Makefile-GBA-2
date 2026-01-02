@@ -5,16 +5,15 @@ export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
-INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include
+INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CFLAGS) \
 -Wl,-Map,$(TARGET).map \
--L/opt/devkitpro/portlibs/3ds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libtonc/lib \
--L/opt/devkitpro/libctru/lib/3ds \
--lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lmm -ltonc -lm
+-L/opt/devkitpro/libgba/lib \
+-lz -lmm -ltonc -lm
 TARGET  := myapp
 SRCDIR 	:= GBA-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
