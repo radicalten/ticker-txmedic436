@@ -1,255 +1,271 @@
-// main.c - Simple 2D side scroller demo using tonc
-// Controls: Left/Right to move, A or B to jump.
+// ===========================================================================
+// Single-file Kirby-like 2D side-scroller for GBA using Tonc + Mode 3 bitmap
+// - Left/Right: move
+// - A: jump (when on ground)
+// - Hold A in air: float (slow descent + Up/Down to rise/fall)
+// - Smooth camera, parallax clouds, platforms with basic collision
+// - Everything in one file, no external assets
+// Compile with devkitARM + libtonc (standard GBA homebrew setup)
+// ===========================================================================
 
 #include <tonc.h>
 
-//------------------------------------------------------------------------------
-// Fixed-point helpers
-//------------------------------------------------------------------------------
+typedef int fixed;  // 8-bit fixed point (1 pixel = 256)
 
-#define FIX_SHIFT   8
-#define INT2FIX(n)  ((n) << FIX_SHIFT)
-#define FIX2INT(x)  ((x) >> FIX_SHIFT)
+// ---------------------------------------------------------------------------
+// Colors (RGB15)
+// ---------------------------------------------------------------------------
+const u16 CLR_SKY     = RGB15( 8, 18, 31);
+const u16 CLR_GRASS   = RGB15( 4, 22,  8);
+const u16 CLR_DIRT    = RGB15(16, 10,  4);
+const u16 CLR_PINK    = RGB15(31, 16, 24);
+const u16 CLR_DARK    = RGB15(28,  8, 16);
+const u16 CLR_RED     = RGB15(31,  8,  8);
+const u16 CLR_BLACK   = RGB15( 0,  0,  0);
+const u16 CLR_WHITE   = RGB15(31, 31, 31);
+const u16 CLR_PLATFORM= RGB15(20, 14,  6);
 
-//------------------------------------------------------------------------------
-// Game constants
-//------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+inline int max(int a, int b) { return a > b ? a : b; }
+inline int min(int a, int b) { return a < b ? a : b; }
 
-#define SCREEN_WIDTH   240
-#define SCREEN_HEIGHT  160
-
-// World is 64 tiles wide (64 * 8 = 512 pixels)
-#define WORLD_WIDTH    (64*8)
-
-// Put the top of the ground a bit above the bottom of the screen
-#define GROUND_Y       (SCREEN_HEIGHT - 32)
-
-// Player parameters
-#define PLAYER_W       16
-#define PLAYER_H       16
-
-#define MOVE_SPEED     INT2FIX(1)      // 1 pixel/frame
-#define GRAVITY        (INT2FIX(1)/4)  // 0.25 px/frame^2
-#define JUMP_VEL       (-INT2FIX(4))   // -4 px/frame
-#define MAX_FALL_SPEED INT2FIX(4)
-
-//------------------------------------------------------------------------------
-// Player structure
-//------------------------------------------------------------------------------
-
-typedef struct {
-    int x, y;       // fixed-point position
-    int vx, vy;     // fixed-point velocity
-    int w, h;
-    int onGround;   // 1 if touching ground
-} Player;
-
-//------------------------------------------------------------------------------
-// Globals
-//------------------------------------------------------------------------------
-
-OBJ_ATTR obj_buffer[128];
-Player player;
-
-//------------------------------------------------------------------------------
-// Background setup: sky and ground tiles in a 64x32 map
-//------------------------------------------------------------------------------
-
-static void init_background(void)
+int isqrt(int num)
 {
-    // Enable mode 0, BG0 and objects, 1D mapping for sprites
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-
-    // BG palette: index 0 = sky, 1 = ground
-    pal_bg_mem[0] = RGB15(8, 16, 31);   // light blue sky
-    pal_bg_mem[1] = RGB15(6, 10, 0);    // darkish green ground
-
-    // Tile 0: sky (all color 0)
-    TILE *skyTile = &tile_mem[0][0];
-    for(int i=0; i<8; i++)
-        skyTile->data[i] = 0x00000000;
-
-    // Tile 1: ground (all color 1)
-    TILE *groundTile = &tile_mem[0][1];
-    for(int i=0; i<8; i++)
-        groundTile->data[i] = 0x11111111;
-
-    // BG0: charblock 0, screenblock 28, 4bpp, 64x32 map
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(28) | BG_4BPP | BG_REG_64x32;
-
-    // Create a simple level:
-    // - top half: sky (tile 0)
-    // - bottom half: ground (tile 1)
-    u16 *se_left  = se_mem[28]; // first 32x32 block (x = 0..31)
-    u16 *se_right = se_mem[29]; // second 32x32 block (x = 32..63)
-
-    for(int y=0; y<32; y++)
+    if (num <= 1) return num;
+    int res = 0;
+    for (int i = 1 << 15; i != 0; i >>= 1)
     {
-        for(int x=0; x<64; x++)
-        {
-            u16 tid = (y >= 16) ? 1 : 0;   // ground below row 16
-            if(x < 32)
-                se_left[y*32 + x] = tid;
-            else
-                se_right[y*32 + (x-32)] = tid;
-        }
+        int b = res | i;
+        if (num >= b << 1) { res = b; num -= b << 1; }
     }
-
-    // Initial scroll
-    REG_BG0HOFS = 0;
-    REG_BG0VOFS = 0;
+    return res;
 }
 
-//------------------------------------------------------------------------------
-// Sprite (player) setup: simple 16x16 pink square
-//------------------------------------------------------------------------------
-
-static void init_player_sprite(void)
+void filled_circle(int cx, int cy, int r, u16 clr)
 {
-    // Init OAM buffer (hides all sprites)
-    oam_init(obj_buffer, 128);
-
-    // Object palette: index 1 = pink
-    pal_obj_mem[1] = RGB15(31, 15, 23); // pink
-
-    // Create a 16x16 square using 4 tiles (4bpp) in OBJ VRAM block 4
-    // Tiles 0..3 form a 2x2 block for 16x16 in 1D mapping.
-    for(int t=0; t<4; t++)
+    for (int dy = -r; dy <= r; dy++)
     {
-        TILE *tile = &tile_mem[4][t];
-        for(int i=0; i<8; i++)
-            tile->data[i] = 0x11111111;  // all pixels use color index 1
+        int y = cy + dy;
+        if (y < 0 || y >= 160) continue;
+        int dx = isqrt(r * r - dy * dy);
+        int x0 = max(cx - dx, 0);
+        int x1 = min(cx + dx, 239);
+        if (x0 > x1) continue;
+        u16 *dst = vid_mem + y * 240 + x0;
+        for (int x = x0; x <= x1; x++) *dst++ = clr;
     }
-
-    // Use obj_buffer[0] as our player sprite
-    OBJ_ATTR *obj = &obj_buffer[0];
-
-    // 16x16 square, 4bpp, regular object
-    obj_set_attr(obj,
-        ATTR0_SQUARE | ATTR0_4BPP | ATTR0_REG,
-        ATTR1_SIZE_16,
-        ATTR2_BUILD(0, 0, 0)); // tile index 0, prio 0, palbank 0
-
-    // Initial on-screen position (will be updated in game loop)
-    obj_set_pos(obj, SCREEN_WIDTH/2 - PLAYER_W/2, GROUND_Y - PLAYER_H);
-
-    // Copy to OAM
-    oam_copy(oam_mem, obj_buffer, 1);
 }
 
-//------------------------------------------------------------------------------
-// Player initialization
-//------------------------------------------------------------------------------
-
-static void init_player(void)
+void filled_ellipse(int cx, int cy, int rx, int ry, u16 clr)
 {
-    player.w = PLAYER_W;
-    player.h = PLAYER_H;
-
-    int start_x = 40;                 // world x
-    int start_y = GROUND_Y - PLAYER_H;
-
-    player.x = INT2FIX(start_x);
-    player.y = INT2FIX(start_y);
-
-    player.vx = 0;
-    player.vy = 0;
-    player.onGround = 1;
+    for (int dy = -ry; dy <= ry; dy++)
+    {
+        int y = cy + dy;
+        if (y < 0 || y >= 160) continue;
+        int temp = ry * ry - dy * dy;
+        if (temp < 0) continue;
+        int dx = rx * isqrt(temp) / ry;
+        int x0 = max(cx - dx, 0);
+        int x1 = min(cx + dx, 239);
+        if (x0 > x1) continue;
+        u16 *dst = vid_mem + y * 240 + x0;
+        for (int x = x0; x <= x1; x++) *dst++ = clr;
+    }
 }
 
-//------------------------------------------------------------------------------
+void draw_kirby(int cx, int cy)
+{
+    // Body
+    filled_ellipse(cx, cy + 2, 15, 17, CLR_PINK);
+    filled_ellipse(cx, cy + 9, 13, 7, CLR_DARK);      // bottom shadow
+
+    // Arms
+    filled_circle(cx - 15, cy + 3, 6, CLR_PINK);
+    filled_circle(cx + 15, cy + 3, 6, CLR_PINK);
+
+    // Feet
+    filled_ellipse(cx - 7, cy + 13, 8, 7, CLR_RED);
+    filled_ellipse(cx + 7, cy + 13, 8, 7, CLR_RED);
+
+    // Eyes
+    filled_ellipse(cx - 6, cy - 6, 4, 9, CLR_BLACK);
+    filled_ellipse(cx + 6, cy - 6, 4, 9, CLR_BLACK);
+    filled_circle(cx - 6, cy - 9, 3, CLR_WHITE);
+    filled_circle(cx + 6, cy - 9, 3, CLR_WHITE);
+
+    // Cheeks
+    filled_ellipse(cx - 11, cy + 1, 6, 4, CLR_RED);
+    filled_ellipse(cx + 11, cy + 1, 6, 4, CLR_RED);
+}
+
+// ---------------------------------------------------------------------------
+// Clouds (parallax)
+// ---------------------------------------------------------------------------
+typedef struct { int wx, y, size; } Cloud;
+Cloud clouds[] = {
+    {  150, 30, 22}, {  450, 45, 28}, {  800, 35, 20}, { 1100, 55, 25},
+    { 1400, 40, 24}, { 1800, 30, 26}, { 2200, 50, 22}, { 2600, 38, 27}
+};
+
+// ---------------------------------------------------------------------------
+// Platforms
+// ---------------------------------------------------------------------------
+typedef struct { int wx, y, w; } Platform;
+Platform platforms[] = {
+    { 400, 100, 120},
+    { 800,  80, 100},
+    {1200, 110, 140},
+    {1700,  90, 110},
+    {2200, 105, 130}
+};
+
+// ---------------------------------------------------------------------------
 // Main
-//------------------------------------------------------------------------------
-
-int main(void)
+// ---------------------------------------------------------------------------
+int main()
 {
     irq_init(NULL);
     irq_enable(II_VBLANK);
 
-    init_background();
-    init_player_sprite();
-    init_player();
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-    int cameraX = 0;
+    fixed px = 120 << 8;      // player world position (fixed point)
+    fixed py = 80 << 8;
+    fixed vx = 0, vy = 0;
+    int cam_x = 0;
 
-    while(1)
+    const fixed GRAVITY     = 0x60;
+    const fixed FLOAT_GRAV  = 0x18;
+    const fixed WALK_SPEED  = 0x180;
+    const fixed JUMP_POWER  = -0x580;
+    const int   GROUND_Y    = 120;
+
+    while (1)
     {
-        // Wait for VBlank
-        vid_vsync();
+        VBlankIntrWait();
         key_poll();
 
-        //----------------------------------------------------------------------------
-        // Input: horizontal movement
-        //----------------------------------------------------------------------------
-        player.vx = 0;
-        if(key_is_down(KEY_LEFT))
-            player.vx = -MOVE_SPEED;
-        if(key_is_down(KEY_RIGHT))
-            player.vx =  MOVE_SPEED;
+        // -------------------------------------------------------------------
+        // Input & physics
+        // -------------------------------------------------------------------
+        vx = 0;
+        if (key_is_down(KEY_LEFT))  vx -= WALK_SPEED;
+        if (key_is_down(KEY_RIGHT)) vx += WALK_SPEED;
 
-        // Jump
-        if(player.onGround && (key_hit(KEY_A) || key_hit(KEY_B)))
-        {
-            player.vy = JUMP_VEL;
-            player.onGround = 0;
-        }
+        bool floating = key_is_down(KEY_A) && (py >> 8) < GROUND_Y - 20;
 
-        //----------------------------------------------------------------------------
-        // Physics
-        //----------------------------------------------------------------------------
-        // Gravity
-        player.vy += GRAVITY;
-        if(player.vy > MAX_FALL_SPEED)
-            player.vy = MAX_FALL_SPEED;
-
-        // Integrate position
-        player.x += player.vx;
-        player.y += player.vy;
-
-        // Clamp horizontal position within world
-        int px = FIX2INT(player.x);
-        int py = FIX2INT(player.y);
-
-        int maxX = WORLD_WIDTH - player.w;
-        if(px < 0)      px = 0;
-        if(px > maxX)   px = maxX;
-        player.x = INT2FIX(px);
-
-        // Ground collision (flat ground at GROUND_Y)
-        if(py + player.h >= GROUND_Y)
-        {
-            py = GROUND_Y - player.h;
-            player.y = INT2FIX(py);
-            player.vy = 0;
-            player.onGround = 1;
-        }
+        if (floating)
+            vy += FLOAT_GRAV;
         else
+            vy += GRAVITY;
+
+        if (key_is_down(KEY_UP)   && floating) vy -= 0x100;
+        if (key_is_down(KEY_DOWN) && floating) vy += 0x200;
+
+        if (key_hit(KEY_A) && (py >> 8) >= GROUND_Y - 22) // simple ground check for initial jump
+            vy = JUMP_POWER;
+
+        px += vx;
+        py += vy;
+
+        // -------------------------------------------------------------------
+        // Simple collision (ground + platforms)
+        // -------------------------------------------------------------------
+        bool on_ground = false;
+        int feet_y = (py >> 8) + 18;
+        int world_px = (px >> 8);
+
+        // Ground
+        if (feet_y >= GROUND_Y && vy >= 0)
         {
-            player.onGround = 0;
+            py = (GROUND_Y - 18) << 8;
+            vy = 0;
+            on_ground = true;
         }
 
-        //----------------------------------------------------------------------------
-        // Camera: follow player, clamp to level bounds
-        //----------------------------------------------------------------------------
-        cameraX = px + player.w/2 - SCREEN_WIDTH/2;
-        if(cameraX < 0)
-            cameraX = 0;
-        if(cameraX > WORLD_WIDTH - SCREEN_WIDTH)
-            cameraX = WORLD_WIDTH - SCREEN_WIDTH;
+        // Platforms
+        for (int i = 0; i < sizeof(platforms)/sizeof(Platform); i++)
+        {
+            Platform *p = &platforms[i];
+            if (feet_y >= p->y && feet_y <= p->y + 22 &&
+                world_px >= p->wx - 18 && world_px <= p->wx + p->w + 18 &&
+                vy >= 0)
+            {
+                py = (p->y - 18) << 8;
+                vy = 0;
+                on_ground = true;
+            }
+        }
 
-        REG_BG0HOFS = cameraX;
+        // Death by falling
+        if (py >> 8 > 200)
+        {
+            px = 120 << 8;
+            py = 80 << 8;
+            vy = 0;
+        }
 
-        //----------------------------------------------------------------------------
-        // Update sprite position relative to camera
-        //----------------------------------------------------------------------------
-        OBJ_ATTR *obj = &obj_buffer[0];
+        // -------------------------------------------------------------------
+        // Camera (player centered)
+        // -------------------------------------------------------------------
+        cam_x = (px >> 8) - 120;
+        if (cam_x < 0) cam_x = 0;
 
-        int sx = px - cameraX;
-        int sy = py;     // no vertical scroll
+        // -------------------------------------------------------------------
+        // Rendering
+        // -------------------------------------------------------------------
+        // Sky
+        for (int i = 0; i < 240*160; i++) vid_mem[i] = CLR_SKY;
 
-        obj_set_pos(obj, sx, sy);
-        oam_copy(oam_mem, obj_buffer, 1);
+        // Clouds (half-speed parallax)
+        for (int i = 0; i < sizeof(clouds)/sizeof(Cloud); i++)
+        {
+            int sx = clouds[i].wx - (cam_x >> 1);
+            if (sx > -60 && sx < 300)
+            {
+                filled_circle(sx,           clouds[i].y, clouds[i].size,     CLR_WHITE);
+                filled_circle(sx + 18,      clouds[i].y - 8, clouds[i].size-6, CLR_WHITE);
+                filled_circle(sx - 15,      clouds[i].y - 6, clouds[i].size-8, CLR_WHITE);
+            }
+        }
+
+        // Ground
+        for (int y = GROUND_Y; y < 160; y++)
+        {
+            u16 *dst = vid_mem + y * 240;
+            for (int x = 0; x < 240; x++) dst[x] = CLR_GRASS;
+        }
+        // Dirt layer
+        for (int y = 140; y < 160; y++)
+        {
+            u16 *dst = vid_mem + y * 240;
+            for (int x = 0; x < 240; x++) dst[x] = CLR_DIRT;
+        }
+
+        // Platforms
+        for (int i = 0; i < sizeof(platforms)/sizeof(Platform); i++)
+        {
+            Platform *p = &platforms[i];
+            int sx = p->wx - cam_x;
+            if (sx > -200 && sx < 440)
+                for (int y = p->y; y < p->y + 20; y++)
+                    if (y >= 0 && y < 160)
+                    {
+                        int x0 = max(sx, 0);
+                        int x1 = min(sx + p->w - 1, 239);
+                        if (x0 <= x1)
+                        {
+                            u16 *dst = vid_mem + y * 240 + x0;
+                            for (int x = x0; x <= x1; x++) *dst++ = CLR_PLATFORM;
+                        }
+                    }
+        }
+
+        // Kirby
+        draw_kirby(120, py >> 8);  // always centered horizontally
+
     }
-
     return 0;
 }
