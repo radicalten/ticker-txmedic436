@@ -27,14 +27,14 @@ all: $(TARGET).gba
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
-# Package ELF into 3DSX (requires devkitPro tools)
-$(TARGET).gba: $(TARGET).elf $(TARGET).smdh
-	gbatool $(TARGET).elf $(TARGET).gba --smdh=$(TARGET).smdh
+# Package ELF into .gba (requires devkitPro tools)
+$(TARGET).gba: $(TARGET).elf 
+	gbatool $(TARGET).elf $(TARGET).gba 
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).smdh $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
 
 .PHONY: all clean
