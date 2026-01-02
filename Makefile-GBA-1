@@ -21,20 +21,20 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
-all: $(TARGET).3dsx
+all: $(TARGET).gba
 
 # Build ELF
 $(TARGET).elf: $(OBJECTS)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Package ELF into 3DSX (requires devkitPro tools)
-$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
-	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+$(TARGET).gba: $(TARGET).elf $(TARGET).smdh
+	gbatool $(TARGET).elf $(TARGET).gba --smdh=$(TARGET).smdh
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).smdh $(TARGET).map $(OBJECTS)
 
 .PHONY: all clean
