@@ -1,6 +1,7 @@
 .SUFFIXES:
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+#export LIBTONC 	:= $(DEVKITPRO)/libtonc
 include $(DEVKITARM)/gba_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
@@ -11,7 +12,7 @@ LDFLAGS := $(CFLAGS) \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/3ds/lib \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/libctru/lib \
+-L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lgba -lm
 TARGET  := myapp
