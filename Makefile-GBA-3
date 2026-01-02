@@ -29,7 +29,7 @@ $(TARGET).elf: $(OBJECTS)
 
 # Package ELF into .gba (requires devkitPro tools)
 $(TARGET).gba: $(TARGET).elf 
-	gbatool $(TARGET).elf $(TARGET).gba 
+	gbafix $(TARGET).elf $(TARGET).gba 
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
