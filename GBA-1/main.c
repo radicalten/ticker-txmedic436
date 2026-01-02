@@ -1,372 +1,231 @@
-// -----------------------------------------------------------------------------
-// GBA Stock Dashboard (offline demo, libtonc)
-//
-// - No HTTP or JSON: prices are generated locally as a random walk
-// - Uses libtonc + TTE for text output
-// - Keeps MACD/EMA logic and multi-ticker layout
-// -----------------------------------------------------------------------------
-
 #include <tonc.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <math.h>
+// --------------------------------------------------------------------------
+// CONSTANTS & PHYSICS
+// --------------------------------------------------------------------------
+#define GRAVITY         0x40    // Fixed point 8.8 (0.25 pixels/frame)
+#define JUMP_FORCE      0x500   // Initial jump
+#define FLOAT_FORCE     0x250   // The "puff" jump in mid-air
+#define WALK_ACCEL      0x40
+#define FRICTION        0x20
+#define MAX_SPEED       0x300
+#define FLOOR_Y         (120 << 8) // Y position of the ground (Fixed point)
 
-// --- Configuration -----------------------------------------------------------
+// --------------------------------------------------------------------------
+// GRAPHICS DATA
+// --------------------------------------------------------------------------
 
-#define UPDATE_INTERVAL_SECONDS  1      // shorter for GBA demo
-#define DATA_START_ROW           6      // text row where first ticker starts
-
-// MACD parameters
-#define FAST_EMA_PERIOD   12
-#define SLOW_EMA_PERIOD   26
-#define SIGNAL_EMA_PERIOD  9
-
-// --- Tickers -----------------------------------------------------------------
-
-const char *tickers[] = {
-    "BTC-USD", "ETH-USD", "DX-Y.NYB", "^SPX",
-    "GC=F", "CL=F", "NG=F", "NVDA", "INTC",
-    "AMD", "MU", "OKLO", "RKLB", "IREN", "CRML", "ABAT"
+// A simple 16-color palette: Transparent, Black, Kirby Pink, Dark Pink, Red (Shoes)
+const unsigned short kirby_pal[] = {
+    CL_TRANS, RGB15(0,0,0), RGB15(31,20,24), RGB15(28,10,18), RGB15(31,0,5), 
+    RGB15(31,31,31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
-const int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
-// --- Per-ticker session series ----------------------------------------------
+// 16x16 Sprite Tiles (4bpp). A simple round "ball" character.
+// 4 tiles total (TopL, TopR, BotL, BotR)
+const unsigned int kirby_tiles[32] = {
+    // Tile 0: Top Left
+    0x00000000, 0x00000000, 0x00022200, 0x00222220, 0x02222552, 0x02222552, 0x22222222, 0x22222222,
+    // Tile 1: Top Right
+    0x00000000, 0x00000000, 0x00222000, 0x02222200, 0x25522220, 0x25522220, 0x22222222, 0x22222222,
+    // Tile 2: Bottom Left
+    0x22222222, 0x22222222, 0x22223322, 0x02222222, 0x00222220, 0x04442200, 0x04444000, 0x00000000,
+    // Tile 3: Bottom Right
+    0x22222222, 0x22222222, 0x22332222, 0x22222220, 0x02222200, 0x00224440, 0x00044440, 0x00000000
+};
 
+// Simple Ground Tile (8x8) - Chequered pattern
+const unsigned int ground_tile[8] = {
+    0x11111111, 0x22222222, 0x11111111, 0x22222222,
+    0x11111111, 0x22222222, 0x11111111, 0x22222222
+};
+
+// --------------------------------------------------------------------------
+// GAME STATE
+// --------------------------------------------------------------------------
 typedef struct {
-    double *data;
-    int     n;
-    int     cap;
-} Series;
+    int x, y;       // Position (Fixed point 24.8)
+    int vx, vy;     // Velocity (Fixed point 24.8)
+    int facing;     // 0 = Right, 1 = Left
+    bool grounded;
+    OBJ_ATTR *obj;  // Pointer to OAM entry
+} Player;
 
-static Series *g_series = NULL;
+Player p;
+int cam_x = 0;
+int scroll_x = 0;
 
-// --- Utility: ensure capacity / append to Series ----------------------------
+// --------------------------------------------------------------------------
+// FUNCTIONS
+// --------------------------------------------------------------------------
 
-static int ensure_series_capacity(Series *s, int min_cap)
-{
-    if (!s) return 0;
-    if (s->cap >= min_cap) return 1;
+void load_graphics() {
+    // 1. Load Palette to OBJ palette mem and BG palette mem
+    memcpy32(pal_obj_mem, kirby_pal, 8); // 8 words = 32 bytes = 16 colors
+    memcpy32(pal_bg_mem, kirby_pal, 8);
 
-    int new_cap = (s->cap > 0) ? s->cap * 2 : 64;
-    if (new_cap < min_cap) new_cap = min_cap;
+    // 2. Load Sprite Tiles into OAM Tile Memory
+    // We copy 4 tiles (16x16 sprite)
+    memcpy32(&tile_mem[4][0], kirby_tiles, 32); 
 
-    double *p = (double *)realloc(s->data, sizeof(double) * new_cap);
-    if (!p) return 0;
-
-    s->data = p;
-    s->cap  = new_cap;
-    return 1;
+    // 3. Load Ground Tile into BG Tile Memory (Charblock 0)
+    // We put it at index 1 (index 0 is usually transparent/empty)
+    memcpy32(&tile_mem[0][1], ground_tile, 8);
 }
 
-static int series_append(Series *s, double v)
-{
-    if (!s) return 0;
-    if (!ensure_series_capacity(s, s->n + 1)) return 0;
-    s->data[s->n++] = v;
-    return 1;
-}
-
-// --- EMA / MACD helpers (unchanged logic) -----------------------------------
-
-static void compute_ema_series(const double *data, int n, int period, double *out)
-{
-    if (!data || !out || n <= 0 || period <= 0 || period > n) return;
-
-    double k = 2.0 / (period + 1.0);
-
-    // Seed EMA with SMA of first 'period'
-    double sum = 0.0;
-    for (int i = 0; i < period; i++)
-        sum += data[i];
-
-    double ema = sum / period;
-
-    for (int i = 0; i < period - 1; i++)
-        out[i] = 0.0;     // not used
-
-    out[period - 1] = ema;
-
-    for (int i = period; i < n; i++)
-    {
-        ema = (data[i] - ema) * k + ema;
-        out[i] = ema;
-    }
-}
-
-/**
- * Compute last two MACD and Signal values.
- * Returns 1 on success, 0 if not enough data.
- */
-static int compute_macd_last_two(
-    const double *closes, int n,
-    double *macd_prev,  double *macd_last,
-    double *sig_prev,   double *sig_last)
-{
-    if (!closes || n < (SLOW_EMA_PERIOD + SIGNAL_EMA_PERIOD + 1))
-        return 0;
-
-    double *ema_fast = (double *)malloc(sizeof(double) * n);
-    double *ema_slow = (double *)malloc(sizeof(double) * n);
-    if (!ema_fast || !ema_slow)
-    {
-        free(ema_fast);
-        free(ema_slow);
-        return 0;
-    }
-
-    compute_ema_series(closes, n, FAST_EMA_PERIOD, ema_fast);
-    compute_ema_series(closes, n, SLOW_EMA_PERIOD, ema_slow);
-
-    int macd_start = SLOW_EMA_PERIOD - 1;
-    int macd_count = n - macd_start;
-    if (macd_count <= 0)
-    {
-        free(ema_fast);
-        free(ema_slow);
-        return 0;
-    }
-
-    double *macd_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!macd_line)
-    {
-        free(ema_fast);
-        free(ema_slow);
-        return 0;
-    }
-
-    for (int i = 0; i < macd_count; i++)
-    {
-        int idx = macd_start + i;
-        macd_line[i] = ema_fast[idx] - ema_slow[idx];
-    }
-
-    if (macd_count < SIGNAL_EMA_PERIOD + 1)
-    {
-        free(ema_fast);
-        free(ema_slow);
-        free(macd_line);
-        return 0;
-    }
-
-    double *sig_line = (double *)malloc(sizeof(double) * macd_count);
-    if (!sig_line)
-    {
-        free(ema_fast);
-        free(ema_slow);
-        free(macd_line);
-        return 0;
-    }
-
-    compute_ema_series(macd_line, macd_count, SIGNAL_EMA_PERIOD, sig_line);
-
-    *macd_last = macd_line[macd_count - 1];
-    *macd_prev = macd_line[macd_count - 2];
-    *sig_last  = sig_line[macd_count - 1];
-    *sig_prev  = sig_line[macd_count - 2];
-
-    free(ema_fast);
-    free(ema_slow);
-    free(macd_line);
-    free(sig_line);
-    return 1;
-}
-
-// --- Simple TTE-based print helper ------------------------------------------
-// col/row are in character cells (8x8), not pixels.
-
-static void print_at(int col, int row, const char *fmt, ...)
-{
-    char text[96];
-    va_list ap;
-
-    va_start(ap, fmt);
-    vsnprintf(text, sizeof(text), fmt, ap);
-    va_end(ap);
-
-    // TTE control: #{P:x,y} sets pixel position.
-    char buf[128];
-    int x = col * 8;
-    int y = row * 8;
-    snprintf(buf, sizeof(buf), "#{P:%d,%d}%s", x, y, text);
-
-    tte_write(buf);
-}
-
-// --- UI setup and per-ticker update -----------------------------------------
-
-static int g_update_counter = 0;
-
-// Draw static header and initialize data structures
-static void setup_dashboard_ui(void)
-{
-    // Allocate session series
-    g_series = (Series *)calloc(num_tickers, sizeof(Series));
-
-    // Title
-    tte_write("#{P:0,0}GBA Stock Dashboard (offline demo)");
-
-    // Timestamp line placeholder (row 2)
-    print_at(0, 2, "Update #0");
-
-    // Header
-    print_at(0, 4, "%-10s | %10s | %10s | %7s | %6s | %6s",
-             "Tkr", "Price", "Chg", "%Chg", "MACD", "Sig");
-
-    // Initial placeholders for each ticker
-    for (int i = 0; i < num_tickers; i++)
-    {
-        int row = DATA_START_ROW + i;
-        print_at(0, row, "%-10s | Initializing...", tickers[i]);
-    }
-}
-
-// Update "timestamp" (here: just an update counter)
-static void update_timestamp(void)
-{
-    print_at(0, 2, "Update #%d", g_update_counter);
-}
-
-// Generate / update price series and print one row
-static void update_ticker(int index, int row)
-{
-    Series *s = &g_series[index];
-
-    // Seed RNG once
-    static int rng_inited = 0;
-    if (!rng_inited)
-    {
-        srand(1);   // deterministic
-        rng_inited = 1;
-    }
-
-    double price;
-
-    if (s->n == 0)
-    {
-        // Initial price per ticker
-        price = 100.0 + index * 10.0;
-        series_append(s, price);
-    }
-    else
-    {
-        double last = s->data[s->n - 1];
-
-        // Random walk: +/- ~1% step
-        int r = rand() % 2001 - 1000;      // [-1000,1000]
-        double pct = (double)r / 100000.0; // [-0.01,0.01]
-        price = last * (1.0 + pct);
-
-        series_append(s, price);
-    }
-
-    // "Daily" reference: first sample
-    double base_prev = (s->n >= 2) ? s->data[0] : price;
-    double change    = price - base_prev;
-    double pct_change = (base_prev != 0.0)
-                        ? (change / base_prev) * 100.0
-                        : 0.0;
-
-    // MACD from session series
-    double macd_prev = 0.0, macd_last = 0.0;
-    double sig_prev  = 0.0, sig_last  = 0.0;
-    int has_macd = compute_macd_last_two(
-        s->data, s->n,
-        &macd_prev, &macd_last,
-        &sig_prev, &sig_last
-    );
-
-    double macd_pct = 0.0, sig_pct = 0.0;
-    if (has_macd && price != 0.0)
-    {
-        macd_pct = (macd_last / price) * 100.0;
-        sig_pct  = (sig_last  / price) * 100.0;
-    }
-
-    // Crossover flags
-    int bullish_cross = 0, bearish_cross = 0;
-    if (has_macd)
-    {
-        bullish_cross = (macd_prev <= sig_prev) && (macd_last > sig_last);
-        bearish_cross = (macd_prev >= sig_prev) && (macd_last < sig_last);
-    }
-
-    char macd_buf[16], sig_buf[16];
-    if (has_macd)
-    {
-        snprintf(macd_buf, sizeof(macd_buf), "%+6.3f", macd_pct);
-        snprintf(sig_buf,  sizeof(sig_buf),  "%+6.3f", sig_pct);
-    }
-    else
-    {
-        snprintf(macd_buf, sizeof(macd_buf), "%6s", "N/A");
-        snprintf(sig_buf,  sizeof(sig_buf),  "%6s", "N/A");
-    }
-
-    char cross_char = ' ';
-    if (bullish_cross) cross_char = '^';
-    else if (bearish_cross) cross_char = 'v';
-
-    // Print row (fixed-width style so it overwrites previous text)
-    print_at(0, row,
-             "%-10s | %10.2f | %+10.2f | %+6.2f%% | %6s | %6s %c",
-             tickers[index], price, change, pct_change,
-             macd_buf, sig_buf, cross_char);
-}
-
-// Simple countdown using VBlank (≈60 frames/sec)
-static void run_countdown(void)
-{
-    int update_line = DATA_START_ROW + num_tickers + 1;
-
-    for (int s = UPDATE_INTERVAL_SECONDS; s > 0; s--)
-    {
-        print_at(0, update_line, "Updating in %2d seconds...", s);
-
-        // Wait roughly 1 second (60 VBlanks)
-        for (int i = 0; i < 60; i++)
-            vid_vsync();
-    }
-
-    print_at(0, update_line, "Updating now...           ");
-
-    // Small pause so "Updating now..." is visible
-    for (int i = 0; i < 30; i++)
-        vid_vsync();
-}
-
-// --- Main --------------------------------------------------------------------
-
-int main(void)
-{
-    // Set video mode 0, enable BG0
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0;
-
-    // Init TTE on BG0, using charblock 0, screenblock 31
-    tte_init_se_default(0, BG_CBB(0) | BG_SBB(31));
-
-    // Optional: set margins if you like (not strictly needed)
-    // tte_set_margins(0, 0, 240, 160);
-
-    setup_dashboard_ui();
-
-    while (1)
-    {
-        update_timestamp();
-
-        // Update all tickers
-        for (int i = 0; i < num_tickers; i++)
-        {
-            int row = DATA_START_ROW + i;
-            update_ticker(i, row);
+void setup_background() {
+    // Setup BG0 control: Priority 0, Charblock 0, Screenblock 30, 16 colors, 32x32 size
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
+    
+    // Fill the bottom rows of Screenblock 30 with the ground tile
+    SCR_ENTRY *map = se_mem[30];
+    int i;
+    for(i=0; i<1024; i++) {
+        // Row 15, 16, 17 are floor
+        int y_tile = i / 32;
+        if(y_tile >= 15) {
+            map[i] = 1; // Use tile index 1 (Ground)
+        } else {
+            map[i] = 0; // Empty
         }
+    }
+}
 
-        g_update_counter++;
-        run_countdown();
+void init_player() {
+    p.x = 40 << 8;
+    p.y = 0;
+    p.vx = 0;
+    p.vy = 0;
+    p.facing = 0;
+    p.grounded = false;
+    
+    // Assign first OAM entry
+    p.obj = &oam_mem[0];
+    
+    // Init Sprite Attributes
+    // ATTR0: Y=0, 4bpp, Square shape
+    // ATTR1: X=0, Size 16x16 (Medium)
+    // ATTR2: Tile Index 0, Priority 0, Palette 0
+    p.obj->attr0 = OBJ_Y(0) | ATTR0_COLOR_16 | ATTR0_SQUARE;
+    p.obj->attr1 = OBJ_X(0) | ATTR1_SIZE_16;
+    p.obj->attr2 = ATTR2_PALBANK(0) | 0; 
+}
+
+void update_physics() {
+    // 1. Horizontal Movement (Acceleration/Friction)
+    if (key_is_down(KEY_RIGHT)) {
+        p.vx += WALK_ACCEL;
+        p.facing = 0; // Face Right
+    } else if (key_is_down(KEY_LEFT)) {
+        p.vx -= WALK_ACCEL;
+        p.facing = 1; // Face Left (Flip H)
+    } else {
+        // Friction
+        if (p.vx > 0) p.vx -= FRICTION;
+        if (p.vx < 0) p.vx += FRICTION;
+        if (abs(p.vx) < FRICTION) p.vx = 0;
     }
 
-    // Never reached on GBA
+    // Clamp speed
+    if (p.vx > MAX_SPEED) p.vx = MAX_SPEED;
+    if (p.vx < -MAX_SPEED) p.vx = -MAX_SPEED;
+
+    // 2. Vertical Movement (Gravity & Jump)
+    p.vy += GRAVITY;
+
+    // Jump / Float Logic
+    if (key_hit(KEY_A)) {
+        if (p.grounded) {
+            // Normal Jump
+            p.vy = -JUMP_FORCE;
+            p.grounded = false;
+        } else {
+            // Kirby Float (Mid-air jump)
+            p.vy = -FLOAT_FORCE;
+        }
+    }
+
+    // 3. Apply Velocity
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // 4. Floor Collision
+    if (p.y > FLOOR_Y) {
+        p.y = FLOOR_Y;
+        p.vy = 0;
+        p.grounded = true;
+    }
+    
+    // Left wall collision (can't go back past 0)
+    if (p.x < 0) {
+        p.x = 0;
+        p.vx = 0;
+    }
+}
+
+void update_camera() {
+    // Convert fixed point player X to integer
+    int px = p.x >> 8;
+    
+    // Simple camera: Keep player in center-ish
+    // If player is past 100px on screen, scroll map
+    int screen_x = px - scroll_x;
+    
+    if (screen_x > 100) {
+        scroll_x = px - 100;
+    }
+    
+    // Update Hardware Scroll Register
+    REG_BG0HOFS = scroll_x;
+    
+    // Update Sprite Position relative to camera
+    // Mask with 0x1FF for 9-bit wrapping (hardware sprite requirement)
+    int render_x = (px - scroll_x) & 0x1FF;
+    int render_y = p.y >> 8;
+
+    p.obj->attr0 = (p.obj->attr0 & ~ATTR0_Y_MASK) | OBJ_Y(render_y);
+    p.obj->attr1 = (p.obj->attr1 & ~(ATTR1_X_MASK | ATTR1_HFLIP)) | OBJ_X(render_x);
+    
+    // Horizontal Flip based on facing
+    if (p.facing) {
+        p.obj->attr1 |= ATTR1_HFLIP;
+    }
+}
+
+// --------------------------------------------------------------------------
+// MAIN LOOP
+// --------------------------------------------------------------------------
+
+int main() {
+    // Enable interrupts for VBlank (good practice for timing)
+    irq_init(NULL);
+    irq_enable(II_VBLANK);
+
+    // Init Graphics
+    load_graphics();
+    setup_background();
+    init_player();
+
+    // Set Display Control: Mode 0, Enable BG0, Enable OBJ, 1D Obj mapping
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+
+    while(1) {
+        // Read keys
+        key_poll();
+
+        // Game Logic
+        update_physics();
+        update_camera();
+
+        // Wait for VBlank (prevents tearing)
+        vid_vsync();
+        
+        // Use tonc's OAM copy (puts our sprite struct into actual hardware memory)
+        // We only have 1 sprite to update, so count is 1.
+        // Note: In a real engine, you'd manage an OAM buffer.
+        // Since we are writing directly to &oam_mem[0] via the pointer, 
+        // we technically don't need a copy function, but sync is good.
+    }
+
     return 0;
 }
