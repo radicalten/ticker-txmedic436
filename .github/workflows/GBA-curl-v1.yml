@@ -15,7 +15,7 @@ jobs:
             sudo dkp-pacman -Ql 
     - name: Compile
       run: |
-        make -f Makefile-GBA-1
+        make -f Makefile-GBA-2
     - name: Upload
       uses: actions/upload-artifact@v5
       with:
