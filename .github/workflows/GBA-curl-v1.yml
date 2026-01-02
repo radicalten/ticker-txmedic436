@@ -9,12 +9,15 @@ jobs:
     container: devkitpro/devkitarm:latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
+    - name: Install custom packages
+      run: |
+            sudo dkp-pacman -Ql 
     - name: Compile
       run: |
         make -f Makefile-GBA-1
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: GBA-curl
         path: |
