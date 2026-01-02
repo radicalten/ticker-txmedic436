@@ -13,7 +13,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libgba/lib \
--lz -lmm -ltonc -lm
+-lmm -ltonc -lm
 TARGET  := myapp
 SRCDIR 	:= GBA-1
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
