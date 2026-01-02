@@ -1,231 +1,254 @@
+// main.c - Simple 2D side scroller demo using tonc
+// Controls: Left/Right to move, A or B to jump.
+
 #include <tonc.h>
-#include <stdlib.h>
 
-// --------------------------------------------------------------------------
-// CONSTANTS & PHYSICS
-// --------------------------------------------------------------------------
-#define GRAVITY         0x40    // Fixed point 8.8 (0.25 pixels/frame)
-#define JUMP_FORCE      0x500   // Initial jump
-#define FLOAT_FORCE     0x250   // The "puff" jump in mid-air
-#define WALK_ACCEL      0x40
-#define FRICTION        0x20
-#define MAX_SPEED       0x300
-#define FLOOR_Y         (120 << 8) // Y position of the ground (Fixed point)
+//------------------------------------------------------------------------------
+// Fixed-point helpers
+//------------------------------------------------------------------------------
 
-// --------------------------------------------------------------------------
-// GRAPHICS DATA
-// --------------------------------------------------------------------------
+#define FIX_SHIFT   8
+#define INT2FIX(n)  ((n) << FIX_SHIFT)
+#define FIX2INT(x)  ((x) >> FIX_SHIFT)
 
-// A simple 16-color palette: Transparent, Black, Kirby Pink, Dark Pink, Red (Shoes)
-const unsigned short kirby_pal[] = {
-    CL_TRANS, RGB15(0,0,0), RGB15(31,20,24), RGB15(28,10,18), RGB15(31,0,5), 
-    RGB15(31,31,31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
+//------------------------------------------------------------------------------
+// Game constants
+//------------------------------------------------------------------------------
 
-// 16x16 Sprite Tiles (4bpp). A simple round "ball" character.
-// 4 tiles total (TopL, TopR, BotL, BotR)
-const unsigned int kirby_tiles[32] = {
-    // Tile 0: Top Left
-    0x00000000, 0x00000000, 0x00022200, 0x00222220, 0x02222552, 0x02222552, 0x22222222, 0x22222222,
-    // Tile 1: Top Right
-    0x00000000, 0x00000000, 0x00222000, 0x02222200, 0x25522220, 0x25522220, 0x22222222, 0x22222222,
-    // Tile 2: Bottom Left
-    0x22222222, 0x22222222, 0x22223322, 0x02222222, 0x00222220, 0x04442200, 0x04444000, 0x00000000,
-    // Tile 3: Bottom Right
-    0x22222222, 0x22222222, 0x22332222, 0x22222220, 0x02222200, 0x00224440, 0x00044440, 0x00000000
-};
+#define SCREEN_WIDTH   240
+#define SCREEN_HEIGHT  160
 
-// Simple Ground Tile (8x8) - Chequered pattern
-const unsigned int ground_tile[8] = {
-    0x11111111, 0x22222222, 0x11111111, 0x22222222,
-    0x11111111, 0x22222222, 0x11111111, 0x22222222
-};
+// World is 64 tiles wide (64 * 8 = 512 pixels)
+#define WORLD_WIDTH    (64*8)
 
-// --------------------------------------------------------------------------
-// GAME STATE
-// --------------------------------------------------------------------------
+// Put the top of the ground a bit above the bottom of the screen
+#define GROUND_Y       (SCREEN_HEIGHT - 32)
+
+// Player parameters
+#define PLAYER_W       16
+#define PLAYER_H       16
+
+#define MOVE_SPEED     INT2FIX(1)      // 1 pixel/frame
+#define GRAVITY        (INT2FIX(1)/4)  // 0.25 px/frame^2
+#define JUMP_VEL       (-INT2FIX(4))   // -4 px/frame
+#define MAX_FALL_SPEED INT2FIX(4)
+
+//------------------------------------------------------------------------------
+// Player structure
+//------------------------------------------------------------------------------
+
 typedef struct {
-    int x, y;       // Position (Fixed point 24.8)
-    int vx, vy;     // Velocity (Fixed point 24.8)
-    int facing;     // 0 = Right, 1 = Left
-    bool grounded;
-    OBJ_ATTR *obj;  // Pointer to OAM entry
+    int x, y;       // fixed-point position
+    int vx, vy;     // fixed-point velocity
+    int w, h;
+    int onGround;   // 1 if touching ground
 } Player;
 
-Player p;
-int cam_x = 0;
-int scroll_x = 0;
+//------------------------------------------------------------------------------
+// Globals
+//------------------------------------------------------------------------------
 
-// --------------------------------------------------------------------------
-// FUNCTIONS
-// --------------------------------------------------------------------------
+OBJ_ATTR obj_buffer[128];
+Player player;
 
-void load_graphics() {
-    // 1. Load Palette to OBJ palette mem and BG palette mem
-    memcpy32(pal_obj_mem, kirby_pal, 8); // 8 words = 32 bytes = 16 colors
-    memcpy32(pal_bg_mem, kirby_pal, 8);
+//------------------------------------------------------------------------------
+// Background setup: sky and ground tiles in a 64x32 map
+//------------------------------------------------------------------------------
 
-    // 2. Load Sprite Tiles into OAM Tile Memory
-    // We copy 4 tiles (16x16 sprite)
-    memcpy32(&tile_mem[4][0], kirby_tiles, 32); 
+static void init_background(void)
+{
+    // Enable mode 0, BG0 and objects, 1D mapping for sprites
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
 
-    // 3. Load Ground Tile into BG Tile Memory (Charblock 0)
-    // We put it at index 1 (index 0 is usually transparent/empty)
-    memcpy32(&tile_mem[0][1], ground_tile, 8);
-}
+    // BG palette: index 0 = sky, 1 = ground
+    pal_bg_mem[0] = RGB15(8, 16, 31);   // light blue sky
+    pal_bg_mem[1] = RGB15(6, 10, 0);    // darkish green ground
 
-void setup_background() {
-    // Setup BG0 control: Priority 0, Charblock 0, Screenblock 30, 16 colors, 32x32 size
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
-    
-    // Fill the bottom rows of Screenblock 30 with the ground tile
-    SCR_ENTRY *map = se_mem[30];
-    int i;
-    for(i=0; i<1024; i++) {
-        // Row 15, 16, 17 are floor
-        int y_tile = i / 32;
-        if(y_tile >= 15) {
-            map[i] = 1; // Use tile index 1 (Ground)
-        } else {
-            map[i] = 0; // Empty
-        }
-    }
-}
+    // Tile 0: sky (all color 0)
+    TILE *skyTile = &tile_mem[0][0];
+    for(int i=0; i<8; i++)
+        skyTile->data[i] = 0x00000000;
 
-void init_player() {
-    p.x = 40 << 8;
-    p.y = 0;
-    p.vx = 0;
-    p.vy = 0;
-    p.facing = 0;
-    p.grounded = false;
-    
-    // Assign first OAM entry
-    p.obj = &oam_mem[0];
-    
-    // Init Sprite Attributes
-    // ATTR0: Y=0, 4bpp, Square shape
-    // ATTR1: X=0, Size 16x16 (Medium)
-    // ATTR2: Tile Index 0, Priority 0, Palette 0
-    p.obj->attr0 = OBJ_Y(0) | ATTR0_COLOR_16 | ATTR0_SQUARE;
-    p.obj->attr1 = OBJ_X(0) | ATTR1_SIZE_16;
-    p.obj->attr2 = ATTR2_PALBANK(0) | 0; 
-}
+    // Tile 1: ground (all color 1)
+    TILE *groundTile = &tile_mem[0][1];
+    for(int i=0; i<8; i++)
+        groundTile->data[i] = 0x11111111;
 
-void update_physics() {
-    // 1. Horizontal Movement (Acceleration/Friction)
-    if (key_is_down(KEY_RIGHT)) {
-        p.vx += WALK_ACCEL;
-        p.facing = 0; // Face Right
-    } else if (key_is_down(KEY_LEFT)) {
-        p.vx -= WALK_ACCEL;
-        p.facing = 1; // Face Left (Flip H)
-    } else {
-        // Friction
-        if (p.vx > 0) p.vx -= FRICTION;
-        if (p.vx < 0) p.vx += FRICTION;
-        if (abs(p.vx) < FRICTION) p.vx = 0;
-    }
+    // BG0: charblock 0, screenblock 28, 4bpp, 64x32 map
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(28) | BG_4BPP | BG_REG_64x32;
 
-    // Clamp speed
-    if (p.vx > MAX_SPEED) p.vx = MAX_SPEED;
-    if (p.vx < -MAX_SPEED) p.vx = -MAX_SPEED;
+    // Create a simple level:
+    // - top half: sky (tile 0)
+    // - bottom half: ground (tile 1)
+    u16 *se_left  = se_mem[28]; // first 32x32 block (x = 0..31)
+    u16 *se_right = se_mem[29]; // second 32x32 block (x = 32..63)
 
-    // 2. Vertical Movement (Gravity & Jump)
-    p.vy += GRAVITY;
-
-    // Jump / Float Logic
-    if (key_hit(KEY_A)) {
-        if (p.grounded) {
-            // Normal Jump
-            p.vy = -JUMP_FORCE;
-            p.grounded = false;
-        } else {
-            // Kirby Float (Mid-air jump)
-            p.vy = -FLOAT_FORCE;
+    for(int y=0; y<32; y++)
+    {
+        for(int x=0; x<64; x++)
+        {
+            u16 tid = (y >= 16) ? 1 : 0;   // ground below row 16
+            if(x < 32)
+                se_left[y*32 + x] = tid;
+            else
+                se_right[y*32 + (x-32)] = tid;
         }
     }
 
-    // 3. Apply Velocity
-    p.x += p.vx;
-    p.y += p.vy;
-
-    // 4. Floor Collision
-    if (p.y > FLOOR_Y) {
-        p.y = FLOOR_Y;
-        p.vy = 0;
-        p.grounded = true;
-    }
-    
-    // Left wall collision (can't go back past 0)
-    if (p.x < 0) {
-        p.x = 0;
-        p.vx = 0;
-    }
+    // Initial scroll
+    REG_BG0HOFS = 0;
+    REG_BG0VOFS = 0;
 }
 
-void update_camera() {
-    // Convert fixed point player X to integer
-    int px = p.x >> 8;
-    
-    // Simple camera: Keep player in center-ish
-    // If player is past 100px on screen, scroll map
-    int screen_x = px - scroll_x;
-    
-    if (screen_x > 100) {
-        scroll_x = px - 100;
-    }
-    
-    // Update Hardware Scroll Register
-    REG_BG0HOFS = scroll_x;
-    
-    // Update Sprite Position relative to camera
-    // Mask with 0x1FF for 9-bit wrapping (hardware sprite requirement)
-    int render_x = (px - scroll_x) & 0x1FF;
-    int render_y = p.y >> 8;
+//------------------------------------------------------------------------------
+// Sprite (player) setup: simple 16x16 pink square
+//------------------------------------------------------------------------------
 
-    p.obj->attr0 = (p.obj->attr0 & ~ATTR0_Y_MASK) | OBJ_Y(render_y);
-    p.obj->attr1 = (p.obj->attr1 & ~(ATTR1_X_MASK | ATTR1_HFLIP)) | OBJ_X(render_x);
-    
-    // Horizontal Flip based on facing
-    if (p.facing) {
-        p.obj->attr1 |= ATTR1_HFLIP;
+static void init_player_sprite(void)
+{
+    // Init OAM buffer (hides all sprites)
+    oam_init(obj_buffer, 128);
+
+    // Object palette: index 1 = pink
+    pal_obj_mem[1] = RGB15(31, 15, 23); // pink
+
+    // Create a 16x16 square using 4 tiles (4bpp) in OBJ VRAM block 4
+    // Tiles 0..3 form a 2x2 block for 16x16 in 1D mapping.
+    for(int t=0; t<4; t++)
+    {
+        TILE *tile = &tile_mem[4][t];
+        for(int i=0; i<8; i++)
+            tile->data[i] = 0x11111111;  // all pixels use color index 1
     }
+
+    // Use obj_buffer[0] as our player sprite
+    OBJ_ATTR *obj = &obj_buffer[0];
+
+    // 16x16 square, 4bpp, regular object
+    obj_set_attr(obj,
+        ATTR0_SQUARE | ATTR0_4BPP | ATTR0_REG,
+        ATTR1_SIZE_16,
+        ATTR2_BUILD(0, 0, 0)); // tile index 0, prio 0, palbank 0
+
+    // Initial on-screen position (will be updated in game loop)
+    obj_set_pos(obj, SCREEN_WIDTH/2 - PLAYER_W/2, GROUND_Y - PLAYER_H);
+
+    // Copy to OAM
+    oam_copy(oam_mem, obj_buffer, 1);
 }
 
-// --------------------------------------------------------------------------
-// MAIN LOOP
-// --------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+// Player initialization
+//------------------------------------------------------------------------------
 
-int main() {
-    // Enable interrupts for VBlank (good practice for timing)
+static void init_player(void)
+{
+    player.w = PLAYER_W;
+    player.h = PLAYER_H;
+
+    int start_x = 40;                 // world x
+    int start_y = GROUND_Y - PLAYER_H;
+
+    player.x = INT2FIX(start_x);
+    player.y = INT2FIX(start_y);
+
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = 1;
+}
+
+//------------------------------------------------------------------------------
+// Main
+//------------------------------------------------------------------------------
+
+int main(void)
+{
     irq_init(NULL);
     irq_enable(II_VBLANK);
 
-    // Init Graphics
-    load_graphics();
-    setup_background();
+    init_background();
+    init_player_sprite();
     init_player();
 
-    // Set Display Control: Mode 0, Enable BG0, Enable OBJ, 1D Obj mapping
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+    int cameraX = 0;
 
-    while(1) {
-        // Read keys
+    while(1)
+    {
+        // Wait for VBlank
+        vid_vsync();
         key_poll();
 
-        // Game Logic
-        update_physics();
-        update_camera();
+        //----------------------------------------------------------------------------
+        // Input: horizontal movement
+        //----------------------------------------------------------------------------
+        player.vx = 0;
+        if(key_is_down(KEY_LEFT))
+            player.vx = -MOVE_SPEED;
+        if(key_is_down(KEY_RIGHT))
+            player.vx =  MOVE_SPEED;
 
-        // Wait for VBlank (prevents tearing)
-        vid_vsync();
-        
-        // Use tonc's OAM copy (puts our sprite struct into actual hardware memory)
-        // We only have 1 sprite to update, so count is 1.
-        // Note: In a real engine, you'd manage an OAM buffer.
-        // Since we are writing directly to &oam_mem[0] via the pointer, 
-        // we technically don't need a copy function, but sync is good.
+        // Jump
+        if(player.onGround && (key_hit(KEY_A) || key_hit(KEY_B)))
+        {
+            player.vy = JUMP_VEL;
+            player.onGround = 0;
+        }
+
+        //----------------------------------------------------------------------------
+        // Physics
+        //----------------------------------------------------------------------------
+        // Gravity
+        player.vy += GRAVITY;
+        if(player.vy > MAX_FALL_SPEED)
+            player.vy = MAX_FALL_SPEED;
+
+        // Integrate position
+        player.x += player.vx;
+        player.y += player.vy;
+
+        // Clamp horizontal position within world
+        int px = FIX2INT(player.x);
+        int py = FIX2INT(player.y);
+
+        int maxX = WORLD_WIDTH - player.w;
+        if(px < 0)      px = 0;
+        if(px > maxX)   px = maxX;
+        player.x = INT2FIX(px);
+
+        // Ground collision (flat ground at GROUND_Y)
+        if(py + player.h >= GROUND_Y)
+        {
+            py = GROUND_Y - player.h;
+            player.y = INT2FIX(py);
+            player.vy = 0;
+            player.onGround = 1;
+        }
+        else
+        {
+            player.onGround = 0;
+        }
+
+        //----------------------------------------------------------------------------
+        // Camera: follow player, clamp to level bounds
+        //----------------------------------------------------------------------------
+        cameraX = px + player.w/2 - SCREEN_WIDTH/2;
+        if(cameraX < 0)
+            cameraX = 0;
+        if(cameraX > WORLD_WIDTH - SCREEN_WIDTH)
+            cameraX = WORLD_WIDTH - SCREEN_WIDTH;
+
+        REG_BG0HOFS = cameraX;
+
+        //----------------------------------------------------------------------------
+        // Update sprite position relative to camera
+        //----------------------------------------------------------------------------
+        OBJ_ATTR *obj = &obj_buffer[0];
+
+        int sx = px - cameraX;
+        int sy = py;     // no vertical scroll
+
+        obj_set_pos(obj, sx, sy);
+        oam_copy(oam_mem, obj_buffer, 1);
     }
 
     return 0;
