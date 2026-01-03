@@ -1,4 +1,5 @@
 #include <tonc.h>
+#include <string.h>
 
 // -------------------------------------------------------------------------
 // CONSTANTS & CONFIGURATION
@@ -65,7 +66,7 @@ void load_procedural_graphics() {
     pal_bg_mem[7] = RGB15(25, 25, 0);  // Jump Arrows
 
     // Palette 0 for Sprites
-    pal_obj_mem[0] = CLR_MAGENTA;      // Transparent
+    pal_obj_mem[0] = CLR_MAG;      // Transparent
     pal_obj_mem[1] = CLR_RED;          // Car Body
     pal_obj_mem[2] = CLR_BLUE;         // Windshield
     pal_obj_mem[3] = RGB15(5,5,5);     // Shadow/Tires
@@ -196,8 +197,8 @@ OBJ_AFFINE *obj_aff = (OBJ_AFFINE*)obj_buffer;
 
 void init_car() {
     // Start position (Approx Tile 10, 15)
-    car.x = int2fix(30); 
-    car.y = int2fix(120);
+    car.x = int2fx(30); 
+    car.y = int2fx(120);
     car.vx = 0;
     car.vy = 0;
     car.angle = 0; // Pointing Right
@@ -249,8 +250,8 @@ void update_physics() {
 
     // 4. Map Collision
     // Convert Fixed Point X/Y to Tile Coords
-    int tx = fix2int(car.x) / 8;
-    int ty = fix2int(car.y) / 8;
+    int tx = fx2int(car.x) / 8;
+    int ty = fx2int(car.y) / 8;
 
     // Boundary Check
     if(tx < 0) tx = 0; if(tx >= MAP_WIDTH) tx = MAP_WIDTH-1;
@@ -260,7 +261,7 @@ void update_physics() {
 
     // Jump Logic (Pseudo-3D)
     if(tile_id == TID_JUMP) {
-        if(car.z == 0) car.z_vel = int2fix(4); // Pop up
+        if(car.z == 0) car.z_vel = int2fx(4); // Pop up
     }
 
     // Gravity
@@ -275,7 +276,7 @@ void update_physics() {
     }
 
     // Wall Collision (Only if on ground)
-    if(car.z < int2fix(5)) { // Can fly over walls if high enough
+    if(car.z < int2fx(5)) { // Can fly over walls if high enough
         if(tile_id == TID_WALL) {
             // Very basic bounce: invert velocity
             car.vx = -car.vx;
@@ -292,8 +293,8 @@ void update_visuals() {
     OBJ_ATTR *car_obj = &obj_buffer[0];
 
     // Calc screen pos
-    int scr_x = fix2int(car.x) - 8; // Center sprite (16x16)
-    int scr_y = fix2int(car.y) - 8 - fix2int(car.z); // Apply Z height to Y pos
+    int scr_x = fx2int(car.x) - 8; // Center sprite (16x16)
+    int scr_y = fx2int(car.y) - 8 - fx2int(car.z); // Apply Z height to Y pos
 
     // Configure Sprite using Affine Matrix for rotation
     // Attribute 0: Shape(Square), Mode(Affine), ColorMode(4bpp), Y
