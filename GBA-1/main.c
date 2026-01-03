@@ -72,7 +72,7 @@ const Room rooms[] = {
         "The Dragon eats the snack and\ngoes back to sleep.\nBehind it lies a chest!",
         "Open Chest", "Leave quietly",
         R_WIN, R_FOREST,
-        false, CLR_GOLD
+        false, CLR_MAG
     },
     // 6: River (Death)
     {
