@@ -31,59 +31,6 @@ static inline int clampi(int v, int lo, int hi)
 	return v;
 }
 
-static inline void m4_plot(u16* dstBase, int x, int y, u8 clrid)
-{
-	if((unsigned)x >= 240u || (unsigned)y >= 160u) return;
-
-	u16* dst = dstBase + y*120 + (x>>1);
-	u16 px = *dst;
-
-	if(x & 1)  px = (px & 0x00FF) | ((u16)clrid<<8);
-	else       px = (px & 0xFF00) | (u16)clrid;
-
-	*dst = px;
-}
-
-static inline void m4_hline(u16* dstBase, int y, int x1, int x2, u8 clrid)
-{
-	if((unsigned)y >= 160u) return;
-	if(x1 > x2) { int t=x1; x1=x2; x2=t; }
-
-	if(x2 < 0 || x1 > 239) return;
-	x1 = clampi(x1, 0, 239);
-	x2 = clampi(x2, 0, 239);
-
-	u16* dst = dstBase + y*120 + (x1>>1);
-
-	// handle first odd pixel
-	if(x1 & 1)
-	{
-		u16 px = *dst;
-		px = (px & 0x00FF) | ((u16)clrid<<8);
-		*dst++ = px;
-		x1++;
-		if(x1 > x2) return;
-	}
-
-	// now x1 is even
-	int n = x2 - x1 + 1;
-	u16 pack = (u16)clrid | ((u16)clrid<<8);
-
-	int halfwords = n>>1; // pairs
-	for(int i=0; i<halfwords; i++)
-		dst[i] = pack;
-
-	dst += halfwords;
-
-	// handle last dangling pixel
-	if(n & 1)
-	{
-		u16 px = *dst;
-		px = (px & 0xFF00) | (u16)clrid; // even pixel is low byte
-		*dst = px;
-	}
-}
-
 static inline void m4_rect(u16* dstBase, int x, int y, int w, int h, u8 clrid)
 {
 	if(w <= 0 || h <= 0) return;
