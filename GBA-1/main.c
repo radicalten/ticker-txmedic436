@@ -803,29 +803,6 @@ static void keys_poll(void)
 	g_keys_curr = (u16)(~REG_KEYINPUT & 0x03FF);
 }
 
-static inline bool key_hit(u16 k)  { return (g_keys_curr & (u16)~g_keys_prev) & k; }
-static inline bool key_held(u16 k) { return (g_keys_curr & k) != 0; }
-
-static bool key_repeat(u16 k, int delay, int interval, int *timer)
-{
-	if(key_hit(k))
-	{
-		*timer = 0;
-		return true;
-	}
-	if(key_held(k))
-	{
-		(*timer)++;
-		if(*timer >= delay && interval > 0 && ((*timer - delay) % interval) == 0)
-			return true;
-	}
-	else
-	{
-		*timer = 0;
-	}
-	return false;
-}
-
 static void render_status(u16 fg, u16 bg)
 {
 	// Status bar background
