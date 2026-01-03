@@ -93,34 +93,6 @@ static void m3_rect_fill(int x1, int y1, int x2, int y2, COLOR clr)
     }
 }
 
-// Simple 1-pixel-wide vertical line
-static void m3_vline(int x, int y1, int y2, COLOR clr)
-{
-    int y;
-    if(x < 0 || x >= SCREEN_W)
-        return;
-    if(y1 > y2) { int t = y1; y1 = y2; y2 = t; }
-    if(y1 < 0) y1 = 0;
-    if(y2 >= SCREEN_H) y2 = SCREEN_H - 1;
-
-    for(y = y1; y <= y2; y++)
-        vid_mem[y * SCREEN_W + x] = clr;
-}
-
-// Simple 1-pixel-wide horizontal line
-static void m3_hline(int x1, int x2, int y, COLOR clr)
-{
-    int x;
-    if(y < 0 || y >= SCREEN_H)
-        return;
-    if(x1 > x2) { int t = x1; x1 = x2; x2 = t; }
-    if(x1 < 0) x1 = 0;
-    if(x2 >= SCREEN_W) x2 = SCREEN_W - 1;
-
-    u16 *row = &vid_mem[y * SCREEN_W];
-    for(x = x1; x <= x2; x++)
-        row[x] = clr;
-}
 
 // ---------------------------------------------------------------------------
 // Track logic
