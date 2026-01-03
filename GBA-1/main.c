@@ -28,7 +28,6 @@
 #define FLOAT_FALL_MAX  64
 
 #define FIX_SHIFT       8
-#define FIX_SCALE       (1 << FIX_SHIFT)
 
 // Sprite OAM indices
 #define SPR_PLAYER      0
@@ -327,12 +326,6 @@ static inline int fixToInt(int f) {
 
 static inline int intToFix(int i) {
     return i << FIX_SHIFT;
-}
-
-static inline int clamp(int val, int min, int max) {
-    if (val < min) return min;
-    if (val > max) return max;
-    return val;
 }
 
 static inline int abs_val(int x) {
