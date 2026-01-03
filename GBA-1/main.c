@@ -93,7 +93,6 @@ static Projectile projectiles[MAX_PROJECTILES];
 static u16 z_buffer[SCREEN_W];
 
 // Trig lookup tables (512 entries, fixed point 8.8)
-static s16 sin_lut[512];
 static s16 cos_lut[512];
 
 // Game state
