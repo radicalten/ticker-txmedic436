@@ -1,4 +1,5 @@
 #include <tonc.h>
+#include <stdlib.h>
 
 // --- Constants & Fixed Point Math ---
 #define SW 240  // Screen Width
