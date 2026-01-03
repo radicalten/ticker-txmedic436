@@ -12,6 +12,8 @@
 #include <tonc.h>
 #include <string.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // Uncomment these when you have MaxMod soundbank set up
 // #include <maxmod.h>
 // #include "soundbank.h"
@@ -173,42 +175,42 @@ const u32 bgTileData[64] = {
 
 // Sprite palette (16 colors)
 const u16 spritePal[16] = {
-    RGB15(31, 0, 31),   // 0: Transparent (magenta)
-    RGB15(8, 8, 12),    // 1: Dark blue (armor shadow)
-    RGB15(12, 12, 20),  // 2: Mid blue
-    RGB15(20, 12, 8),   // 3: Orange (visor)
-    RGB15(28, 20, 8),   // 4: Yellow highlight
-    RGB15(28, 28, 20),  // 5: Bullet yellow
-    RGB15(31, 31, 24),  // 6: Bullet bright
-    RGB15(16, 4, 4),    // 7: Enemy dark red
-    RGB15(24, 8, 8),    // 8: Enemy red
-    RGB15(28, 16, 16),  // 9: Enemy light red
-    RGB15(8, 24, 8),    // A: Item green
-    RGB15(16, 31, 16),  // B: Item bright green
-    RGB15(0, 0, 0),     // C: Black
-    RGB15(31, 31, 31),  // D: White
-    RGB15(16, 16, 16),  // E: Gray
-    RGB15(24, 24, 24),  // F: Light gray
+    RGB15_C(31, 0, 31),   // 0: Transparent (magenta)
+    RGB15_C(8, 8, 12),    // 1: Dark blue (armor shadow)
+    RGB15_C(12, 12, 20),  // 2: Mid blue
+    RGB15_C(20, 12, 8),   // 3: Orange (visor)
+    RGB15_C(28, 20, 8),   // 4: Yellow highlight
+    RGB15_C(28, 28, 20),  // 5: Bullet yellow
+    RGB15_C(31, 31, 24),  // 6: Bullet bright
+    RGB15_C(16, 4, 4),    // 7: Enemy dark red
+    RGB15_C(24, 8, 8),    // 8: Enemy red
+    RGB15_C(28, 16, 16),  // 9: Enemy light red
+    RGB15_C(8, 24, 8),    // A: Item green
+    RGB15_C(16, 31, 16),  // B: Item bright green
+    RGB15_C(0, 0, 0),     // C: Black
+    RGB15_C(31, 31, 31),  // D: White
+    RGB15_C(16, 16, 16),  // E: Gray
+    RGB15_C(24, 24, 24),  // F: Light gray
 };
 
 // Background palette
 const u16 bgPal[16] = {
-    RGB15(0, 0, 4),     // 0: Dark background
-    RGB15(8, 8, 12),    // 1: Block dark
-    RGB15(12, 12, 20),  // 2: Block mid
-    RGB15(16, 12, 8),   // 3: Platform
-    RGB15(24, 8, 8),    // 4: Spike red
-    RGB15(8, 8, 24),    // 5: Door blue
-    RGB15(8, 24, 8),    // 6: Save green
-    RGB15(4, 4, 8),     // 7: Background detail
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
-    RGB15(0, 0, 0),
+    RGB15_C(0, 0, 4),     // 0: Dark background
+    RGB15_C(8, 8, 12),    // 1: Block dark
+    RGB15_C(12, 12, 20),  // 2: Block mid
+    RGB15_C(16, 12, 8),   // 3: Platform
+    RGB15_C(24, 8, 8),    // 4: Spike red
+    RGB15_C(8, 8, 24),    // 5: Door blue
+    RGB15_C(8, 24, 8),    // 6: Save green
+    RGB15_C(4, 4, 8),     // 7: Background detail
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
+    RGB15_C(0, 0, 0),
 };
 
 //=============================================================================
@@ -1141,11 +1143,11 @@ void drawHUD(void) {
     
     // Health bar color indication (change BG color based on health)
     if(player.health < 25) {
-        pal_bg_mem[0] = RGB15(8, 0, 0); // Red tint when low health
+        pal_bg_mem[0] = RGB15_C(8, 0, 0); // Red tint when low health
     } else if(player.health < 50) {
-        pal_bg_mem[0] = RGB15(4, 2, 0); // Orange tint
+        pal_bg_mem[0] = RGB15_C(4, 2, 0); // Orange tint
     } else {
-        pal_bg_mem[0] = RGB15(0, 0, 4); // Normal dark blue
+        pal_bg_mem[0] = RGB15_C(0, 0, 4); // Normal dark blue
     }
 }
 
@@ -1156,17 +1158,17 @@ void drawTitleScreen(void) {
     }
     
     // Set background to title color
-    pal_bg_mem[0] = RGB15(0, 0, 8);
+    pal_bg_mem[0] = RGB15_C(0, 0, 8);
     
     // Flash "PRESS START" using background color cycling
     if((game.frameCount / 30) % 2) {
-        pal_bg_mem[0] = RGB15(4, 4, 12);
+        pal_bg_mem[0] = RGB15_C(4, 4, 12);
     }
 }
 
 void drawGameOver(void) {
     // Red tinted background
-    pal_bg_mem[0] = RGB15(12, 0, 0);
+    pal_bg_mem[0] = RGB15_C(12, 0, 0);
     
     for(int i = 0; i < 128; i++) {
         obj_hide(&obj_buffer[i]);
@@ -1175,7 +1177,7 @@ void drawGameOver(void) {
 
 void drawWinScreen(void) {
     // Green tinted background
-    pal_bg_mem[0] = RGB15(0, 12, 0);
+    pal_bg_mem[0] = RGB15_C(0, 12, 0);
     
     for(int i = 0; i < 128; i++) {
         obj_hide(&obj_buffer[i]);
@@ -1206,9 +1208,9 @@ void updateGame(void) {
         case STATE_PAUSED:
             // Just show current frame, maybe flash
             if((game.frameCount / 15) % 2) {
-                pal_bg_mem[0] = RGB15(4, 4, 8);
+                pal_bg_mem[0] = RGB15_C(4, 4, 8);
             } else {
-                pal_bg_mem[0] = RGB15(0, 0, 4);
+                pal_bg_mem[0] = RGB15_C(0, 0, 4);
             }
             break;
             
