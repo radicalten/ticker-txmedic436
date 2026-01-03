@@ -1,1251 +1,1005 @@
-/*
- * METROID-LIKE GBA GAME
- * A single-file Metroid-inspired game using TONC and MaxMod
- * 
- * Build with devkitARM:
- * Create a Makefile that links with libtonc and libmm
- * 
- * Note: You'll need to create a soundbank.h with MaxMod's mmutil
- * For testing without sound, comment out MaxMod calls
- */
+// zork_like_gba.c
+//
+// Minimal Zork-like text adventure for GBA using tonc.
+// Single-file, mode 3, with a tiny built‑in 3x5 font and
+// a simple on-screen keyboard controlled by the D‑pad.
+//
+// Controls:
+//   D-Pad : Move selection on keyboard
+//   A     : Add selected letter (or space) to command
+//   B     : Backspace
+//   START : Submit command
+//
+// Build (example):
+//   arm-none-eabi-gcc -std=c99 -O2 -mthumb -mthumb-interwork \
+//       -I/path/to/tonc/include -L/path/to/tonc/lib \
+//       zork_like_gba.c -ltonc -o zork_like_gba.elf
+//
+// Then convert ELF to GBA with your usual toolchain (e.g. objcopy).
 
-#include <tonc.h>
 #include <string.h>
+#include "tonc.h"
 
-#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+// -----------------------------------------------------------------------------
+// Basic video setup (Mode 3)
+// -----------------------------------------------------------------------------
 
-// Uncomment these when you have MaxMod soundbank set up
-// #include <maxmod.h>
-// #include "soundbank.h"
-// #include "soundbank_bin.h"
+#define SCREEN_W 240
+#define SCREEN_H 160
 
-//=============================================================================
-// DEFINES AND CONSTANTS
-//=============================================================================
+static u16 *const m3_fb = (u16 *)0x6000000;
 
-#define SCREEN_WIDTH    240
-#define SCREEN_HEIGHT   160
-
-#define TILE_SIZE       8
-#define MAP_WIDTH       60
-#define MAP_HEIGHT      20
-
-#define PLAYER_WIDTH    16
-#define PLAYER_HEIGHT   24
-#define PLAYER_SPEED    FIX_ONE
-#define PLAYER_JUMP     (3 * FIX_ONE)
-#define GRAVITY         (FIX_ONE / 8)
-#define MAX_FALL_SPEED  (4 * FIX_ONE)
-
-#define MAX_BULLETS     8
-#define BULLET_SPEED    4
-#define MAX_ENEMIES     10
-#define MAX_ITEMS       5
-
-#define SPRITE_PLAYER   0
-#define SPRITE_BULLET   10
-#define SPRITE_ENEMY    20
-#define SPRITE_ITEM     30
-
-// Tile types
-#define TILE_EMPTY      0
-#define TILE_SOLID      1
-#define TILE_PLATFORM   2
-#define TILE_SPIKE      3
-#define TILE_DOOR       4
-#define TILE_SAVE       5
-
-// Enemy types
-#define ENEMY_CRAWLER   0
-#define ENEMY_FLYER     1
-#define ENEMY_TURRET    2
-
-// Item types
-#define ITEM_ENERGY     0
-#define ITEM_MISSILE    1
-#define ITEM_MORPH_BALL 2
-
-// Game states
-#define STATE_TITLE     0
-#define STATE_PLAYING   1
-#define STATE_PAUSED    2
-#define STATE_GAMEOVER  3
-#define STATE_WIN       4
-
-//=============================================================================
-// SPRITE DATA (4bpp format)
-//=============================================================================
-
-// Player sprite (16x24, 6 tiles) - Standing frame
-const u32 playerSpriteTiles[48] = {
-    // Row 1 (2 tiles)
-    0x00000000, 0x00011100, 0x00122210, 0x01233321, 
-    0x01233321, 0x00122210, 0x00011100, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    // Row 2 (2 tiles)
-    0x00011100, 0x00133310, 0x01333331, 0x01344431, 
-    0x01344431, 0x01333331, 0x00133310, 0x00111110,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    // Row 3 (2 tiles)
-    0x00111110, 0x00133310, 0x00133310, 0x00111110, 
-    0x00011100, 0x00022200, 0x00022200, 0x00022200,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Player running animation frame
-const u32 playerRunTiles[48] = {
-    0x00000000, 0x00011100, 0x00122210, 0x01233321, 
-    0x01233321, 0x00122210, 0x00011100, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00011100, 0x00133310, 0x01333331, 0x01344431, 
-    0x01344431, 0x01333331, 0x00133310, 0x00111110,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00111110, 0x00133310, 0x00133310, 0x00111110, 
-    0x00022200, 0x00011100, 0x00022200, 0x00011100,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Ball mode sprite (8x8)
-const u32 ballSpriteTiles[8] = {
-    0x00111100, 0x01333310, 0x13344331, 0x13344331,
-    0x13344331, 0x13344331, 0x01333310, 0x00111100,
-};
-
-// Bullet sprite (8x8)
-const u32 bulletSpriteTiles[8] = {
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x05666650, 0x00566500, 0x00055000, 0x00000000,
-};
-
-// Enemy crawler sprite (16x16)
-const u32 enemyCrawlerTiles[32] = {
-    0x00777700, 0x07888870, 0x78899887, 0x78899887,
-    0x78888887, 0x07888870, 0x00777700, 0x00700700,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00700700, 0x00700700, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Energy tank item sprite (8x8)
-const u32 itemEnergyTiles[8] = {
-    0x00AAAA00, 0x0AAAAAA0, 0xAABBBBAA, 0xAABBBBAA,
-    0xAABBBBAA, 0xAABBBBAA, 0x0AAAAAA0, 0x00AAAA00,
-};
-
-// Background tile data
-const u32 bgTileData[64] = {
-    // Tile 0: Empty (transparent)
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    // Tile 1: Solid block
-    0x11111111, 0x12222221, 0x12111121, 0x12111121,
-    0x12111121, 0x12111121, 0x12222221, 0x11111111,
-    // Tile 2: Platform
-    0x33333333, 0x33333333, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    // Tile 3: Spike
-    0x00400400, 0x00440440, 0x04444444, 0x44444444,
-    0x44444444, 0x44444444, 0x44444444, 0x44444444,
-    // Tile 4: Door
-    0x55555555, 0x55555555, 0x55000055, 0x55000055,
-    0x55000055, 0x55000055, 0x55555555, 0x55555555,
-    // Tile 5: Save station
-    0x66666666, 0x60000006, 0x60666606, 0x60666606,
-    0x60666606, 0x60666606, 0x60000006, 0x66666666,
-    // Tile 6: Background detail
-    0x00000000, 0x00100000, 0x00010000, 0x00000100,
-    0x00000010, 0x00001000, 0x00000000, 0x01000000,
-    // Tile 7: Platform edge
-    0x33333333, 0x33333333, 0x30000003, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-};
-
-//=============================================================================
-// PALETTE DATA
-//=============================================================================
-
-// Sprite palette (16 colors)
-const u16 spritePal[16] = {
-    RGB15_C(31, 0, 31),   // 0: Transparent (magenta)
-    RGB15_C(8, 8, 12),    // 1: Dark blue (armor shadow)
-    RGB15_C(12, 12, 20),  // 2: Mid blue
-    RGB15_C(20, 12, 8),   // 3: Orange (visor)
-    RGB15_C(28, 20, 8),   // 4: Yellow highlight
-    RGB15_C(28, 28, 20),  // 5: Bullet yellow
-    RGB15_C(31, 31, 24),  // 6: Bullet bright
-    RGB15_C(16, 4, 4),    // 7: Enemy dark red
-    RGB15_C(24, 8, 8),    // 8: Enemy red
-    RGB15_C(28, 16, 16),  // 9: Enemy light red
-    RGB15_C(8, 24, 8),    // A: Item green
-    RGB15_C(16, 31, 16),  // B: Item bright green
-    RGB15_C(0, 0, 0),     // C: Black
-    RGB15_C(31, 31, 31),  // D: White
-    RGB15_C(16, 16, 16),  // E: Gray
-    RGB15_C(24, 24, 24),  // F: Light gray
-};
-
-// Background palette
-const u16 bgPal[16] = {
-    RGB15_C(0, 0, 4),     // 0: Dark background
-    RGB15_C(8, 8, 12),    // 1: Block dark
-    RGB15_C(12, 12, 20),  // 2: Block mid
-    RGB15_C(16, 12, 8),   // 3: Platform
-    RGB15_C(24, 8, 8),    // 4: Spike red
-    RGB15_C(8, 8, 24),    // 5: Door blue
-    RGB15_C(8, 24, 8),    // 6: Save green
-    RGB15_C(4, 4, 8),     // 7: Background detail
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-    RGB15_C(0, 0, 0),
-};
-
-//=============================================================================
-// LEVEL DATA
-//=============================================================================
-
-// Level map (60x20 tiles = 480x160 pixels)
-const u8 levelMap[MAP_HEIGHT][MAP_WIDTH] = {
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-};
-
-//=============================================================================
-// STRUCTURES
-//=============================================================================
-
-typedef struct {
-    FIXED x, y;
-    FIXED vx, vy;
-    int width, height;
-    int health;
-    int maxHealth;
-    int missiles;
-    int maxMissiles;
-    int facing;         // 0=right, 1=left
-    int state;          // 0=stand, 1=run, 2=jump, 3=fall, 4=ball
-    int animFrame;
-    int animTimer;
-    int shootTimer;
-    int invincibleTimer;
-    int hasMorphBall;
-    int inBallMode;
-} Player;
-
-typedef struct {
-    int active;
-    FIXED x, y;
-    int dx, dy;
-    int life;
-    int isMissile;
-} Bullet;
-
-typedef struct {
-    int active;
-    int type;
-    FIXED x, y;
-    FIXED vx, vy;
-    int width, height;
-    int health;
-    int facing;
-    int animFrame;
-    int animTimer;
-    int state;
-} Enemy;
-
-typedef struct {
-    int active;
-    int type;
-    int x, y;
-    int collected;
-} Item;
-
-typedef struct {
-    int scrollX;
-    int scrollY;
-    int gameState;
-    int frameCount;
-    int score;
-    int bossDefeated;
-} GameState;
-
-//=============================================================================
-// GLOBALS
-//=============================================================================
-
-Player player;
-Bullet bullets[MAX_BULLETS];
-Enemy enemies[MAX_ENEMIES];
-Item items[MAX_ITEMS];
-GameState game;
-
-OBJ_ATTR obj_buffer[128];
-OBJ_AFFINE *obj_aff_buffer = (OBJ_AFFINE*)obj_buffer;
-
-//=============================================================================
-// FUNCTION PROTOTYPES
-//=============================================================================
-
-void initGame(void);
-void initGraphics(void);
-void initPlayer(void);
-void initEnemies(void);
-void initItems(void);
-void updateGame(void);
-void updatePlayer(void);
-void updateBullets(void);
-void updateEnemies(void);
-void updateItems(void);
-void updateCamera(void);
-void handleInput(void);
-void drawGame(void);
-void drawHUD(void);
-void drawTitleScreen(void);
-void drawGameOver(void);
-int checkTileCollision(int x, int y);
-int checkTileCollisionRect(int x, int y, int w, int h);
-void spawnBullet(int x, int y, int dx, int dy, int isMissile);
-void spawnEnemy(int type, int x, int y);
-void takeDamage(int amount);
-void playSound(int sfxId);
-
-//=============================================================================
-// SOUND FUNCTIONS (MaxMod wrappers)
-//=============================================================================
-
-void initSound(void) {
-    // Initialize MaxMod
-    // mmInitDefault((mm_addr)soundbank_bin, 8);
-    // mmStart(MOD_MUSIC, MM_PLAY_LOOP);
+// Simple busy-wait VBlank sync (no interrupts needed).
+static void vsync(void)
+{
+    while (REG_VCOUNT >= 160);
+    while (REG_VCOUNT < 160);
 }
 
-void playSound(int sfxId) {
-    // Play a sound effect
-    // mmEffect(sfxId);
-    (void)sfxId; // Suppress unused warning
+// Colors (RGB15, 0-31 each)
+#define CLR_BG     RGB15(0, 0, 0)
+#define CLR_TEXT   RGB15(31, 31, 31)
+#define CLR_TITLE  RGB15(0, 31, 0)
+#define CLR_HUD    RGB15(31, 31, 0)
+#define CLR_SEL    RGB15(31, 0, 0)
+
+// -----------------------------------------------------------------------------
+// Tiny 3x5 font (scaled 2x to 6x10, in 8x12 cells)
+// -----------------------------------------------------------------------------
+
+#define FONT_SCALE  2
+#define FONT_W      3
+#define FONT_H      5
+#define CELL_W      ((FONT_W+1)*FONT_SCALE)   // 8 px
+#define CELL_H      ((FONT_H+1)*FONT_SCALE)   // 12 px
+#define TEXT_COLS   (SCREEN_W / CELL_W)       // 30 columns
+#define TEXT_ROWS   (SCREEN_H / CELL_H)       // 13 rows
+
+typedef unsigned char u8;
+
+#define B3(a,b,c)  ((u8)(((a)<<2)|((b)<<1)|(c)))
+
+// Characters 32 (' ') .. 95 ('_')
+static const u8 font_3x5[64][5] = {
+    // 32 ' '
+    [32-32] = { 0, 0, 0, 0, 0 },
+
+    // 33 '!'
+    [33-32] = {
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,0,0),
+        B3(0,1,0)
+    },
+
+    // 46 '.'
+    [46-32] = {
+        B3(0,0,0),
+        B3(0,0,0),
+        B3(0,0,0),
+        B3(0,0,0),
+        B3(0,1,0)
+    },
+
+    // 65 'A'
+    [65-32] = {
+        B3(0,1,0),
+        B3(1,0,1),
+        B3(1,1,1),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 66 'B'
+    [66-32] = {
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,1,0)
+    },
+    // 67 'C'
+    [67-32] = {
+        B3(0,1,1),
+        B3(1,0,0),
+        B3(1,0,0),
+        B3(1,0,0),
+        B3(0,1,1)
+    },
+    // 68 'D'
+    [68-32] = {
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,1,0)
+    },
+    // 69 'E'
+    [69-32] = {
+        B3(1,1,1),
+        B3(1,0,0),
+        B3(1,1,0),
+        B3(1,0,0),
+        B3(1,1,1)
+    },
+    // 70 'F'
+    [70-32] = {
+        B3(1,1,1),
+        B3(1,0,0),
+        B3(1,1,0),
+        B3(1,0,0),
+        B3(1,0,0)
+    },
+    // 71 'G'
+    [71-32] = {
+        B3(0,1,1),
+        B3(1,0,0),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,1)
+    },
+    // 72 'H'
+    [72-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,1,1),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 73 'I'
+    [73-32] = {
+        B3(1,1,1),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(1,1,1)
+    },
+    // 74 'J'
+    [74-32] = {
+        B3(0,0,1),
+        B3(0,0,1),
+        B3(0,0,1),
+        B3(0,0,1),
+        B3(1,1,0)
+    },
+    // 75 'K'
+    [75-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 76 'L'
+    [76-32] = {
+        B3(1,0,0),
+        B3(1,0,0),
+        B3(1,0,0),
+        B3(1,0,0),
+        B3(1,1,1)
+    },
+    // 77 'M'
+    [77-32] = {
+        B3(1,0,1),
+        B3(1,1,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 78 'N'
+    [78-32] = {
+        B3(1,0,0),
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 79 'O'
+    [79-32] = {
+        B3(0,1,0),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,0)
+    },
+    // 80 'P'
+    [80-32] = {
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,1,0),
+        B3(1,0,0),
+        B3(1,0,0)
+    },
+    // 81 'Q'
+    [81-32] = {
+        B3(0,1,0),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,0),
+        B3(0,0,1)
+    },
+    // 82 'R'
+    [82-32] = {
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,1,0),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 83 'S'
+    [83-32] = {
+        B3(1,1,1),
+        B3(1,0,0),
+        B3(1,1,1),
+        B3(0,0,1),
+        B3(1,1,1)
+    },
+    // 84 'T'
+    [84-32] = {
+        B3(1,1,1),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,1,0)
+    },
+    // 85 'U'
+    [85-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,1)
+    },
+    // 86 'V'
+    [86-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,0),
+        B3(0,1,0)
+    },
+    // 87 'W'
+    [87-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(1,1,1),
+        B3(1,1,1)
+    },
+    // 88 'X'
+    [88-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,0),
+        B3(1,0,1),
+        B3(1,0,1)
+    },
+    // 89 'Y'
+    [89-32] = {
+        B3(1,0,1),
+        B3(1,0,1),
+        B3(0,1,0),
+        B3(0,1,0),
+        B3(0,1,0)
+    },
+    // 90 'Z'
+    [90-32] = {
+        B3(1,1,1),
+        B3(0,0,1),
+        B3(0,1,0),
+        B3(1,0,0),
+        B3(1,1,1)
+    },
+
+    // 95 '_'
+    [95-32] = {
+        B3(0,0,0),
+        B3(0,0,0),
+        B3(0,0,0),
+        B3(1,1,1),
+        B3(0,0,0)
+    }
+};
+
+static inline void m3_plot(int x, int y, u16 clr)
+{
+    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
+    m3_fb[y * SCREEN_W + x] = clr;
 }
 
-//=============================================================================
-// GRAPHICS INITIALIZATION
-//=============================================================================
+static void m3_clear(u16 clr)
+{
+    u32 packed = (clr << 16) | clr;
+    u32 *dst = (u32 *)m3_fb;
+    int count = (SCREEN_W * SCREEN_H) / 2;
+    for (int i = 0; i < count; i++)
+        dst[i] = packed;
+}
 
-void initGraphics(void) {
-    // Set video mode: Mode 0 with BG0 for tiles and OBJ
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-    
-    // Initialize OAM
-    oam_init(obj_buffer, 128);
-    
-    // Load sprite palette
-    memcpy(pal_obj_mem, spritePal, sizeof(spritePal));
-    
-    // Load BG palette
-    memcpy(pal_bg_mem, bgPal, sizeof(bgPal));
-    
-    // Load sprite tiles to VRAM
-    // Player tiles (starting at tile 0)
-    memcpy(&tile_mem[4][0], playerSpriteTiles, sizeof(playerSpriteTiles));
-    memcpy(&tile_mem[4][6], playerRunTiles, sizeof(playerRunTiles));
-    memcpy(&tile_mem[4][12], ballSpriteTiles, sizeof(ballSpriteTiles));
-    
-    // Bullet tiles
-    memcpy(&tile_mem[4][16], bulletSpriteTiles, sizeof(bulletSpriteTiles));
-    
-    // Enemy tiles
-    memcpy(&tile_mem[4][20], enemyCrawlerTiles, sizeof(enemyCrawlerTiles));
-    
-    // Item tiles
-    memcpy(&tile_mem[4][28], itemEnergyTiles, sizeof(itemEnergyTiles));
-    
-    // Load background tiles
-    memcpy(&tile_mem[0][0], bgTileData, sizeof(bgTileData));
-    
-    // Set up BG0 for the level tilemap
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(28) | BG_SIZE0 | BG_PRIO(1);
-    
-    // Build the initial tilemap
-    u16 *map = (u16*)se_mem[28];
-    for(int y = 0; y < 32; y++) {
-        for(int x = 0; x < 32; x++) {
-            int mapX = x;
-            int mapY = y;
-            if(mapX < MAP_WIDTH && mapY < MAP_HEIGHT) {
-                map[y * 32 + x] = levelMap[mapY][mapX];
-            } else {
-                map[y * 32 + x] = 0;
+static void draw_char_cell(int tx, int ty, char ch, u16 clr)
+{
+    if (tx < 0 || tx >= TEXT_COLS || ty < 0 || ty >= TEXT_ROWS)
+        return;
+    if (ch < 32 || ch > 95)
+        return;
+
+    const u8 *glyph = font_3x5[ch - 32];
+    int x0 = tx * CELL_W;
+    int y0 = ty * CELL_H;
+
+    for (int row = 0; row < FONT_H; row++)
+    {
+        u8 bits = glyph[row];
+        for (int col = 0; col < FONT_W; col++)
+        {
+            if (bits & (1 << (FONT_W - 1 - col)))
+            {
+                int px = x0 + col * FONT_SCALE;
+                int py = y0 + row * FONT_SCALE;
+                for (int dy = 0; dy < FONT_SCALE; dy++)
+                    for (int dx = 0; dx < FONT_SCALE; dx++)
+                        m3_plot(px + dx, py + dy, clr);
             }
         }
     }
 }
 
-//=============================================================================
-// GAME INITIALIZATION
-//=============================================================================
+static void draw_text_cell(int tx, int ty, const char *str, u16 clr)
+{
+    int x = tx;
+    int y = ty;
 
-void initGame(void) {
-    game.scrollX = 0;
-    game.scrollY = 0;
-    game.gameState = STATE_TITLE;
-    game.frameCount = 0;
-    game.score = 0;
-    game.bossDefeated = 0;
-    
-    initGraphics();
-    initSound();
-    initPlayer();
-    initEnemies();
-    initItems();
-}
-
-void initPlayer(void) {
-    player.x = int2fx(24);
-    player.y = int2fx(120);
-    player.vx = 0;
-    player.vy = 0;
-    player.width = 14;
-    player.height = 22;
-    player.health = 99;
-    player.maxHealth = 99;
-    player.missiles = 10;
-    player.maxMissiles = 10;
-    player.facing = 0;
-    player.state = 0;
-    player.animFrame = 0;
-    player.animTimer = 0;
-    player.shootTimer = 0;
-    player.invincibleTimer = 0;
-    player.hasMorphBall = 0;
-    player.inBallMode = 0;
-    
-    // Clear bullets
-    for(int i = 0; i < MAX_BULLETS; i++) {
-        bullets[i].active = 0;
-    }
-}
-
-void initEnemies(void) {
-    for(int i = 0; i < MAX_ENEMIES; i++) {
-        enemies[i].active = 0;
-    }
-    
-    // Spawn some enemies at predefined positions
-    spawnEnemy(ENEMY_CRAWLER, 180, 128);
-    spawnEnemy(ENEMY_CRAWLER, 280, 128);
-    spawnEnemy(ENEMY_CRAWLER, 350, 40);
-    spawnEnemy(ENEMY_FLYER, 200, 60);
-    spawnEnemy(ENEMY_FLYER, 380, 80);
-}
-
-void initItems(void) {
-    for(int i = 0; i < MAX_ITEMS; i++) {
-        items[i].active = 0;
-        items[i].collected = 0;
-    }
-    
-    // Place items
-    items[0].active = 1;
-    items[0].type = ITEM_ENERGY;
-    items[0].x = 120;
-    items[0].y = 32;
-    
-    items[1].active = 1;
-    items[1].type = ITEM_MISSILE;
-    items[1].x = 320;
-    items[1].y = 96;
-    
-    items[2].active = 1;
-    items[2].type = ITEM_MORPH_BALL;
-    items[2].x = 240;
-    items[2].y = 128;
-}
-
-//=============================================================================
-// COLLISION DETECTION
-//=============================================================================
-
-int checkTileCollision(int pixelX, int pixelY) {
-    int tileX = pixelX / TILE_SIZE;
-    int tileY = pixelY / TILE_SIZE;
-    
-    if(tileX < 0 || tileX >= MAP_WIDTH || tileY < 0 || tileY >= MAP_HEIGHT) {
-        return TILE_SOLID;
-    }
-    
-    return levelMap[tileY][tileX];
-}
-
-int isTileSolid(int tileType) {
-    return (tileType == TILE_SOLID || tileType == TILE_PLATFORM);
-}
-
-int checkTileCollisionRect(int x, int y, int w, int h) {
-    // Check all four corners
-    if(isTileSolid(checkTileCollision(x, y))) return 1;
-    if(isTileSolid(checkTileCollision(x + w - 1, y))) return 1;
-    if(isTileSolid(checkTileCollision(x, y + h - 1))) return 1;
-    if(isTileSolid(checkTileCollision(x + w - 1, y + h - 1))) return 1;
-    
-    return 0;
-}
-
-int checkPlatformBelow(int x, int y, int w) {
-    int tileY = (y + 1) / TILE_SIZE;
-    int tile1 = checkTileCollision(x, y + 1);
-    int tile2 = checkTileCollision(x + w - 1, y + 1);
-    
-    return (tile1 == TILE_PLATFORM || tile2 == TILE_PLATFORM);
-}
-
-//=============================================================================
-// INPUT HANDLING
-//=============================================================================
-
-void handleInput(void) {
-    key_poll();
-    
-    if(game.gameState == STATE_TITLE) {
-        if(key_hit(KEY_START)) {
-            game.gameState = STATE_PLAYING;
-            initPlayer();
-            initEnemies();
-            initItems();
-            playSound(0); // SFX_START
-        }
-        return;
-    }
-    
-    if(game.gameState == STATE_GAMEOVER || game.gameState == STATE_WIN) {
-        if(key_hit(KEY_START)) {
-            game.gameState = STATE_TITLE;
-        }
-        return;
-    }
-    
-    if(game.gameState == STATE_PAUSED) {
-        if(key_hit(KEY_START)) {
-            game.gameState = STATE_PLAYING;
-        }
-        return;
-    }
-    
-    // Pause
-    if(key_hit(KEY_START)) {
-        game.gameState = STATE_PAUSED;
-        return;
-    }
-    
-    // Movement
-    player.vx = 0;
-    
-    if(player.inBallMode) {
-        // Ball mode controls
-        if(key_is_down(KEY_LEFT)) {
-            player.vx = -PLAYER_SPEED;
-            player.facing = 1;
-        }
-        if(key_is_down(KEY_RIGHT)) {
-            player.vx = PLAYER_SPEED;
-            player.facing = 0;
-        }
-        
-        // Exit ball mode
-        if(key_hit(KEY_UP) && player.hasMorphBall) {
-            // Check if there's room to stand
-            int px = fx2int(player.x);
-            int py = fx2int(player.y) - 16;
-            if(!checkTileCollisionRect(px, py, player.width, player.height)) {
-                player.inBallMode = 0;
-                player.y -= int2fx(8);
-                player.height = 22;
-            }
-        }
-    } else {
-        // Normal mode controls
-        if(key_is_down(KEY_LEFT)) {
-            player.vx = -PLAYER_SPEED;
-            player.facing = 1;
-            player.state = 1; // Running
-        }
-        if(key_is_down(KEY_RIGHT)) {
-            player.vx = PLAYER_SPEED;
-            player.facing = 0;
-            player.state = 1;
-        }
-        if(!key_is_down(KEY_LEFT) && !key_is_down(KEY_RIGHT)) {
-            player.state = 0; // Standing
-        }
-        
-        // Jump
-        if(key_hit(KEY_A) && player.vy == 0) {
-            int px = fx2int(player.x);
-            int py = fx2int(player.y);
-            int tileBelow = checkTileCollision(px + 4, py + player.height);
-            int tileBelow2 = checkTileCollision(px + player.width - 4, py + player.height);
-            
-            if(isTileSolid(tileBelow) || isTileSolid(tileBelow2)) {
-                player.vy = -PLAYER_JUMP;
-                player.state = 2;
-                playSound(1); // SFX_JUMP
-            }
-        }
-        
-        // Shoot
-        if(key_hit(KEY_B) && player.shootTimer == 0) {
-            int bx = fx2int(player.x) + (player.facing ? -4 : player.width);
-            int by = fx2int(player.y) + 8;
-            int bdx = player.facing ? -BULLET_SPEED : BULLET_SPEED;
-            spawnBullet(bx, by, bdx, 0, 0);
-            player.shootTimer = 10;
-            playSound(2); // SFX_SHOOT
-        }
-        
-        // Missile (hold R + B)
-        if(key_is_down(KEY_R) && key_hit(KEY_B) && player.missiles > 0 && player.shootTimer == 0) {
-            int bx = fx2int(player.x) + (player.facing ? -4 : player.width);
-            int by = fx2int(player.y) + 8;
-            int bdx = player.facing ? -BULLET_SPEED * 2 : BULLET_SPEED * 2;
-            spawnBullet(bx, by, bdx, 0, 1);
-            player.missiles--;
-            player.shootTimer = 20;
-            playSound(3); // SFX_MISSILE
-        }
-        
-        // Morph ball (down)
-        if(key_hit(KEY_DOWN) && player.hasMorphBall && !player.inBallMode && player.vy == 0) {
-            player.inBallMode = 1;
-            player.height = 8;
-            player.y += int2fx(14);
-        }
-    }
-}
-
-//=============================================================================
-// BULLET FUNCTIONS
-//=============================================================================
-
-void spawnBullet(int x, int y, int dx, int dy, int isMissile) {
-    for(int i = 0; i < MAX_BULLETS; i++) {
-        if(!bullets[i].active) {
-            bullets[i].active = 1;
-            bullets[i].x = int2fx(x);
-            bullets[i].y = int2fx(y);
-            bullets[i].dx = dx;
-            bullets[i].dy = dy;
-            bullets[i].life = 60;
-            bullets[i].isMissile = isMissile;
-            return;
-        }
-    }
-}
-
-void updateBullets(void) {
-    for(int i = 0; i < MAX_BULLETS; i++) {
-        if(!bullets[i].active) continue;
-        
-        bullets[i].x += int2fx(bullets[i].dx);
-        bullets[i].y += int2fx(bullets[i].dy);
-        bullets[i].life--;
-        
-        int bx = fx2int(bullets[i].x);
-        int by = fx2int(bullets[i].y);
-        
-        // Check tile collision
-        if(checkTileCollision(bx, by) == TILE_SOLID) {
-            bullets[i].active = 0;
+    for (int i = 0; str[i] != '\0'; i++)
+    {
+        char c = str[i];
+        if (c == '\n')
+        {
+            x = tx;
+            y++;
+            if (y >= TEXT_ROWS)
+                break;
             continue;
         }
-        
-        // Check enemy collision
-        for(int j = 0; j < MAX_ENEMIES; j++) {
-            if(!enemies[j].active) continue;
-            
-            int ex = fx2int(enemies[j].x);
-            int ey = fx2int(enemies[j].y);
-            
-            if(bx >= ex && bx < ex + enemies[j].width &&
-               by >= ey && by < ey + enemies[j].height) {
-                int damage = bullets[i].isMissile ? 30 : 10;
-                enemies[j].health -= damage;
-                bullets[i].active = 0;
-                playSound(4); // SFX_HIT
-                
-                if(enemies[j].health <= 0) {
-                    enemies[j].active = 0;
-                    game.score += 100;
-                    playSound(5); // SFX_ENEMY_DIE
-                }
+
+        draw_char_cell(x, y, c, clr);
+        x++;
+        if (x >= TEXT_COLS)
+        {
+            x = tx;
+            y++;
+            if (y >= TEXT_ROWS)
                 break;
-            }
-        }
-        
-        // Timeout or off screen
-        if(bullets[i].life <= 0 || bx < 0 || bx > MAP_WIDTH * TILE_SIZE) {
-            bullets[i].active = 0;
         }
     }
 }
 
-//=============================================================================
-// ENEMY FUNCTIONS
-//=============================================================================
+// -----------------------------------------------------------------------------
+// Simple key input (no tonc helper functions, just REG_KEYINPUT)
+// -----------------------------------------------------------------------------
 
-void spawnEnemy(int type, int x, int y) {
-    for(int i = 0; i < MAX_ENEMIES; i++) {
-        if(!enemies[i].active) {
-            enemies[i].active = 1;
-            enemies[i].type = type;
-            enemies[i].x = int2fx(x);
-            enemies[i].y = int2fx(y);
-            enemies[i].facing = 0;
-            enemies[i].animFrame = 0;
-            enemies[i].animTimer = 0;
-            enemies[i].state = 0;
-            
-            switch(type) {
-                case ENEMY_CRAWLER:
-                    enemies[i].width = 16;
-                    enemies[i].height = 16;
-                    enemies[i].health = 30;
-                    enemies[i].vx = int2fx(1) / 2;
-                    enemies[i].vy = 0;
-                    break;
-                case ENEMY_FLYER:
-                    enemies[i].width = 16;
-                    enemies[i].height = 16;
-                    enemies[i].health = 20;
-                    enemies[i].vx = int2fx(1) / 2;
-                    enemies[i].vy = 0;
-                    break;
-                default:
-                    enemies[i].width = 16;
-                    enemies[i].height = 16;
-                    enemies[i].health = 50;
-                    enemies[i].vx = 0;
-                    enemies[i].vy = 0;
-                    break;
-            }
+#ifndef KEY_MASK
+#define KEY_MASK 0x03FF
+#endif
+
+static u16 keys_curr = 0;
+static u16 keys_prev = 0;
+
+static inline void key_poll_simple(void)
+{
+    keys_prev = keys_curr;
+    keys_curr = (u16)(~REG_KEYINPUT & KEY_MASK);
+}
+
+static inline int key_hit(u16 key)
+{
+    return (keys_curr & ~keys_prev) & key;
+}
+
+// -----------------------------------------------------------------------------
+// Game data
+// -----------------------------------------------------------------------------
+
+enum { DIR_NORTH = 0, DIR_EAST = 1, DIR_SOUTH = 2, DIR_WEST = 3 };
+
+typedef struct
+{
+    const char *name;
+    const char *desc;
+    int exits[4];      // {N, E, S, W}, -1 if no exit
+} Room;
+
+typedef struct
+{
+    const char *name;
+    const char *desc;
+    int location;      // room index, or LOC_INVENTORY, or LOC_NOWHERE
+} Item;
+
+#define ROOM_FOREST    0
+#define ROOM_CAVE_ENT  1
+#define ROOM_TUNNEL    2
+#define ROOM_CHAMBER   3
+
+#define ITEM_LAMP      0
+#define ITEM_TREASURE  1
+
+#define LOC_INVENTORY  (-1)
+#define LOC_NOWHERE    (-2)
+
+static Room rooms[] =
+{
+    {
+        "FOREST CLEARING",
+        "YOU ARE IN A SMALL FOREST CLEARING.\nA PATH LEADS NORTH TO A CAVE ENTRANCE.",
+        { ROOM_CAVE_ENT, -1, -1, -1 }
+    },
+    {
+        "CAVE ENTRANCE",
+        "YOU STAND AT THE MOUTH OF A DARK CAVE.\nTHE FOREST CLEARING IS SOUTH.",
+        { ROOM_TUNNEL, -1, ROOM_FOREST, -1 }
+    },
+    {
+        "DARK TUNNEL",
+        "YOU ARE IN A NARROW TUNNEL.\nTHE CAVE ENTRANCE IS SOUTH.",
+        { ROOM_CHAMBER, -1, ROOM_CAVE_ENT, -1 }
+    },
+    {
+        "UNDERGROUND CHAMBER",
+        "YOU ARE IN A SMALL UNDERGROUND CHAMBER.\nTHE ONLY EXIT IS SOUTH.",
+        { -1, -1, ROOM_TUNNEL, -1 }
+    }
+};
+
+static Item items[] =
+{
+    { "LAMP",     "AN OLD BUT WORKING LAMP.",   ROOM_CAVE_ENT },
+    { "TREASURE", "A SMALL CHEST OF GOLD.",     ROOM_CHAMBER  }
+};
+
+static int current_room = ROOM_FOREST;
+static int game_over    = 0;
+static int game_won     = 0;
+
+static char last_msg[80] = "";
+
+// -----------------------------------------------------------------------------
+// Game helpers
+// -----------------------------------------------------------------------------
+
+static int has_item(int itemId)
+{
+    return items[itemId].location == LOC_INVENTORY;
+}
+
+static void set_msg(const char *s)
+{
+    strncpy(last_msg, s, sizeof(last_msg)-1);
+    last_msg[sizeof(last_msg)-1] = '\0';
+}
+
+static int match_word(const char *a, const char *b)
+{
+    return strcmp(a, b) == 0;
+}
+
+// Split on spaces, in-place. Returns word count.
+static int tokenize(char *s, char *words[], int max_words)
+{
+    int count = 0;
+    char *p = s;
+
+    while (*p != '\0' && count < max_words)
+    {
+        while (*p == ' ') p++;
+        if (*p == '\0')
+            break;
+
+        words[count++] = p;
+
+        while (*p != '\0' && *p != ' ')
+            p++;
+
+        if (*p == ' ')
+        {
+            *p = '\0';
+            p++;
+        }
+    }
+    return count;
+}
+
+static int parse_dir(const char *w)
+{
+    if (match_word(w, "N") || match_word(w, "NORTH"))
+        return DIR_NORTH;
+    if (match_word(w, "E") || match_word(w, "EAST"))
+        return DIR_EAST;
+    if (match_word(w, "S") || match_word(w, "SOUTH"))
+        return DIR_SOUTH;
+    if (match_word(w, "W") || match_word(w, "WEST"))
+        return DIR_WEST;
+    return -1;
+}
+
+// -----------------------------------------------------------------------------
+// Command implementations
+// -----------------------------------------------------------------------------
+
+static void do_look(void)
+{
+    set_msg("YOU LOOK AROUND.");
+}
+
+static void do_help(void)
+{
+    set_msg("TRY GO NORTH TAKE LAMP LOOK INVENTORY HELP.");
+}
+
+static void do_go(int dir)
+{
+    Room *r = &rooms[current_room];
+    int dest = r->exits[dir];
+
+    if (dest < 0)
+    {
+        set_msg("YOU CANNOT GO THAT WAY.");
+        return;
+    }
+
+    // Simple puzzle: need lamp to enter the dark tunnel
+    if (dest == ROOM_TUNNEL && !has_item(ITEM_LAMP))
+    {
+        set_msg("IT IS TOO DARK TO ENTER WITHOUT A LAMP.");
+        return;
+    }
+
+    current_room = dest;
+    set_msg("OK.");
+}
+
+static void do_take(const char *noun)
+{
+    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        if (items[i].location == current_room &&
+            match_word(items[i].name, noun))
+        {
+            items[i].location = LOC_INVENTORY;
+            set_msg("TAKEN.");
             return;
         }
     }
+    set_msg("YOU DO NOT SEE THAT HERE.");
 }
 
-void updateEnemies(void) {
-    for(int i = 0; i < MAX_ENEMIES; i++) {
-        if(!enemies[i].active) continue;
-        
-        Enemy *e = &enemies[i];
-        
-        switch(e->type) {
-            case ENEMY_CRAWLER:
-                // Move horizontally
-                e->x += e->vx;
-                
-                // Apply gravity
-                e->vy += GRAVITY / 2;
-                if(e->vy > MAX_FALL_SPEED) e->vy = MAX_FALL_SPEED;
-                e->y += e->vy;
-                
-                // Check floor collision
-                {
-                    int ex = fx2int(e->x);
-                    int ey = fx2int(e->y);
-                    int tile = checkTileCollision(ex + 8, ey + e->height);
-                    
-                    if(isTileSolid(tile)) {
-                        e->y = int2fx((ey / 8) * 8);
-                        e->vy = 0;
-                    }
-                    
-                    // Check wall collision / edge detection
-                    int wallTile = checkTileCollision(ex + (e->facing ? 0 : e->width), ey + 8);
-                    int edgeTile = checkTileCollision(ex + (e->facing ? 0 : e->width), ey + e->height + 4);
-                    
-                    if(isTileSolid(wallTile) || !isTileSolid(edgeTile)) {
-                        e->facing = !e->facing;
-                        e->vx = -e->vx;
-                    }
-                }
-                break;
-                
-            case ENEMY_FLYER:
-                // Sine wave movement
-                e->x += e->vx;
-                e->y = int2fx(fx2int(e->y)) + lu_sin(game.frameCount * 128) / 32;
-                
-                // Bounce off walls
-                {
-                    int ex = fx2int(e->x);
-                    int ey = fx2int(e->y);
-                    int tile = checkTileCollision(ex + (e->facing ? 0 : e->width), ey + 8);
-                    
-                    if(isTileSolid(tile)) {
-                        e->facing = !e->facing;
-                        e->vx = -e->vx;
-                    }
-                }
-                break;
+static void do_drop(const char *noun)
+{
+    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        if (items[i].location == LOC_INVENTORY &&
+            match_word(items[i].name, noun))
+        {
+            items[i].location = current_room;
+            set_msg("DROPPED.");
+            return;
         }
-        
-        // Check collision with player
-        if(player.invincibleTimer == 0) {
-            int px = fx2int(player.x);
-            int py = fx2int(player.y);
-            int ex = fx2int(e->x);
-            int ey = fx2int(e->y);
-            
-            if(px < ex + e->width && px + player.width > ex &&
-               py < ey + e->height && py + player.height > ey) {
-                takeDamage(10);
+    }
+    set_msg("YOU ARE NOT CARRYING THAT.");
+}
+
+static void do_inventory(void)
+{
+    char buf[80];
+    int count = 0;
+
+    buf[0] = '\0';
+    strcpy(buf, "YOU CARRY");
+
+    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        if (items[i].location == LOC_INVENTORY)
+        {
+            if (count == 0)
+                strcat(buf, " ");
+            else
+                strcat(buf, " AND ");
+
+            strcat(buf, items[i].name);
+            count++;
+        }
+    }
+
+    if (count == 0)
+    {
+        set_msg("YOU ARE CARRYING NOTHING.");
+        return;
+    }
+
+    strcat(buf, ".");
+    set_msg(buf);
+}
+
+// -----------------------------------------------------------------------------
+// Text for exits/items
+// -----------------------------------------------------------------------------
+
+static void build_exits_text(char *buf, int buf_size)
+{
+    Room *r = &rooms[current_room];
+    int first = 1;
+
+    buf[0] = '\0';
+    strncpy(buf, "EXITS", buf_size-1);
+    buf[buf_size-1] = '\0';
+
+    if (r->exits[DIR_NORTH] >= 0)
+    {
+        strncat(buf, " NORTH", buf_size-1 - strlen(buf));
+        first = 0;
+    }
+    if (r->exits[DIR_EAST] >= 0)
+    {
+        strncat(buf, first ? " EAST" : " EAST", buf_size-1 - strlen(buf));
+        first = 0;
+    }
+    if (r->exits[DIR_SOUTH] >= 0)
+    {
+        strncat(buf, first ? " SOUTH" : " SOUTH", buf_size-1 - strlen(buf));
+        first = 0;
+    }
+    if (r->exits[DIR_WEST] >= 0)
+    {
+        strncat(buf, first ? " WEST" : " WEST", buf_size-1 - strlen(buf));
+        first = 0;
+    }
+
+    if (first)
+    {
+        strncpy(buf, "NO EXITS.", buf_size-1);
+        buf[buf_size-1] = '\0';
+    }
+}
+
+static void build_items_text(char *buf, int buf_size)
+{
+    int any = 0;
+
+    buf[0] = '\0';
+    strncpy(buf, "YOU SEE", buf_size-1);
+    buf[buf_size-1] = '\0';
+
+    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        if (items[i].location == current_room)
+        {
+            strncat(buf, " ", buf_size-1 - strlen(buf));
+            strncat(buf, items[i].name, buf_size-1 - strlen(buf));
+            any = 1;
+        }
+    }
+
+    if (any)
+    {
+        strncat(buf, " HERE.", buf_size-1 - strlen(buf));
+    }
+    else
+    {
+        strncpy(buf, "YOU SEE NOTHING HERE.", buf_size-1);
+        buf[buf_size-1] = '\0';
+    }
+}
+
+// -----------------------------------------------------------------------------
+// On-screen keyboard
+// -----------------------------------------------------------------------------
+
+#define KB_COLS 9
+#define KB_ROWS 3
+#define KB_X0   1     // starting column for keyboard
+#define KB_Y0   10    // starting row for keyboard
+
+static void draw_keyboard(int sel)
+{
+    for (int r = 0; r < KB_ROWS; r++)
+    {
+        for (int c = 0; c < KB_COLS; c++)
+        {
+            int idx = r * KB_COLS + c;
+            if (idx > 26)
+                continue;
+
+            char ch;
+            if (idx < 26)
+                ch = 'A' + idx;
+            else
+                ch = '_';       // label for space
+
+            u16 col = (idx == sel) ? CLR_SEL : CLR_HUD;
+            int tx = KB_X0 + c * 2;
+            int ty = KB_Y0 + r;
+            draw_char_cell(tx, ty, ch, col);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Screen drawing
+// -----------------------------------------------------------------------------
+
+static void draw_world_view(const char *cmd, int kb_sel)
+{
+    m3_clear(CLR_BG);
+
+    Room *r = &rooms[current_room];
+
+    // Room name and description
+    draw_text_cell(0, 0, r->name, CLR_TITLE);
+    draw_text_cell(0, 1, r->desc, CLR_TEXT);   // uses embedded '\n'
+
+    // Exits
+    char buf[80];
+    build_exits_text(buf, sizeof(buf));
+    draw_text_cell(0, 4, buf, CLR_TEXT);
+
+    // Items
+    build_items_text(buf, sizeof(buf));
+    draw_text_cell(0, 5, buf, CLR_TEXT);
+
+    // Last message
+    if (last_msg[0] != '\0')
+        draw_text_cell(0, 6, last_msg, CLR_HUD);
+
+    if (game_over)
+    {
+        draw_text_cell(0, 8, "GAME OVER.", CLR_HUD);
+        return;
+    }
+
+    // Keyboard help line
+    draw_text_cell(0, 8, "B BACKSPACE  START OK", CLR_HUD);
+
+    // Command line
+    char cmdline[40];
+    cmdline[0] = '\0';
+    strncpy(cmdline, "COMMAND ", sizeof(cmdline)-1);
+    cmdline[sizeof(cmdline)-1] = '\0';
+    strncat(cmdline, cmd, sizeof(cmdline)-1 - strlen(cmdline));
+    draw_text_cell(0, 9, cmdline, CLR_TEXT);
+
+    // On-screen keyboard
+    if (kb_sel >= 0)
+        draw_keyboard(kb_sel);
+}
+
+// -----------------------------------------------------------------------------
+// Command input (reads a line using the on-screen keyboard)
+// -----------------------------------------------------------------------------
+
+static void get_command(char *out_cmd, int max_len)
+{
+    int sel = 0;          // 0..26 (A..Z, space)
+    int len = 0;
+
+    out_cmd[0] = '\0';
+
+    while (1)
+    {
+        vsync();
+        key_poll_simple();
+
+        // Move selection
+        if (key_hit(KEY_LEFT))
+        {
+            if (sel % KB_COLS > 0)
+                sel--;
+        }
+        if (key_hit(KEY_RIGHT))
+        {
+            if (sel % KB_COLS < KB_COLS - 1 && sel + 1 <= 26)
+                sel++;
+        }
+        if (key_hit(KEY_UP))
+        {
+            if (sel >= KB_COLS)
+                sel -= KB_COLS;
+        }
+        if (key_hit(KEY_DOWN))
+        {
+            if (sel + KB_COLS <= 26)
+                sel += KB_COLS;
+        }
+
+        // Add character
+        if (key_hit(KEY_A))
+        {
+            char ch;
+            if (sel < 26)
+                ch = (char)('A' + sel);
+            else
+                ch = ' ';
+
+            if (len < max_len - 1)
+            {
+                out_cmd[len++] = ch;
+                out_cmd[len] = '\0';
             }
         }
-        
-        // Animation
-        e->animTimer++;
-        if(e->animTimer >= 8) {
-            e->animTimer = 0;
-            e->animFrame = (e->animFrame + 1) % 2;
-        }
-    }
-}
 
-//=============================================================================
-// ITEM FUNCTIONS
-//=============================================================================
-
-void updateItems(void) {
-    int px = fx2int(player.x);
-    int py = fx2int(player.y);
-    
-    for(int i = 0; i < MAX_ITEMS; i++) {
-        if(!items[i].active || items[i].collected) continue;
-        
-        // Check collision with player
-        if(px < items[i].x + 8 && px + player.width > items[i].x &&
-           py < items[i].y + 8 && py + player.height > items[i].y) {
-            
-            items[i].collected = 1;
-            items[i].active = 0;
-            
-            switch(items[i].type) {
-                case ITEM_ENERGY:
-                    player.health += 50;
-                    if(player.health > player.maxHealth) {
-                        player.health = player.maxHealth;
-                    }
-                    break;
-                case ITEM_MISSILE:
-                    player.missiles += 5;
-                    if(player.missiles > player.maxMissiles) {
-                        player.maxMissiles += 5;
-                        player.missiles = player.maxMissiles;
-                    }
-                    break;
-                case ITEM_MORPH_BALL:
-                    player.hasMorphBall = 1;
-                    break;
-            }
-            
-            playSound(6); // SFX_ITEM
-        }
-    }
-}
-
-//=============================================================================
-// PLAYER UPDATE
-//=============================================================================
-
-void takeDamage(int amount) {
-    if(player.invincibleTimer > 0) return;
-    
-    player.health -= amount;
-    player.invincibleTimer = 60;
-    playSound(7); // SFX_HURT
-    
-    if(player.health <= 0) {
-        player.health = 0;
-        game.gameState = STATE_GAMEOVER;
-        playSound(8); // SFX_DEATH
-    }
-}
-
-void updatePlayer(void) {
-    // Apply velocity
-    player.x += player.vx;
-    
-    // Horizontal collision
-    int px = fx2int(player.x);
-    int py = fx2int(player.y);
-    
-    if(player.vx > 0) {
-        if(checkTileCollision(px + player.width, py + 4) == TILE_SOLID ||
-           checkTileCollision(px + player.width, py + player.height - 4) == TILE_SOLID) {
-            player.x = int2fx((px / 8) * 8 + 8 - player.width + 6);
-            player.vx = 0;
-        }
-    } else if(player.vx < 0) {
-        if(checkTileCollision(px, py + 4) == TILE_SOLID ||
-           checkTileCollision(px, py + player.height - 4) == TILE_SOLID) {
-            player.x = int2fx((px / 8 + 1) * 8);
-            player.vx = 0;
-        }
-    }
-    
-    // Apply gravity
-    player.vy += GRAVITY;
-    if(player.vy > MAX_FALL_SPEED) {
-        player.vy = MAX_FALL_SPEED;
-    }
-    
-    player.y += player.vy;
-    
-    // Vertical collision
-    px = fx2int(player.x);
-    py = fx2int(player.y);
-    
-    if(player.vy > 0) {
-        int tile1 = checkTileCollision(px + 2, py + player.height);
-        int tile2 = checkTileCollision(px + player.width - 2, py + player.height);
-        
-        if(isTileSolid(tile1) || isTileSolid(tile2)) {
-            player.y = int2fx((py / 8) * 8);
-            player.vy = 0;
-            if(player.state == 2 || player.state == 3) {
-                player.state = 0;
-            }
-        } else {
-            if(!player.inBallMode && player.vy > 0) {
-                player.state = 3; // Falling
+        // Backspace
+        if (key_hit(KEY_B))
+        {
+            if (len > 0)
+            {
+                len--;
+                out_cmd[len] = '\0';
             }
         }
-    } else if(player.vy < 0) {
-        int tile1 = checkTileCollision(px + 2, py);
-        int tile2 = checkTileCollision(px + player.width - 2, py);
-        
-        if(tile1 == TILE_SOLID || tile2 == TILE_SOLID) {
-            player.y = int2fx((py / 8 + 1) * 8);
-            player.vy = 0;
-        }
-    }
-    
-    // Check for spikes
-    px = fx2int(player.x);
-    py = fx2int(player.y);
-    if(checkTileCollision(px + player.width/2, py + player.height) == TILE_SPIKE) {
-        takeDamage(20);
-    }
-    
-    // Clamp to level bounds
-    if(player.x < int2fx(8)) player.x = int2fx(8);
-    if(fx2int(player.x) + player.width > (MAP_WIDTH - 1) * 8) {
-        player.x = int2fx((MAP_WIDTH - 1) * 8 - player.width);
-    }
-    
-    // Update timers
-    if(player.shootTimer > 0) player.shootTimer--;
-    if(player.invincibleTimer > 0) player.invincibleTimer--;
-    
-    // Animation
-    player.animTimer++;
-    if(player.animTimer >= 8) {
-        player.animTimer = 0;
-        player.animFrame = (player.animFrame + 1) % 4;
-    }
-    
-    // Check for win condition (reach save point on right side)
-    px = fx2int(player.x);
-    py = fx2int(player.y);
-    if(checkTileCollision(px + player.width/2, py + player.height/2) == TILE_SAVE) {
-        if(px > 400) { // Near the end of level
-            game.gameState = STATE_WIN;
-        }
-    }
-}
 
-//=============================================================================
-// CAMERA UPDATE
-//=============================================================================
-
-void updateCamera(void) {
-    int px = fx2int(player.x);
-    int py = fx2int(player.y);
-    
-    // Center camera on player
-    int targetX = px - SCREEN_WIDTH / 2;
-    int targetY = py - SCREEN_HEIGHT / 2;
-    
-    // Smooth scrolling
-    game.scrollX += (targetX - game.scrollX) / 8;
-    game.scrollY += (targetY - game.scrollY) / 8;
-    
-    // Clamp to level bounds
-    if(game.scrollX < 0) game.scrollX = 0;
-    if(game.scrollX > MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH) {
-        game.scrollX = MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH;
-    }
-    if(game.scrollY < 0) game.scrollY = 0;
-    if(game.scrollY > MAP_HEIGHT * TILE_SIZE - SCREEN_HEIGHT) {
-        game.scrollY = MAP_HEIGHT * TILE_SIZE - SCREEN_HEIGHT;
-    }
-    
-    // Apply scroll to background
-    REG_BG0HOFS = game.scrollX;
-    REG_BG0VOFS = game.scrollY;
-}
-
-//=============================================================================
-// DRAWING FUNCTIONS
-//=============================================================================
-
-void drawGame(void) {
-    int spriteIdx = 0;
-    
-    // Draw player
-    int px = fx2int(player.x) - game.scrollX;
-    int py = fx2int(player.y) - game.scrollY;
-    
-    // Hide if invincible (flashing)
-    int showPlayer = 1;
-    if(player.invincibleTimer > 0 && (game.frameCount % 4) < 2) {
-        showPlayer = 0;
-    }
-    
-    if(showPlayer && px > -16 && px < SCREEN_WIDTH && py > -24 && py < SCREEN_HEIGHT) {
-        if(player.inBallMode) {
-            // Draw ball sprite
-            obj_set_attr(&obj_buffer[spriteIdx],
-                ATTR0_Y(py) | ATTR0_SQUARE,
-                ATTR1_X(px) | ATTR1_SIZE_8,
-                ATTR2_ID(12) | ATTR2_PALBANK(0));
-        } else {
-            // Draw player sprite (16x32 for proper height, but we use 16x24 area)
-            u16 tileId = (player.state == 1 && player.animFrame % 2) ? 6 : 0;
-            u16 flipFlag = player.facing ? ATTR1_HFLIP : 0;
-            
-            obj_set_attr(&obj_buffer[spriteIdx],
-                ATTR0_Y(py) | ATTR0_TALL,
-                ATTR1_X(px) | ATTR1_SIZE_16 | flipFlag,
-                ATTR2_ID(tileId) | ATTR2_PALBANK(0));
-        }
-    } else {
-        obj_hide(&obj_buffer[spriteIdx]);
-    }
-    spriteIdx++;
-    
-    // Draw bullets
-    for(int i = 0; i < MAX_BULLETS; i++) {
-        if(bullets[i].active) {
-            int bx = fx2int(bullets[i].x) - game.scrollX;
-            int by = fx2int(bullets[i].y) - game.scrollY;
-            
-            if(bx > -8 && bx < SCREEN_WIDTH && by > -8 && by < SCREEN_HEIGHT) {
-                obj_set_attr(&obj_buffer[spriteIdx],
-                    ATTR0_Y(by) | ATTR0_SQUARE,
-                    ATTR1_X(bx) | ATTR1_SIZE_8,
-                    ATTR2_ID(16) | ATTR2_PALBANK(0));
-            } else {
-                obj_hide(&obj_buffer[spriteIdx]);
-            }
-        } else {
-            obj_hide(&obj_buffer[spriteIdx]);
-        }
-        spriteIdx++;
-    }
-    
-    // Draw enemies
-    for(int i = 0; i < MAX_ENEMIES; i++) {
-        if(enemies[i].active) {
-            int ex = fx2int(enemies[i].x) - game.scrollX;
-            int ey = fx2int(enemies[i].y) - game.scrollY;
-            
-            if(ex > -16 && ex < SCREEN_WIDTH && ey > -16 && ey < SCREEN_HEIGHT) {
-                u16 flipFlag = enemies[i].facing ? ATTR1_HFLIP : 0;
-                obj_set_attr(&obj_buffer[spriteIdx],
-                    ATTR0_Y(ey) | ATTR0_SQUARE,
-                    ATTR1_X(ex) | ATTR1_SIZE_16 | flipFlag,
-                    ATTR2_ID(20) | ATTR2_PALBANK(0));
-            } else {
-                obj_hide(&obj_buffer[spriteIdx]);
-            }
-        } else {
-            obj_hide(&obj_buffer[spriteIdx]);
-        }
-        spriteIdx++;
-    }
-    
-    // Draw items
-    for(int i = 0; i < MAX_ITEMS; i++) {
-        if(items[i].active && !items[i].collected) {
-            int ix = items[i].x - game.scrollX;
-            int iy = items[i].y - game.scrollY;
-            
-            // Bobbing animation
-            iy += (lu_sin(game.frameCount * 256) >> 13);
-            
-            if(ix > -8 && ix < SCREEN_WIDTH && iy > -8 && iy < SCREEN_HEIGHT) {
-                obj_set_attr(&obj_buffer[spriteIdx],
-                    ATTR0_Y(iy) | ATTR0_SQUARE,
-                    ATTR1_X(ix) | ATTR1_SIZE_8,
-                    ATTR2_ID(28) | ATTR2_PALBANK(0));
-            } else {
-                obj_hide(&obj_buffer[spriteIdx]);
-            }
-        } else {
-            obj_hide(&obj_buffer[spriteIdx]);
-        }
-        spriteIdx++;
-    }
-    
-    // Hide remaining sprites
-    while(spriteIdx < 128) {
-        obj_hide(&obj_buffer[spriteIdx]);
-        spriteIdx++;
-    }
-    
-    // Draw HUD
-    drawHUD();
-}
-
-void drawHUD(void) {
-    // Simple HUD using remaining sprites or BG text
-    // For simplicity, we'll just update palettes to show health visually
-    // A full implementation would use a text background layer
-    
-    // Health bar color indication (change BG color based on health)
-    if(player.health < 25) {
-        pal_bg_mem[0] = RGB15_C(8, 0, 0); // Red tint when low health
-    } else if(player.health < 50) {
-        pal_bg_mem[0] = RGB15_C(4, 2, 0); // Orange tint
-    } else {
-        pal_bg_mem[0] = RGB15_C(0, 0, 4); // Normal dark blue
-    }
-}
-
-void drawTitleScreen(void) {
-    // Clear all sprites
-    for(int i = 0; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
-    
-    // Set background to title color
-    pal_bg_mem[0] = RGB15_C(0, 0, 8);
-    
-    // Flash "PRESS START" using background color cycling
-    if((game.frameCount / 30) % 2) {
-        pal_bg_mem[0] = RGB15_C(4, 4, 12);
-    }
-}
-
-void drawGameOver(void) {
-    // Red tinted background
-    pal_bg_mem[0] = RGB15_C(12, 0, 0);
-    
-    for(int i = 0; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
-}
-
-void drawWinScreen(void) {
-    // Green tinted background
-    pal_bg_mem[0] = RGB15_C(0, 12, 0);
-    
-    for(int i = 0; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
-}
-
-//=============================================================================
-// MAIN GAME UPDATE
-//=============================================================================
-
-void updateGame(void) {
-    game.frameCount++;
-    
-    switch(game.gameState) {
-        case STATE_TITLE:
-            drawTitleScreen();
+        // Submit
+        if (key_hit(KEY_START))
+        {
             break;
-            
-        case STATE_PLAYING:
-            updatePlayer();
-            updateBullets();
-            updateEnemies();
-            updateItems();
-            updateCamera();
-            drawGame();
-            break;
-            
-        case STATE_PAUSED:
-            // Just show current frame, maybe flash
-            if((game.frameCount / 15) % 2) {
-                pal_bg_mem[0] = RGB15_C(4, 4, 8);
-            } else {
-                pal_bg_mem[0] = RGB15_C(0, 0, 4);
-            }
-            break;
-            
-        case STATE_GAMEOVER:
-            drawGameOver();
-            break;
-            
-        case STATE_WIN:
-            drawWinScreen();
-            break;
+        }
+
+        draw_world_view(out_cmd, sel);
+    }
+
+    // Trim leading and trailing spaces
+    // (parser already copes, but this keeps things neat)
+    int start = 0;
+    while (start < len && out_cmd[start] == ' ')
+        start++;
+
+    int end = len - 1;
+    while (end >= start && out_cmd[end] == ' ')
+        end--;
+
+    int new_len = 0;
+    for (int i = start; i <= end; i++)
+        out_cmd[new_len++] = out_cmd[i];
+
+    out_cmd[new_len] = '\0';
+}
+
+// -----------------------------------------------------------------------------
+// Command dispatcher
+// -----------------------------------------------------------------------------
+
+static void handle_command(char *cmd)
+{
+    char *words[4];
+    int wc = tokenize(cmd, words, 4);
+
+    if (wc == 0)
+    {
+        set_msg("TYPE A COMMAND FIRST.");
+        return;
+    }
+
+    char *v = words[0];
+
+    // LOOK
+    if (match_word(v, "LOOK") || match_word(v, "L"))
+    {
+        do_look();
+        goto after;
+    }
+
+    // HELP
+    if (match_word(v, "HELP"))
+    {
+        do_help();
+        goto after;
+    }
+
+    // One-word direction: N, NORTH, etc.
+    {
+        int dir = parse_dir(v);
+        if (dir >= 0)
+        {
+            do_go(dir);
+            goto after;
+        }
+    }
+
+    // GO <dir>
+    if (match_word(v, "GO") || match_word(v, "G"))
+    {
+        if (wc < 2)
+        {
+            set_msg("GO WHERE");
+            goto after;
+        }
+        int dir = parse_dir(words[1]);
+        if (dir < 0)
+            set_msg("I DO NOT KNOW THAT WAY.");
+        else
+            do_go(dir);
+        goto after;
+    }
+
+    // TAKE / GET <item>
+    if (match_word(v, "TAKE") || match_word(v, "GET"))
+    {
+        if (wc < 2)
+        {
+            set_msg("TAKE WHAT");
+            goto after;
+        }
+        do_take(words[1]);
+        goto after;
+    }
+
+    // DROP <item>
+    if (match_word(v, "DROP"))
+    {
+        if (wc < 2)
+        {
+            set_msg("DROP WHAT");
+            goto after;
+        }
+        do_drop(words[1]);
+        goto after;
+    }
+
+    // INVENTORY / I
+    if (match_word(v, "INVENTORY") || match_word(v, "I"))
+    {
+        do_inventory();
+        goto after;
+    }
+
+    // QUIT / Q
+    if (match_word(v, "QUIT") || match_word(v, "Q"))
+    {
+        set_msg("GOODBYE.");
+        game_over = 1;
+        return;
+    }
+
+    // Unknown
+    set_msg("I DO NOT UNDERSTAND.");
+
+after:
+    // Win condition: have treasure and be back in forest
+    if (!game_won && has_item(ITEM_TREASURE) && current_room == ROOM_FOREST)
+    {
+        set_msg("YOU ESCAPED WITH THE TREASURE!");
+        game_won  = 1;
+        game_over = 1;
     }
 }
 
-//=============================================================================
-// MAIN FUNCTION
-//=============================================================================
+// -----------------------------------------------------------------------------
+// Main
+// -----------------------------------------------------------------------------
 
-int main(void) {
-    // Initialize interrupt handling
-    irq_init(NULL);
-    irq_enable(II_VBLANK);
-    
-    // Initialize the game
-    initGame();
-    
-    // Main game loop
-    while(1) {
-        VBlankIntrWait();
-        
-        handleInput();
-        updateGame();
-        
-        // Copy OAM buffer to hardware OAM
-        oam_copy(oam_mem, obj_buffer, 128);
+int main(void)
+{
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+
+    current_room = ROOM_FOREST;
+    game_over    = 0;
+    game_won     = 0;
+
+    set_msg("WELCOME. TYPE HELP FOR HELP.");
+
+    key_poll_simple(); // prime key state
+
+    char cmd[32];
+
+    while (!game_over)
+    {
+        get_command(cmd, sizeof(cmd));
+        handle_command(cmd);
     }
-    
+
+    // Final screen: no further input, just show result
+    for (;;)
+    {
+        vsync();
+        draw_world_view("", -1);
+    }
+
     return 0;
 }
