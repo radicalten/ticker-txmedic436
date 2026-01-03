@@ -1,323 +1,295 @@
-// shmup.c - simple horizontal shmup for GBA using tonc (single file)
-//
-// Controls:
-//   D-Pad : Move ship
-//   A     : Fire
-//   START : Restart after game over
-//
-// Build (example, adjust paths for your setup):
-//   arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -I$(TONC)/include shmup.c -L$(TONC)/lib -ltonc -o shmup.elf
-//   arm-none-eabi-objcopy -O binary shmup.elf shmup.gba
+// ==================================================================================
+// GBA Gradius-Clone (Single File Example)
+// Requires: devkitPro and libtonc
+// Compile with: arm-none-eabi-gcc -mthumb -mthumb-interwork -c main.c
+//               (Link with tonc.specs via Makefile usually)
+// ==================================================================================
 
 #include <tonc.h>
+#include <string.h>
+#include <stdlib.h>
 
-#define MAX_BULLETS 32
-#define MAX_ENEMIES 16
-#define MAX_STARS   64
-
+// --- Constants ---
+#define MAX_BULLETS 10
+#define MAX_ENEMIES 8
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 160
 #define PLAYER_SPEED 2
-#define BULLET_SPEED 4
-#define ENEMY_SPEED  1
-#define SCROLL_SPEED 1
+#define BULLET_SPEED 5
+#define ENEMY_SPEED 1
 
-// Colors (15-bit BGR)
-#define COLOR_BG      RGB15(0, 0, 0)
-#define COLOR_PLAYER  RGB15(0, 31, 0)
-#define COLOR_ENEMY   RGB15(31, 0, 0)
-#define COLOR_BULLET  RGB15(31, 31, 0)
-#define COLOR_STAR    RGB15(24, 24, 24)
-#define COLOR_BORDER  RGB15(31, 0, 0)
+// --- Graphics Data (Embedded to keep this a single file) ---
+// 4bpp (16 colors) 8x8 tiles. 
+// 0 = Transparent, 1 = Color 1, 2 = Color 2...
 
-typedef struct
-{
+// Tile 0: The Player Ship (Sideways triangle)
+const unsigned int tile_ship[8] = {
+    0x00000000, 0x00000011, 0x00001111, 0x11111111, 
+    0x11111111, 0x00001111, 0x00000011, 0x00000000
+};
+
+// Tile 1: The Enemy (Roundish shape)
+const unsigned int tile_enemy[8] = {
+    0x00222200, 0x02222220, 0x22200222, 0x22000022, 
+    0x22000022, 0x22200222, 0x02222220, 0x00222200
+};
+
+// Tile 2: Bullet (Small line)
+const unsigned int tile_bullet[8] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00333300, 
+    0x00333300, 0x00000000, 0x00000000, 0x00000000
+};
+
+// Tile 3: Star (Background)
+const unsigned int tile_star[8] = {
+    0x00000000, 0x00004000, 0x00044400, 0x00004000, 
+    0x00000000, 0x00000000, 0x00000000, 0x00000000
+};
+
+// --- Structures ---
+
+typedef struct {
     int x, y;
     int w, h;
-    int vx, vy;
-    int active;
-} Entity;
+    bool active;
+} Bullet;
 
-typedef struct
-{
+typedef struct {
     int x, y;
-} Star;
+    int w, h;
+    bool active;
+    int frame_offset; // For sine wave movement
+} Enemy;
 
-static Entity player;
-static Entity bullets[MAX_BULLETS];
-static Entity enemies[MAX_ENEMIES];
-static Star   stars[MAX_STARS];
+typedef struct {
+    int x, y;
+    int w, h;
+    int cooldown;
+} Player;
 
-static int score = 0;
-static int spawnTimer = 0;
-static int enemySpawnCounter = 0;
-static int gameOver = 0;
+// --- Global State ---
+Player player;
+Bullet bullets[MAX_BULLETS];
+Enemy enemies[MAX_ENEMIES];
+OBJ_ATTR obj_buffer[128]; // OAM Buffer
+int bg_scroll_x = 0;
+u16* map_ptr; // Pointer to background map memory
 
-// ----- Utility drawing -----
+// --- Functions ---
 
-static inline void draw_pixel(int x, int y, u16 color)
-{
-    if((unsigned)x >= SCREEN_WIDTH || (unsigned)y >= SCREEN_HEIGHT)
-        return;
-    vid_mem[y*SCREEN_WIDTH + x] = color;
+void init_graphics() {
+    // 1. Load Palette
+    // MEM_PAL_OBJ is strictly for sprites, MEM_PAL_BG for background
+    pal_obj_mem[0] = CLR_MAGENTA; // Transparent
+    pal_obj_mem[1] = CLR_LIME;    // Player Color
+    pal_obj_mem[2] = CLR_RED;     // Enemy Color
+    pal_obj_mem[3] = CLR_YELLOW;  // Bullet Color
+    
+    pal_bg_mem[0] = CLR_BLACK;    // BG Background
+    pal_bg_mem[4] = CLR_WHITE;    // Star Color
+
+    // 2. Load Tiles into VRAM (Character Block 4 for sprites)
+    memcpy32(&tile_mem[4][0], tile_ship, 8);   // Sprite Tile 0
+    memcpy32(&tile_mem[4][1], tile_enemy, 8);  // Sprite Tile 1
+    memcpy32(&tile_mem[4][2], tile_bullet, 8); // Sprite Tile 2
+
+    // Load Tiles into VRAM (Character Block 0 for BG)
+    memcpy32(&tile_mem[0][1], tile_star, 8);   // BG Tile 1 (0 is empty)
 }
 
-static void draw_rect(int x, int y, int w, int h, u16 color)
-{
-    if(w <= 0 || h <= 0)
-        return;
+void init_background() {
+    // Set up a starfield in BG0
+    // CBB = 0 (Tile data), SBB = 30 (Map data)
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
+    
+    map_ptr = (u16*)se_mem[30]; // Screen Entry Block 30
 
-    int x2 = x + w;
-    int y2 = y + h;
+    // Clear map
+    for(int i=0; i<1024; i++) map_ptr[i] = 0;
 
-    if(x < 0)     x = 0;
-    if(y < 0)     y = 0;
-    if(x2 > SCREEN_WIDTH)  x2 = SCREEN_WIDTH;
-    if(y2 > SCREEN_HEIGHT) y2 = SCREEN_HEIGHT;
-
-    for(int j=y; j<y2; j++)
-    {
-        u16 *row = &vid_mem[j*SCREEN_WIDTH];
-        for(int i=x; i<x2; i++)
-            row[i] = color;
+    // Scatter some stars randomly
+    for(int i=0; i<50; i++) {
+        int tx = qran_range(0, 32);
+        int ty = qran_range(0, 32);
+        // Set tile index 1, palette 0
+        map_ptr[ty * 32 + tx] = SE_PALBANK(0) | 1; 
     }
 }
 
-// ----- Game logic -----
-
-static int rects_overlap(const Entity *a, const Entity *b)
-{
-    return (a->x < b->x + b->w) &&
-           (a->x + a->w > b->x) &&
-           (a->y < b->y + b->h) &&
-           (a->y + a->h > b->y);
-}
-
-static void init_stars(void)
-{
-    for(int i=0; i<MAX_STARS; i++)
-    {
-        // Simple deterministic pseudo-random distribution
-        stars[i].x = (i * 37) % SCREEN_WIDTH;
-        stars[i].y = (i * 17) % SCREEN_HEIGHT;
-    }
-}
-
-static void init_game(void)
-{
-    // Player
-    player.w = 16;
-    player.h = 8;
+void init_game() {
+    // Player init
     player.x = 20;
-    player.y = SCREEN_HEIGHT/2 - player.h/2;
-    player.vx = player.vy = 0;
-    player.active = 1;
+    player.y = SCREEN_HEIGHT / 2;
+    player.w = 8;
+    player.h = 8;
+    player.cooldown = 0;
 
-    // Bullets and enemies
-    for(int i=0; i<MAX_BULLETS; i++)
-        bullets[i].active = 0;
+    // Clear entities
+    for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = false;
+    for(int i=0; i<MAX_ENEMIES; i++) enemies[i].active = false;
 
-    for(int i=0; i<MAX_ENEMIES; i++)
-        enemies[i].active = 0;
-
-    init_stars();
-
-    score = 0;
-    spawnTimer = 0;
-    enemySpawnCounter = 0;
-    gameOver = 0;
+    // Reset OAM buffer
+    oam_init(obj_buffer, 128);
 }
 
-static void spawn_enemy(void)
-{
-    for(int i=0; i<MAX_ENEMIES; i++)
-    {
-        if(!enemies[i].active)
-        {
-            Entity *e = &enemies[i];
-            e->active = 1;
-            e->w = 12;
-            e->h = 8;
-            e->x = SCREEN_WIDTH - e->w;
-            // Deterministic "random" vertical position
-            e->y = (enemySpawnCounter * 23) % (SCREEN_HEIGHT - e->h);
-            e->vx = -(ENEMY_SPEED + SCROLL_SPEED);
-            e->vy = 0;
-
-            enemySpawnCounter++;
-            break;
-        }
-    }
+// Simple AABB Collision
+bool check_collision(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2) {
+    return (x1 < x2 + w2 && x1 + w1 > x2 &&
+            y1 < y2 + h2 && y1 + h1 > y2);
 }
 
-static void update_game(void)
-{
-    // If game over, wait for START to restart
-    if(gameOver)
-    {
-        if(key_hit(KEY_START))
-            init_game();
-        return;
-    }
+void update() {
+    // 1. Player Movement
+    int dx = key_tri_horz();
+    int dy = key_tri_vert();
 
-    // ----- Input -----
-    if(key_is_down(KEY_UP))
-        player.y -= PLAYER_SPEED;
-    if(key_is_down(KEY_DOWN))
-        player.y += PLAYER_SPEED;
-    if(key_is_down(KEY_LEFT))
-        player.x -= PLAYER_SPEED;
-    if(key_is_down(KEY_RIGHT))
-        player.x += PLAYER_SPEED;
+    player.x += dx * PLAYER_SPEED;
+    player.y += dy * PLAYER_SPEED;
 
-    // Clamp player to screen
+    // Clamp to screen
     if(player.x < 0) player.x = 0;
+    if(player.x > SCREEN_WIDTH - 8) player.x = SCREEN_WIDTH - 8;
     if(player.y < 0) player.y = 0;
-    if(player.x > SCREEN_WIDTH - player.w)
-        player.x = SCREEN_WIDTH - player.w;
-    if(player.y > SCREEN_HEIGHT - player.h)
-        player.y = SCREEN_HEIGHT - player.h;
+    if(player.y > SCREEN_HEIGHT - 8) player.y = SCREEN_HEIGHT - 8;
 
-    // Shooting
-    if(key_hit(KEY_A))
-    {
-        for(int i=0; i<MAX_BULLETS; i++)
-        {
-            if(!bullets[i].active)
-            {
-                Entity *b = &bullets[i];
-                b->active = 1;
-                b->w = 4;
-                b->h = 2;
-                b->x = player.x + player.w;
-                b->y = player.y + player.h/2 - b->h/2;
-                b->vx = BULLET_SPEED;
-                b->vy = 0;
+    // 2. Shooting
+    if(player.cooldown > 0) player.cooldown--;
+    if(key_held(KEY_A) && player.cooldown == 0) {
+        for(int i=0; i<MAX_BULLETS; i++) {
+            if(!bullets[i].active) {
+                bullets[i].active = true;
+                bullets[i].x = player.x + 4;
+                bullets[i].y = player.y;
+                bullets[i].w = 8;
+                bullets[i].h = 8;
+                player.cooldown = 15; // Fire rate
                 break;
             }
         }
     }
 
-    // ----- Background stars scroll -----
-    for(int i=0; i<MAX_STARS; i++)
-    {
-        stars[i].x -= SCROLL_SPEED;
-        if(stars[i].x < 0)
-            stars[i].x += SCREEN_WIDTH;
+    // 3. Update Bullets
+    for(int i=0; i<MAX_BULLETS; i++) {
+        if(bullets[i].active) {
+            bullets[i].x += BULLET_SPEED;
+            if(bullets[i].x > SCREEN_WIDTH) bullets[i].active = false;
+        }
     }
 
-    // ----- Bullets -----
-    for(int i=0; i<MAX_BULLETS; i++)
-    {
-        if(!bullets[i].active) continue;
-
-        bullets[i].x += bullets[i].vx;
-        bullets[i].y += bullets[i].vy;
-
-        if(bullets[i].x >= SCREEN_WIDTH)
-            bullets[i].active = 0;
-    }
-
-    // ----- Enemy spawn -----
-    if(spawnTimer > 0)
-        spawnTimer--;
-    else
-    {
-        spawn_enemy();
-        int maxInterval = 60;
-        int minInterval = 20;
-        int interval = maxInterval - score/5;
-        if(interval < minInterval)
-            interval = minInterval;
-        spawnTimer = interval;
-    }
-
-    // ----- Enemies -----
-    for(int i=0; i<MAX_ENEMIES; i++)
-    {
-        if(!enemies[i].active) continue;
-
-        enemies[i].x += enemies[i].vx;
-        enemies[i].y += enemies[i].vy;
-
-        if(enemies[i].x + enemies[i].w < 0)
-            enemies[i].active = 0;
-    }
-
-    // ----- Collisions: bullets vs enemies -----
-    for(int i=0; i<MAX_BULLETS; i++)
-    {
-        if(!bullets[i].active) continue;
-
-        for(int j=0; j<MAX_ENEMIES; j++)
-        {
-            if(!enemies[j].active) continue;
-
-            if(rects_overlap(&bullets[i], &enemies[j]))
-            {
-                bullets[i].active = 0;
-                enemies[j].active = 0;
-                score++;
+    // 4. Update Enemies (Spawn and Move)
+    if(qran_range(0, 100) < 2) { // 2% chance to spawn per frame
+        for(int i=0; i<MAX_ENEMIES; i++) {
+            if(!enemies[i].active) {
+                enemies[i].active = true;
+                enemies[i].x = SCREEN_WIDTH;
+                enemies[i].y = qran_range(10, SCREEN_HEIGHT - 10);
+                enemies[i].w = 8;
+                enemies[i].h = 8;
+                enemies[i].frame_offset = qran_range(0, 360);
                 break;
             }
         }
     }
 
-    // ----- Collisions: player vs enemies -----
-    for(int i=0; i<MAX_ENEMIES; i++)
-    {
-        if(!enemies[i].active) continue;
+    for(int i=0; i<MAX_ENEMIES; i++) {
+        if(enemies[i].active) {
+            enemies[i].x -= ENEMY_SPEED;
+            // Sine wave motion
+            enemies[i].y += (lu_sin(enemies[i].frame_offset) >> 10); 
+            enemies[i].frame_offset += 500; // Advance sine wave
 
-        if(rects_overlap(&player, &enemies[i]))
-        {
-            gameOver = 1;
-            break;
+            if(enemies[i].x < -8) enemies[i].active = false;
+
+            // Collision: Bullet vs Enemy
+            for(int b=0; b<MAX_BULLETS; b++) {
+                if(bullets[b].active && check_collision(
+                    bullets[b].x, bullets[b].y, bullets[b].w, bullets[b].h,
+                    enemies[i].x, enemies[i].y, enemies[i].w, enemies[i].h
+                )) {
+                    bullets[b].active = false;
+                    enemies[i].active = false;
+                    // Could add score here
+                }
+            }
+
+            // Collision: Player vs Enemy
+            if(check_collision(
+                player.x, player.y, player.w, player.h,
+                enemies[i].x, enemies[i].y, enemies[i].w, enemies[i].h
+            )) {
+                // Die / Reset
+                init_game();
+            }
         }
     }
+
+    // 5. Scroll Background
+    bg_scroll_x++;
 }
 
-static void draw_game(void)
-{
-    // Clear screen
-    m3_fill(COLOR_BG);
+void draw() {
+    int oam_id = 0;
 
-    // Stars
-    for(int i=0; i<MAX_STARS; i++)
-        draw_pixel(stars[i].x, stars[i].y, COLOR_STAR);
+    // Draw Player (Tile 0)
+    obj_set_attr(&obj_buffer[oam_id++], 
+                 ATTR0_SQUARE,      // Shape
+                 ATTR1_SIZE_8,      // Size
+                 ATTR2_PALBANK(0) | 0); // Tile Index 0
+    
+    obj_set_pos(&obj_buffer[oam_id-1], player.x, player.y);
 
-    // Player
-    if(player.active)
-        draw_rect(player.x, player.y, player.w, player.h, COLOR_PLAYER);
-
-    // Bullets
-    for(int i=0; i<MAX_BULLETS; i++)
-        if(bullets[i].active)
-            draw_rect(bullets[i].x, bullets[i].y, bullets[i].w, bullets[i].h, COLOR_BULLET);
-
-    // Enemies
-    for(int i=0; i<MAX_ENEMIES; i++)
-        if(enemies[i].active)
-            draw_rect(enemies[i].x, enemies[i].y, enemies[i].w, enemies[i].h, COLOR_ENEMY);
-
-    // Simple red borders when game over
-    if(gameOver)
-    {
-        draw_rect(0, 0, SCREEN_WIDTH, 4, COLOR_BORDER);
-        draw_rect(0, SCREEN_HEIGHT-4, SCREEN_WIDTH, 4, COLOR_BORDER);
+    // Draw Bullets (Tile 2)
+    for(int i=0; i<MAX_BULLETS; i++) {
+        if(bullets[i].active) {
+            obj_set_attr(&obj_buffer[oam_id++], 
+                         ATTR0_SQUARE, 
+                         ATTR1_SIZE_8, 
+                         ATTR2_PALBANK(0) | 2); // Tile 2
+            obj_set_pos(&obj_buffer[oam_id-1], bullets[i].x, bullets[i].y);
+        }
     }
+
+    // Draw Enemies (Tile 1)
+    for(int i=0; i<MAX_ENEMIES; i++) {
+        if(enemies[i].active) {
+            obj_set_attr(&obj_buffer[oam_id++], 
+                         ATTR0_SQUARE, 
+                         ATTR1_SIZE_8, 
+                         ATTR2_PALBANK(0) | 1); // Tile 1
+            obj_set_pos(&obj_buffer[oam_id-1], enemies[i].x, enemies[i].y);
+        }
+    }
+
+    // Hide remaining sprites in buffer
+    for(int i = oam_id; i < 128; i++) {
+        obj_hide(&obj_buffer[i]);
+    }
+
+    // Copy buffer to actual OAM memory
+    oam_copy(oam_mem, obj_buffer, 128);
+
+    // Update Background scroll register
+    REG_BG0HOFS = bg_scroll_x;
 }
 
-int main(void)
-{
-    // Mode 3: 240x160, 16-bit bitmap, BG2 on
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
-
+int main() {
+    // 1. Initialization
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+    
+    init_graphics();
+    init_background();
     init_game();
+    
+    // Seed random number generator
+    sqran(0);
 
-    while(1)
-    {
-        VBlankIntrWait();
-        key_poll();
-        update_game();
-        draw_game();
+    // 2. Main Loop
+    while(1) {
+        vid_vsync(); // Wait for VBlank (60 FPS cap)
+        key_poll();  // Update inputs
+        
+        update();
+        draw();
     }
 
     return 0;
