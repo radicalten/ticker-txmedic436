@@ -108,7 +108,7 @@ int main() {
         // Note: Mode 3 is a u16 array.
         // We clear the top half (sky)
        // DMA_TRANSFER(&vid_mem[0], &CLR_SKY, (SCREEN_W * HORIZON), 
-                     DMA_16 | DMA_ENABLE | DMA_SRC_FIXED);
+       //              DMA_16 | DMA_ENABLE | DMA_SRC_FIXED);
 
         // Render Road Line by Line (Bottom to Horizon)
         // We use simple projection math: ScreenX = WorldX / Z
