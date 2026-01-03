@@ -31,13 +31,6 @@ static inline int clampi(int v, int lo, int hi)
 	return v;
 }
 
-static inline void m4_rect(u16* dstBase, int x, int y, int w, int h, u8 clrid)
-{
-	if(w <= 0 || h <= 0) return;
-	for(int iy=0; iy<h; iy++)
-		m4_hline(dstBase, y+iy, x, x+w-1, clrid);
-}
-
 // ------------------------------ Palette IDs ------------------------------
 enum
 {
