@@ -23,7 +23,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define RGB15_C_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
 
 // ------------------------------------------------------------
 // Maxmod single-file embedding hook
