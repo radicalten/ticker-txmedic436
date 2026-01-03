@@ -100,7 +100,7 @@ static void draw_scene(u16* bb, int horizon, int playerX, u32 scroll, u16 curveP
 		// 8-step gradient
 		int idx = (y * 8) / horizon;           // 0..7
 		u8 sky = (u8)(C_SKY0 + idx);
-		m4_hline(bb, y, 0, 239, sky);
+		m4_hline(y, 0, 239, sky);
 	}
 
 	// ----- Road -----
@@ -136,19 +136,19 @@ static void draw_scene(u16* bb, int horizon, int playerX, u32 scroll, u16 curveP
 		u8 rumble= (v & 0x08) ? C_RUMBLE_W: C_RUMBLE_R;
 
 		// Fill full line with grass, then paint road on top.
-		m4_hline(bb, y, 0, 239, grass);
-		m4_hline(bb, y, left, right, road);
+		m4_hline(y, 0, 239, grass);
+		m4_hline(y, left, right, road);
 
 		// Rumble strips
-		m4_hline(bb, y, left, left+rumbleW-1, rumble);
-		m4_hline(bb, y, right-rumbleW+1, right, rumble);
+		m4_hline(y, left, left+rumbleW-1, rumble);
+		m4_hline(y, right-rumbleW+1, right, rumble);
 
 		// Dashed center line (only when road is wide enough)
 		if(halfW > 18)
 		{
 			// dash pattern
 			if(((v >> 1) & 0x0F) < 6)
-				m4_hline(bb, y, center-1, center+1, C_MARK);
+				m4_hline(y, center-1, center+1, C_MARK);
 		}
 	}
 
@@ -156,10 +156,10 @@ static void draw_scene(u16* bb, int horizon, int playerX, u32 scroll, u16 curveP
 	// (Drawn last so it sits on top.)
 	int carY = 132;
 	int carX = clampi(120 + playerX - 12, 0, 240-24);
-	m4_rect(bb, carX, carY,     24, 18, C_CAR);
-	m4_rect(bb, carX, carY+12,  24,  6, C_CAR_D);   // darker "bumper"
-	m4_rect(bb, carX+4, carY+4,  6,  6, C_MARK);    // simple "headlights"
-	m4_rect(bb, carX+14,carY+4,  6,  6, C_MARK);
+	m4_rect(carX, carY,     24, 18, C_CAR);
+	m4_rect(carX, carY+12,  24,  6, C_CAR_D);   // darker "bumper"
+	m4_rect(carX+4, carY+4,  6,  6, C_MARK);    // simple "headlights"
+	m4_rect(carX+14,carY+4,  6,  6, C_MARK);
 }
 
 // -------------------------------- Main --------------------------------
@@ -220,7 +220,7 @@ int main(void)
 
 		// Render to backbuffer, then flip during VBlank
 		u16* bb = m4_backbuffer();
-		draw_scene(bb, horizon, playerX, scroll, curvePhase);
+		draw_scene(horizon, playerX, scroll, curvePhase);
 
 		VBlankIntrWait();
 		m4_flip();
