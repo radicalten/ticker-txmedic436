@@ -1,1120 +1,363 @@
-// ============================================================
-// Kirby-like GBA Side Scroller using Tonc
-// Compile with devkitPro: make
-// ============================================================
-
 #include <tonc.h>
 #include <string.h>
+#include <stdlib.h>
 
-// ============================================================
-// CONSTANTS
-// ============================================================
+// --- Constants ---
+#define MAP_WIDTH   64 // Map width in tiles (Screenblock size)
+#define MAP_HEIGHT  32 // Map height in tiles
+#define TILE_SIZE   8
 
-#define SCREEN_WIDTH    240
-#define SCREEN_HEIGHT   160
+// Fixed point math for smooth physics (8.8 fixed point)
+#define FIXED_SHIFT 8
+#define F(x)        ((x) << FIXED_SHIFT)
+#define I(x)        ((x) >> FIXED_SHIFT)
 
-#define TILE_SIZE       8
-#define MAP_WIDTH       64
-#define MAP_HEIGHT      32
+// Physics constants
+#define GRAVITY     F(1) / 4
+#define JUMP_FORCE  F(3)
+#define FLY_FORCE   F(1) / 2
+#define MOVE_SPEED  F(1) + (F(1)/2)
+#define FRICTION    F(1) / 8
 
-#define MAX_ENEMIES     8
-#define MAX_STARS       6
+// Asset IDs in VRAM
+#define TID_EMPTY   0
+#define TID_GROUND  1
+#define TID_BLOCK   2
+#define TID_KIRBY   512 // Sprite tile start index
 
-#define GRAVITY         12
-#define MAX_FALL_SPEED  384
-#define JUMP_POWER      420
-#define WALK_SPEED      192
-#define FLOAT_GRAVITY   4
-#define FLOAT_FALL_MAX  64
+// Map Data Buffer (Screenblock)
+u16 map_data[MAP_WIDTH * MAP_HEIGHT];
 
-#define FIX_SHIFT       8
-
-// Sprite OAM indices
-#define SPR_PLAYER      0
-#define SPR_ENEMIES     1
-#define SPR_STARS       (SPR_ENEMIES + MAX_ENEMIES)
-#define SPR_HUD         (SPR_STARS + MAX_STARS)
-
-// Collision tile types
-#define TILE_EMPTY      0
-#define TILE_SOLID      1
-#define TILE_SPIKE      2
-#define TILE_PLATFORM   3
-
-// ============================================================
-// GRAPHICS DATA
-// ============================================================
-
-// 4bpp Palette (16 colors)
-const u16 spritePal[16] = {
-    0x0000,  // 0: Transparent
-    0x7FFF,  // 1: White
-    0x001F,  // 2: Red
-    0x7C00,  // 3: Blue
-    0x03E0,  // 4: Green
-    0x5294,  // 5: Pink (Kirby body)
-    0x6B5A,  // 6: Light pink
-    0x0000,  // 7: Black
-    0x03FF,  // 8: Yellow
-    0x4210,  // 9: Gray
-    0x56B5,  // 10: Light gray
-    0x7C1F,  // 11: Magenta
-    0x7E0,   // 12: Cyan
-    0x294A,  // 13: Dark gray
-    0x421F,  // 14: Orange
-    0x6318,  // 15: Lavender
-};
-
-const u16 bgPal[16] = {
-    0x7E94,  // 0: Sky blue
-    0x6B5A,  // 1: Ground light
-    0x4A31,  // 2: Ground dark
-    0x7FFF,  // 3: White (clouds)
-    0x03E0,  // 4: Green (grass top)
-    0x02A0,  // 5: Dark green
-    0x0000,  // 6: Black
-    0x56B5,  // 7: Platform light
-    0x35AD,  // 8: Platform dark
-    0x001F,  // 9: Spike red
-    0x4210,  // 10: Gray
-    0x5EF7,  // 11: Cloud shadow
-    0x0180,  // 12: Bush green
-    0x7E73,  // 13: Sky light
-    0x0015,  // 14: Dark red
-    0x7FFF,  // 15: Unused
-};
-
-// Player sprite tiles (16x16, 4 tiles each frame) - 4bpp format
-// Frame 0: Idle
-const u32 playerIdleTiles[32] = {
-    // Top-left
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56616165, 0x56171765, 0x56666665,
-    // Top-right
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56161665, 0x56717165, 0x56666665,
-    // Bottom-left
-    0x05666650, 0x00555550, 0x00566650, 0x05666650,
-    0x05555550, 0x00000000, 0x00000000, 0x00000000,
-    // Bottom-right
-    0x05666650, 0x05555500, 0x05666500, 0x05666650,
-    0x05555550, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Frame 1: Walk 1
-const u32 playerWalk1Tiles[32] = {
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56616165, 0x56171765, 0x56666665,
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56161665, 0x56717165, 0x56666665,
-    0x05666650, 0x00555500, 0x00056650, 0x00566650,
-    0x05555000, 0x05550000, 0x00000000, 0x00000000,
-    0x05666650, 0x00555500, 0x05665000, 0x05666500,
-    0x00055550, 0x00005550, 0x00000000, 0x00000000,
-};
-
-// Frame 2: Walk 2
-const u32 playerWalk2Tiles[32] = {
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56616165, 0x56171765, 0x56666665,
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56161665, 0x56717165, 0x56666665,
-    0x05666650, 0x05555500, 0x05666000, 0x05666500,
-    0x00555550, 0x00005550, 0x00000000, 0x00000000,
-    0x05666650, 0x00555550, 0x00066650, 0x00566650,
-    0x05555000, 0x05550000, 0x00000000, 0x00000000,
-};
-
-// Frame 3: Jump
-const u32 playerJumpTiles[32] = {
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56666665, 0x56666665, 0x56666665,
-    0x00000000, 0x00055000, 0x00566500, 0x05666650,
-    0x56666665, 0x56666665, 0x56666665, 0x56666665,
-    0x05666650, 0x55555555, 0x05666650, 0x05666650,
-    0x05555550, 0x00000000, 0x00000000, 0x00000000,
-    0x05666650, 0x55555555, 0x05666650, 0x05666650,
-    0x05555550, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Frame 4: Float/Puff
-const u32 playerFloatTiles[32] = {
-    0x00000000, 0x00555500, 0x05666650, 0x56666665,
-    0x66666666, 0x66616166, 0x66171766, 0x66666666,
-    0x00000000, 0x00555500, 0x05666650, 0x56666665,
-    0x66666666, 0x66161666, 0x66717166, 0x66666666,
-    0x66666666, 0x56666665, 0x05666650, 0x05666650,
-    0x00555500, 0x00000000, 0x00000000, 0x00000000,
-    0x66666666, 0x56666665, 0x05666650, 0x05666650,
-    0x00555500, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Enemy sprite (simple waddle dee style) - 16x16
-const u32 enemyTiles[32] = {
-    0x00000000, 0x00022000, 0x00288200, 0x02888820,
-    0x28888882, 0x28818182, 0x28828282, 0x28888882,
-    0x00000000, 0x00022000, 0x00288200, 0x02888820,
-    0x28888882, 0x28181882, 0x28282882, 0x28888882,
-    0x02888820, 0x00222200, 0x00288820, 0x02888820,
-    0x02222200, 0x00000000, 0x00000000, 0x00000000,
-    0x02888820, 0x00222200, 0x02888200, 0x02888820,
-    0x00222220, 0x00000000, 0x00000000, 0x00000000,
-};
-
-// Star projectile (8x8)
-const u32 starTiles[8] = {
-    0x00080000, 0x00888000, 0x08888800, 0x88888888,
-    0x88888888, 0x08888800, 0x00888000, 0x00080000,
-};
-
-// Background tiles (8x8 each)
-const u32 bgTiles[10 * 8] = {
-    // Tile 0: Empty sky
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    // Tile 1: Ground top with grass
-    0x44444444, 0x44444444, 0x11111111, 0x12121212,
-    0x21212121, 0x12121212, 0x21212121, 0x12121212,
-    // Tile 2: Ground middle
-    0x12121212, 0x21212121, 0x12121212, 0x21212121,
-    0x12121212, 0x21212121, 0x12121212, 0x21212121,
-    // Tile 3: Platform top
-    0x77777777, 0x78888887, 0x78888887, 0x78888887,
-    0x78888887, 0x78888887, 0x78888887, 0x77777777,
-    // Tile 4: Cloud left
-    0x00000000, 0x00000333, 0x00003333, 0x00033333,
-    0x00333333, 0x03333333, 0x00333333, 0x00000000,
-    // Tile 5: Cloud middle
-    0x00000000, 0x33333333, 0x33333333, 0x33333333,
-    0x33333333, 0x33333333, 0x33333333, 0x00000000,
-    // Tile 6: Cloud right
-    0x00000000, 0x33300000, 0x33330000, 0x33333000,
-    0x33333300, 0x33333330, 0x33333300, 0x00000000,
-    // Tile 7: Spike
-    0x00090000, 0x00990000, 0x00999000, 0x09999000,
-    0x09999900, 0x99999900, 0x99999990, 0x99999999,
-    // Tile 8: Bush
-    0x00000000, 0x00CCC000, 0x0CCCCC00, 0xCCCCCCCC,
-    0xCCCCCCCC, 0x0CCCCC00, 0x00000000, 0x00000000,
-    // Tile 9: Decorative block
-    0xAAAAAAAA, 0xA1111111, 0xA1222221, 0xA1222221,
-    0xA1222221, 0xA1222221, 0xA1111111, 0xAAAAAAAA,
-};
-
-// Level map (collision layer) - 0=empty, 1=solid, 2=spike, 3=platform
-const u8 levelCollision[MAP_HEIGHT * MAP_WIDTH] = {
-    // Row 0-7 (top - mostly empty)
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 8-11
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 12-15
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,3,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 16-19
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,2,2,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 20-23 (ground)
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 24-31 (below ground)
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-};
-
-// ============================================================
-// GAME STRUCTURES
-// ============================================================
-
-typedef enum {
-    STATE_IDLE,
-    STATE_WALK,
-    STATE_JUMP,
-    STATE_FALL,
-    STATE_FLOAT,
-    STATE_HURT,
-    STATE_INHALE,
-    STATE_DEAD
-} PlayerState;
-
+// --- Structs ---
 typedef struct {
-    int x, y;           // Fixed point position (8.8)
-    int vx, vy;         // Fixed point velocity
-    int width, height;  // Hitbox size
-    PlayerState state;
-    int facing;         // 0 = right, 1 = left
-    int onGround;
-    int health;
-    int maxHealth;
-    int floatTimer;
-    int invincible;
-    int animFrame;
-    int animTimer;
-    int inhaleTimer;
-    int hasAbility;
+    int x, y;       // Position (Fixed point)
+    int vx, vy;     // Velocity (Fixed point)
+    int width, height;
+    int facing_right;
+    OBJ_ATTR *obj;  // Pointer to OAM entry
 } Player;
 
 typedef struct {
-    int x, y;
-    int vx, vy;
-    int width, height;
-    int active;
-    int type;       // 0 = waddle, 1 = flying
-    int health;
-    int animFrame;
-    int animTimer;
-    int facing;
-} Enemy;
-
-typedef struct {
-    int x, y;
-    int vx, vy;
-    int active;
-    int lifetime;
-} Star;
-
-typedef struct {
-    int scrollX, scrollY;
-    int targetScrollX;
+    int x;          // Camera X position (Integer)
 } Camera;
 
-// ============================================================
-// GLOBAL VARIABLES
-// ============================================================
+// --- Global State ---
+Player kirby;
+Camera cam;
 
-Player player;
-Enemy enemies[MAX_ENEMIES];
-Star stars[MAX_STARS];
-Camera camera;
-int gameFrame = 0;
+// --- Graphics Generation ---
 
-OBJ_ATTR obj_buffer[128];
-OBJ_AFFINE *obj_aff_buffer = (OBJ_AFFINE*)obj_buffer;
+// Generate simple 8x8 tiles directly into VRAM
+void load_generated_assets() {
+    // 1. Palettes
+    // Background Palette
+    pal_bg_mem[0] = CLR_SKYBLUE;  // Transparent/Backdrop
+    pal_bg_mem[1] = CLR_MAGENTA;  // Debug/Error
+    pal_bg_mem[2] = RGB15(5, 20, 5); // Ground Green
+    pal_bg_mem[3] = RGB15(10, 10, 5); // Block Brown
 
-// ============================================================
-// UTILITY FUNCTIONS
-// ============================================================
+    // Sprite Palette
+    pal_obj_mem[0] = CLR_FUCHSIA; // Transparent key
+    pal_obj_mem[1] = RGB15(31, 20, 20); // Kirby Pink
+    pal_obj_mem[2] = RGB15(31, 0, 0);   // Kirby Red (Shoes)
+    pal_obj_mem[3] = RGB15(0, 0, 0);    // Black (Eyes)
 
-static inline int fixMul(int a, int b) {
-    return (a * b) >> FIX_SHIFT;
-}
+    // 2. Tile Data (4bpp)
+    TILE *bg_tiles = (TILE*)tile_mem[0];
+    TILE *obj_tiles = (TILE*)tile_mem[4];
 
-static inline int fixToInt(int f) {
-    return f >> FIX_SHIFT;
-}
+    // -- BG Tiles --
+    // Tile 0: Empty (Sky) - All 0
+    memset(&bg_tiles[TID_EMPTY], 0, sizeof(TILE));
 
-static inline int intToFix(int i) {
-    return i << FIX_SHIFT;
-}
-
-static inline int abs_val(int x) {
-    return x < 0 ? -x : x;
-}
-
-// ============================================================
-// COLLISION FUNCTIONS
-// ============================================================
-
-int getTileAt(int pixelX, int pixelY) {
-    int tileX = pixelX / TILE_SIZE;
-    int tileY = pixelY / TILE_SIZE;
-    
-    if (tileX < 0 || tileX >= MAP_WIDTH || tileY < 0 || tileY >= MAP_HEIGHT) {
-        return TILE_SOLID;
-    }
-    
-    return levelCollision[tileY * MAP_WIDTH + tileX];
-}
-
-int isSolidTile(int type) {
-    return type == TILE_SOLID || type == TILE_SPIKE;
-}
-
-int checkCollisionX(int x, int y, int width, int height, int dir) {
-    int checkX = (dir > 0) ? (x + width - 1) : x;
-    
-    for (int py = y; py < y + height; py += TILE_SIZE - 1) {
-        if (isSolidTile(getTileAt(checkX, py))) {
-            return 1;
+    // Tile 1: Ground (Solid color with texture)
+    for(int i=0; i<8; i++) {
+        for(int j=0; j<8; j++) {
+            // Simple dithering pattern
+            u32 color = ((i+j)%2 == 0) ? 2 : 2; 
+            if(i==0) color = 2; // Top border
+            bg_tiles[TID_GROUND].data[i] = (bg_tiles[TID_GROUND].data[i] & ~(0xF << (j*4))) | (color << (j*4));
         }
     }
-    if (isSolidTile(getTileAt(checkX, y + height - 1))) {
-        return 1;
-    }
-    
-    return 0;
-}
 
-int checkCollisionY(int x, int y, int width, int height, int dir) {
-    int checkY = (dir > 0) ? (y + height - 1) : y;
-    
-    for (int px = x; px < x + width; px += TILE_SIZE - 1) {
-        int tile = getTileAt(px, checkY);
-        if (dir > 0 && tile == TILE_PLATFORM && getTileAt(px, checkY - 1) != TILE_PLATFORM) {
-            return 1;
-        }
-        if (isSolidTile(tile)) {
-            return 1;
+    // Tile 2: Block (Bricks)
+    for(int i=0; i<8; i++) {
+        bg_tiles[TID_BLOCK].data[i] = 0x33333333;
+        if(i == 0 || i == 4) bg_tiles[TID_BLOCK].data[i] = 0x00000000; // Mortar lines
+    }
+
+    // -- Sprite Tiles (Kirby Placeholder - 16x16) --
+    // We need 4 tiles for a 16x16 sprite (Indices 0, 1, 32, 33 in 1D mapping or linear)
+    // To keep it simple, let's draw a ball
+    u32 kirby_color = 1;
+    for(int t=0; t<4; t++) {
+        for(int i=0; i<8; i++) {
+            obj_tiles[t].data[i] = 0x11111111; 
         }
     }
-    int tile = getTileAt(x + width - 1, checkY);
-    if (dir > 0 && tile == TILE_PLATFORM && getTileAt(x + width - 1, checkY - 1) != TILE_PLATFORM) {
-        return 1;
-    }
-    if (isSolidTile(tile)) {
-        return 1;
-    }
+    // Add simple eyes to tile 0 and 1
+    obj_tiles[0].data[2] &= 0xFFF33FFF; // Left Eye
+    obj_tiles[1].data[2] &= 0xFFF33FFF; // Right Eye
     
-    return 0;
+    // Red shoes (bottom tiles)
+    for(int i=5; i<8; i++) {
+        obj_tiles[2].data[i] = 0x22222222;
+        obj_tiles[3].data[i] = 0x22222222;
+    }
 }
 
-int checkSpike(int x, int y, int width, int height) {
-    for (int py = y; py < y + height; py += TILE_SIZE / 2) {
-        for (int px = x; px < x + width; px += TILE_SIZE / 2) {
-            if (getTileAt(px, py) == TILE_SPIKE) {
-                return 1;
+// Generate a level map
+void init_map() {
+    // Clear map
+    for(int i=0; i<MAP_WIDTH*MAP_HEIGHT; i++) map_data[i] = TID_EMPTY;
+
+    // Floor
+    for(int x=0; x<MAP_WIDTH; x++) {
+        map_data[18 * 32 + x] = TID_GROUND; // Row 18 (near bottom)
+        map_data[19 * 32 + x] = TID_GROUND; 
+    }
+
+    // Random blocks and platforms
+    for(int x=5; x<MAP_WIDTH-5; x+=4) {
+        if(x % 3 == 0) {
+            // Floating platform
+            int y = 12;
+            map_data[y * 32 + x] = TID_BLOCK;
+            map_data[y * 32 + x+1] = TID_BLOCK;
+        }
+        if (x % 7 == 0) {
+             // Wall
+             map_data[17 * 32 + x] = TID_BLOCK;
+             map_data[16 * 32 + x] = TID_BLOCK;
+        }
+    }
+
+    // Copy map to VRAM Screenblock Base 30 (entry for BG0)
+    // Note: Standard map is 32x32. We use 64x32 (Size 1), taking up 2 screenblocks (30 and 31).
+    // libtonc's se_mem is useful here.
+    u16 *sb0 = (u16*)se_mem[30];
+    u16 *sb1 = (u16*)se_mem[31];
+
+    for(int y=0; y<MAP_HEIGHT; y++) {
+        for(int x=0; x<MAP_WIDTH; x++) {
+            u16 tile_id = map_data[y*32 + x]; // Simplified access for logic
+            
+            // Write to hardware screenblocks
+            // If x < 32, write to SB 30. If x >= 32, write to SB 31 (at x-32).
+            if(x < 32) {
+                sb0[y*32 + x] = tile_id;
+            } else {
+                sb1[y*32 + (x-32)] = tile_id;
             }
         }
     }
-    return 0;
 }
 
-// ============================================================
-// PLAYER FUNCTIONS
-// ============================================================
+// --- Logic ---
 
-void initPlayer(void) {
-    player.x = intToFix(24);
-    player.y = intToFix(128);
-    player.vx = 0;
-    player.vy = 0;
-    player.width = 12;
-    player.height = 14;
-    player.state = STATE_IDLE;
-    player.facing = 0;
-    player.onGround = 0;
-    player.health = 6;
-    player.maxHealth = 6;
-    player.floatTimer = 0;
-    player.invincible = 0;
-    player.animFrame = 0;
-    player.animTimer = 0;
-    player.inhaleTimer = 0;
-    player.hasAbility = 0;
-}
-
-void hurtPlayer(void) {
-    if (player.invincible > 0 || player.state == STATE_DEAD) return;
+// Get tile ID at specific world coordinates
+u16 get_tile_at(int x, int y) {
+    int tx = x / TILE_SIZE;
+    int ty = y / TILE_SIZE;
     
-    player.health--;
-    player.invincible = 90;
-    player.vy = -JUMP_POWER / 2;
-    player.state = STATE_HURT;
+    if(tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) return TID_EMPTY;
     
-    if (player.health <= 0) {
-        player.state = STATE_DEAD;
-    }
-}
-
-void updatePlayer(void) {
-    if (player.state == STATE_DEAD) {
-        player.vy += GRAVITY;
-        player.y += player.vy;
-        return;
-    }
+    // Map data array is stored as one continuous block in logic, 
+    // though split in VRAM. We read from our RAM buffer.
+    // Our map buffer logic above was simplified: map_data is actually just a 1D array.
+    // But since we filled map_data using y*32 logic, we access it similarly.
+    // Wait, typical map logic for 64 wide is contiguous. 
+    // Let's just fix the map buffer access:
+    // Actually, for simplicity, let's read directly from VRAM to be safe regarding what we drew.
     
-    // Decrease invincibility
-    if (player.invincible > 0) {
-        player.invincible--;
-        if (player.invincible == 0 && player.state == STATE_HURT) {
-            player.state = player.onGround ? STATE_IDLE : STATE_FALL;
-        }
-    }
-    
-    // Input handling
-    int moveDir = 0;
-    
-    if (key_is_down(KEY_LEFT)) {
-        moveDir = -1;
-        player.facing = 1;
-    } else if (key_is_down(KEY_RIGHT)) {
-        moveDir = 1;
-        player.facing = 0;
-    }
-    
-    // Horizontal movement
-    if (moveDir != 0 && player.state != STATE_HURT) {
-        player.vx = moveDir * WALK_SPEED;
+    if(tx < 32) {
+        return se_mem[30][ty*32 + tx] & 0x03FF;
     } else {
-        // Friction
-        if (player.vx > 0) {
-            player.vx -= 16;
-            if (player.vx < 0) player.vx = 0;
-        } else if (player.vx < 0) {
-            player.vx += 16;
-            if (player.vx > 0) player.vx = 0;
-        }
-    }
-    
-    // Jump / Float
-    if (key_hit(KEY_A) && player.state != STATE_HURT) {
-        if (player.onGround) {
-            player.vy = -JUMP_POWER;
-            player.onGround = 0;
-            player.state = STATE_JUMP;
-        } else if (player.state != STATE_FLOAT) {
-            // Start floating
-            player.state = STATE_FLOAT;
-            player.vy = -JUMP_POWER / 3;
-            player.floatTimer = 60;
-        } else if (player.floatTimer > 0) {
-            // Continue float boost
-            player.vy = -JUMP_POWER / 3;
-            player.floatTimer--;
-        }
-    }
-    
-    // Cancel float
-    if (player.state == STATE_FLOAT && !key_is_down(KEY_A)) {
-        player.state = STATE_FALL;
-    }
-    
-    // Inhale (B button)
-    if (key_is_down(KEY_B) && player.onGround && player.state != STATE_HURT) {
-        player.state = STATE_INHALE;
-        player.inhaleTimer = 20;
-        player.vx = 0;
-    }
-    
-    // Apply gravity
-    if (player.state == STATE_FLOAT) {
-        player.vy += FLOAT_GRAVITY;
-        if (player.vy > FLOAT_FALL_MAX) player.vy = FLOAT_FALL_MAX;
-    } else {
-        player.vy += GRAVITY;
-        if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
-    }
-    
-    // Move and collide X
-    int newX = player.x + player.vx;
-    int pixelX = fixToInt(newX);
-    int pixelY = fixToInt(player.y);
-    
-    if (player.vx > 0) {
-        if (!checkCollisionX(pixelX + 2, pixelY + 1, player.width, player.height - 2, 1)) {
-            player.x = newX;
-        } else {
-            player.x = intToFix((((pixelX + 2 + player.width) / TILE_SIZE) * TILE_SIZE) - player.width - 3);
-            player.vx = 0;
-        }
-    } else if (player.vx < 0) {
-        if (!checkCollisionX(pixelX + 2, pixelY + 1, player.width, player.height - 2, -1)) {
-            player.x = newX;
-        } else {
-            player.x = intToFix(((pixelX + 2) / TILE_SIZE + 1) * TILE_SIZE - 2);
-            player.vx = 0;
-        }
-    }
-    
-    // Move and collide Y
-    int newY = player.y + player.vy;
-    pixelX = fixToInt(player.x);
-    pixelY = fixToInt(newY);
-    
-    if (player.vy > 0) {
-        if (!checkCollisionY(pixelX + 2, pixelY + 1, player.width, player.height - 2, 1)) {
-            player.y = newY;
-            player.onGround = 0;
-            if (player.state != STATE_FLOAT && player.state != STATE_HURT) {
-                player.state = STATE_FALL;
-            }
-        } else {
-            player.y = intToFix((((pixelY + 1 + player.height) / TILE_SIZE) * TILE_SIZE) - player.height - 1);
-            player.vy = 0;
-            player.onGround = 1;
-            if (player.state == STATE_FLOAT || player.state == STATE_FALL || player.state == STATE_JUMP) {
-                player.state = (moveDir != 0) ? STATE_WALK : STATE_IDLE;
-            }
-        }
-    } else if (player.vy < 0) {
-        if (!checkCollisionY(pixelX + 2, pixelY + 1, player.width, player.height - 2, -1)) {
-            player.y = newY;
-        } else {
-            player.y = intToFix(((pixelY + 1) / TILE_SIZE + 1) * TILE_SIZE - 1);
-            player.vy = 0;
-        }
-    }
-    
-    // Check spikes
-    pixelX = fixToInt(player.x);
-    pixelY = fixToInt(player.y);
-    if (checkSpike(pixelX + 2, pixelY + 1, player.width, player.height)) {
-        hurtPlayer();
-    }
-    
-    // Fall death
-    if (fixToInt(player.y) > MAP_HEIGHT * TILE_SIZE) {
-        player.health = 0;
-        player.state = STATE_DEAD;
-    }
-    
-    // Update state based on movement
-    if (player.state != STATE_HURT && player.state != STATE_FLOAT && 
-        player.state != STATE_INHALE && player.state != STATE_DEAD) {
-        if (!player.onGround) {
-            player.state = (player.vy < 0) ? STATE_JUMP : STATE_FALL;
-        } else {
-            player.state = (player.vx != 0) ? STATE_WALK : STATE_IDLE;
-        }
-    }
-    
-    // Animation
-    player.animTimer++;
-    if (player.animTimer >= 8) {
-        player.animTimer = 0;
-        player.animFrame = (player.animFrame + 1) % 4;
-    }
-    
-    // Clamp to level bounds
-    if (player.x < 0) player.x = 0;
-    if (player.x > intToFix(MAP_WIDTH * TILE_SIZE - player.width - 4)) {
-        player.x = intToFix(MAP_WIDTH * TILE_SIZE - player.width - 4);
+        return se_mem[31][ty*32 + (tx-32)] & 0x03FF;
     }
 }
 
-// ============================================================
-// ENEMY FUNCTIONS
-// ============================================================
-
-void spawnEnemy(int x, int y, int type) {
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) {
-            enemies[i].x = intToFix(x);
-            enemies[i].y = intToFix(y);
-            enemies[i].vx = -64;
-            enemies[i].vy = 0;
-            enemies[i].width = 12;
-            enemies[i].height = 12;
-            enemies[i].active = 1;
-            enemies[i].type = type;
-            enemies[i].health = 1;
-            enemies[i].animFrame = 0;
-            enemies[i].animTimer = 0;
-            enemies[i].facing = 1;
-            break;
-        }
-    }
+int is_solid(int tile) {
+    return (tile == TID_GROUND || tile == TID_BLOCK);
 }
 
-void updateEnemies(void) {
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) continue;
-        
-        Enemy *e = &enemies[i];
-        
-        // Simple AI: walk back and forth
-        e->x += e->vx;
-        e->vy += GRAVITY;
-        if (e->vy > MAX_FALL_SPEED) e->vy = MAX_FALL_SPEED;
-        e->y += e->vy;
-        
-        int px = fixToInt(e->x);
-        int py = fixToInt(e->y);
-        
-        // Ground collision
-        if (checkCollisionY(px + 2, py, e->width, e->height, 1)) {
-            e->y = intToFix(((py + e->height) / TILE_SIZE) * TILE_SIZE - e->height);
-            e->vy = 0;
-        }
-        
-        // Wall collision - turn around
-        if (e->vx > 0 && checkCollisionX(px + 2, py, e->width, e->height, 1)) {
-            e->vx = -e->vx;
-            e->facing = 1;
-        } else if (e->vx < 0 && checkCollisionX(px + 2, py, e->width, e->height, -1)) {
-            e->vx = -e->vx;
-            e->facing = 0;
-        }
-        
-        // Check edge and turn
-        int checkX = (e->vx > 0) ? px + e->width + 4 : px - 4;
-        if (!isSolidTile(getTileAt(checkX, py + e->height + 4))) {
-            e->vx = -e->vx;
-            e->facing = (e->vx > 0) ? 0 : 1;
-        }
-        
-        // Player collision
-        int playerPx = fixToInt(player.x);
-        int playerPy = fixToInt(player.y);
-        
-        if (player.state != STATE_DEAD && player.invincible == 0) {
-            if (px + e->width > playerPx + 2 && px < playerPx + player.width + 2 &&
-                py + e->height > playerPy && py < playerPy + player.height) {
-                
-                // Check if player is jumping on enemy
-                if (player.vy > 0 && playerPy + player.height < py + e->height / 2) {
-                    e->health--;
-                    player.vy = -JUMP_POWER / 2;
-                    if (e->health <= 0) {
-                        e->active = 0;
-                    }
-                } else {
-                    hurtPlayer();
-                }
-            }
-        }
-        
-        // Deactivate if too far
-        if (abs_val(px - fixToInt(player.x)) > 300) {
-            e->active = 0;
-        }
-        
-        // Animation
-        e->animTimer++;
-        if (e->animTimer >= 10) {
-            e->animTimer = 0;
-            e->animFrame = (e->animFrame + 1) % 2;
-        }
-    }
-}
-
-// ============================================================
-// STAR PROJECTILE FUNCTIONS
-// ============================================================
-
-void shootStar(int x, int y, int dir) {
-    for (int i = 0; i < MAX_STARS; i++) {
-        if (!stars[i].active) {
-            stars[i].x = intToFix(x);
-            stars[i].y = intToFix(y);
-            stars[i].vx = dir * 512;
-            stars[i].vy = 0;
-            stars[i].active = 1;
-            stars[i].lifetime = 60;
-            break;
-        }
-    }
-}
-
-void updateStars(void) {
-    for (int i = 0; i < MAX_STARS; i++) {
-        if (!stars[i].active) continue;
-        
-        stars[i].x += stars[i].vx;
-        stars[i].y += stars[i].vy;
-        stars[i].lifetime--;
-        
-        if (stars[i].lifetime <= 0) {
-            stars[i].active = 0;
-            continue;
-        }
-        
-        int px = fixToInt(stars[i].x);
-        int py = fixToInt(stars[i].y);
-        
-        // Wall collision
-        if (isSolidTile(getTileAt(px, py)) || isSolidTile(getTileAt(px + 8, py))) {
-            stars[i].active = 0;
-            continue;
-        }
-        
-        // Enemy collision
-        for (int j = 0; j < MAX_ENEMIES; j++) {
-            if (!enemies[j].active) continue;
-            
-            int ex = fixToInt(enemies[j].x);
-            int ey = fixToInt(enemies[j].y);
-            
-            if (px + 8 > ex && px < ex + enemies[j].width &&
-                py + 8 > ey && py < ey + enemies[j].height) {
-                enemies[j].health--;
-                if (enemies[j].health <= 0) {
-                    enemies[j].active = 0;
-                }
-                stars[i].active = 0;
-                break;
-            }
-        }
-    }
-}
-
-// ============================================================
-// CAMERA FUNCTIONS
-// ============================================================
-
-void updateCamera(void) {
-    int playerPixelX = fixToInt(player.x);
-    
-    camera.targetScrollX = playerPixelX - SCREEN_WIDTH / 2 + 8;
-    
-    // Smooth camera
-    int diff = camera.targetScrollX - camera.scrollX;
-    camera.scrollX += diff / 8;
-    
-    // Clamp
-    if (camera.scrollX < 0) camera.scrollX = 0;
-    if (camera.scrollX > MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH) {
-        camera.scrollX = MAP_WIDTH * TILE_SIZE - SCREEN_WIDTH;
-    }
-    
-    camera.scrollY = 0;
-}
-
-// ============================================================
-// RENDERING FUNCTIONS
-// ============================================================
-
-void loadGraphics(void) {
-    // Load sprite palette
-    memcpy(pal_obj_mem, spritePal, sizeof(spritePal));
-    
-    // Load BG palette
-    memcpy(pal_bg_mem, bgPal, sizeof(bgPal));
-    
-    // Load player sprites to VRAM (tiles 0-19 for all frames)
-    memcpy(&tile_mem[4][0], playerIdleTiles, sizeof(playerIdleTiles));
-    memcpy(&tile_mem[4][4], playerWalk1Tiles, sizeof(playerWalk1Tiles));
-    memcpy(&tile_mem[4][8], playerWalk2Tiles, sizeof(playerWalk2Tiles));
-    memcpy(&tile_mem[4][12], playerJumpTiles, sizeof(playerJumpTiles));
-    memcpy(&tile_mem[4][16], playerFloatTiles, sizeof(playerFloatTiles));
-    
-    // Load enemy sprite
-    memcpy(&tile_mem[4][20], enemyTiles, sizeof(enemyTiles));
-    
-    // Load star sprite
-    memcpy(&tile_mem[4][24], starTiles, sizeof(starTiles));
-    
-    // Load BG tiles
-    memcpy(&tile_mem[0][0], bgTiles, sizeof(bgTiles));
-}
-
-void buildBackground(void) {
-    // Build visible map
-    u16 *mapMem = (u16*)se_mem[31];
-    
-    for (int y = 0; y < 32; y++) {
-        for (int x = 0; x < 32; x++) {
-            int mapX = x;
-            int mapY = y;
-            
-            if (mapX >= MAP_WIDTH || mapY >= MAP_HEIGHT) {
-                mapMem[y * 32 + x] = 0;
-                continue;
-            }
-            
-            int tile = levelCollision[mapY * MAP_WIDTH + mapX];
-            int bgTile = 0;
-            
-            switch (tile) {
-                case TILE_EMPTY:
-                    bgTile = 0;
-                    break;
-                case TILE_SOLID:
-                    // Check if it's a surface tile
-                    if (mapY > 0 && levelCollision[(mapY - 1) * MAP_WIDTH + mapX] == TILE_EMPTY) {
-                        bgTile = 1; // Ground with grass
-                    } else {
-                        bgTile = 2; // Underground
-                    }
-                    break;
-                case TILE_SPIKE:
-                    bgTile = 7;
-                    break;
-                case TILE_PLATFORM:
-                    bgTile = 3;
-                    break;
-            }
-            
-            mapMem[y * 32 + x] = bgTile;
-        }
-    }
-}
-
-void updateBackground(void) {
-    REG_BG0HOFS = camera.scrollX;
-    REG_BG0VOFS = camera.scrollY;
-    
-    // Update map based on scroll
-    u16 *mapMem = (u16*)se_mem[31];
-    int startTileX = camera.scrollX / TILE_SIZE;
-    
-    for (int y = 0; y < 32; y++) {
-        for (int x = 0; x < 32; x++) {
-            int mapX = (startTileX + x) % MAP_WIDTH;
-            int mapY = y;
-            
-            if (mapY >= MAP_HEIGHT) {
-                mapMem[y * 32 + x] = 2;
-                continue;
-            }
-            
-            int tile = levelCollision[mapY * MAP_WIDTH + mapX];
-            int bgTile = 0;
-            
-            switch (tile) {
-                case TILE_EMPTY:
-                    // Add some clouds
-                    if (y == 3 && (mapX % 20) >= 8 && (mapX % 20) <= 10) {
-                        if ((mapX % 20) == 8) bgTile = 4;
-                        else if ((mapX % 20) == 9) bgTile = 5;
-                        else bgTile = 6;
-                    } else if (y == 5 && (mapX % 15) >= 3 && (mapX % 15) <= 5) {
-                        if ((mapX % 15) == 3) bgTile = 4;
-                        else if ((mapX % 15) == 4) bgTile = 5;
-                        else bgTile = 6;
-                    } else {
-                        bgTile = 0;
-                    }
-                    break;
-                case TILE_SOLID:
-                    if (mapY > 0 && levelCollision[(mapY - 1) * MAP_WIDTH + mapX] != TILE_SOLID) {
-                        bgTile = 1;
-                    } else {
-                        bgTile = 2;
-                    }
-                    break;
-                case TILE_SPIKE:
-                    bgTile = 7;
-                    break;
-                case TILE_PLATFORM:
-                    bgTile = 3;
-                    break;
-            }
-            
-            mapMem[y * 32 + x] = bgTile;
-        }
-    }
-}
-
-void renderSprites(void) {
-    // Hide all sprites first
-    oam_init(obj_buffer, 128);
-    
-    // Player sprite
-    int playerScreenX = fixToInt(player.x) - camera.scrollX;
-    int playerScreenY = fixToInt(player.y) - camera.scrollY;
-    
-    if (player.state != STATE_DEAD || (gameFrame % 4 < 2)) {
-        // Select animation frame based on state
-        int tileIdx = 0;
-        switch (player.state) {
-            case STATE_IDLE:
-            case STATE_HURT:
-                tileIdx = 0;
-                break;
-            case STATE_WALK:
-                tileIdx = (player.animFrame % 2 == 0) ? 4 : 8;
-                break;
-            case STATE_JUMP:
-                tileIdx = 12;
-                break;
-            case STATE_FALL:
-                tileIdx = 12;
-                break;
-            case STATE_FLOAT:
-                tileIdx = 16;
-                break;
-            case STATE_INHALE:
-                tileIdx = 0;
-                break;
-            default:
-                tileIdx = 0;
-        }
-        
-        // Invincibility flash
-        if (player.invincible > 0 && (player.invincible / 4) % 2 == 0) {
-            // Skip rendering for flash effect
-        } else {
-            u16 attr2 = ATTR2_ID(tileIdx) | ATTR2_PALBANK(0);
-            
-            obj_set_attr(&obj_buffer[SPR_PLAYER],
-                ATTR0_Y(playerScreenY) | ATTR0_SQUARE | ATTR0_4BPP,
-                ATTR1_X(playerScreenX) | ATTR1_SIZE_16 | (player.facing ? ATTR1_HFLIP : 0),
-                attr2);
-        }
-    }
-    
-    // Enemy sprites
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) {
-            obj_hide(&obj_buffer[SPR_ENEMIES + i]);
-            continue;
-        }
-        
-        int screenX = fixToInt(enemies[i].x) - camera.scrollX;
-        int screenY = fixToInt(enemies[i].y) - camera.scrollY;
-        
-        if (screenX > -16 && screenX < SCREEN_WIDTH && screenY > -16 && screenY < SCREEN_HEIGHT) {
-            obj_set_attr(&obj_buffer[SPR_ENEMIES + i],
-                ATTR0_Y(screenY) | ATTR0_SQUARE | ATTR0_4BPP,
-                ATTR1_X(screenX) | ATTR1_SIZE_16 | (enemies[i].facing ? ATTR1_HFLIP : 0),
-                ATTR2_ID(20) | ATTR2_PALBANK(0));
-        } else {
-            obj_hide(&obj_buffer[SPR_ENEMIES + i]);
-        }
-    }
-    
-    // Star sprites
-    for (int i = 0; i < MAX_STARS; i++) {
-        if (!stars[i].active) {
-            obj_hide(&obj_buffer[SPR_STARS + i]);
-            continue;
-        }
-        
-        int screenX = fixToInt(stars[i].x) - camera.scrollX;
-        int screenY = fixToInt(stars[i].y) - camera.scrollY;
-        
-        if (screenX > -8 && screenX < SCREEN_WIDTH && screenY > -8 && screenY < SCREEN_HEIGHT) {
-            obj_set_attr(&obj_buffer[SPR_STARS + i],
-                ATTR0_Y(screenY) | ATTR0_SQUARE | ATTR0_4BPP,
-                ATTR1_X(screenX) | ATTR1_SIZE_8,
-                ATTR2_ID(24) | ATTR2_PALBANK(0));
-        } else {
-            obj_hide(&obj_buffer[SPR_STARS + i]);
-        }
-    }
-    
-    // Health display (simple hearts using small squares)
-    for (int i = 0; i < player.maxHealth; i++) {
-        int hx = 8 + i * 10;
-        int hy = 8;
-        
-        u16 palbank = (i < player.health) ? 0 : 0; // Could use different palette for empty
-        int tileId = (i < player.health) ? 24 : 24;
-        
-        if (i < player.health) {
-            obj_set_attr(&obj_buffer[SPR_HUD + i],
-                ATTR0_Y(hy) | ATTR0_SQUARE | ATTR0_4BPP,
-                ATTR1_X(hx) | ATTR1_SIZE_8,
-                ATTR2_ID(tileId) | ATTR2_PALBANK(palbank));
-        } else {
-            obj_hide(&obj_buffer[SPR_HUD + i]);
-        }
-    }
-    
-    // Copy to OAM
-    oam_copy(oam_mem, obj_buffer, 128);
-}
-
-// ============================================================
-// GAME INITIALIZATION
-// ============================================================
-
-void initGame(void) {
-    // Initialize player
-    initPlayer();
-    
-    // Initialize camera
-    camera.scrollX = 0;
-    camera.scrollY = 0;
-    camera.targetScrollX = 0;
-    
-    // Clear enemies and stars
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        enemies[i].active = 0;
-    }
-    for (int i = 0; i < MAX_STARS; i++) {
-        stars[i].active = 0;
-    }
-    
-    // Spawn some initial enemies
-    spawnEnemy(100, 140, 0);
-    spawnEnemy(180, 140, 0);
-    spawnEnemy(280, 140, 0);
-    spawnEnemy(350, 50, 0);
-    spawnEnemy(420, 140, 0);
-}
-
-void gameOver(void) {
-    // Simple game over - reset after delay
-    static int deathTimer = 0;
-    deathTimer++;
-    
-    if (deathTimer > 120 || key_hit(KEY_START)) {
-        initGame();
-        deathTimer = 0;
-    }
-}
-
-// ============================================================
-// MAIN FUNCTION
-// ============================================================
-
-int main(void) {
-    // Set up display
+void init_game() {
+    // Enable BG0 and OBJ
     REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+
+    // Setup BG0
+    // CBB: 0 (Char Base Block - where tiles are)
+    // SBB: 30 (Screen Base Block - where map is)
+    // Size: 1 (64x32 tiles)
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_8BPP | BG_REG_64x32; 
+    // Wait, I used 4bpp in generated assets. Change BG_8BPP to BG_4BPP (default 0)
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_REG_64x32;
+
+    load_generated_assets();
+    init_map();
+
+    // Init Player
+    kirby.x = F(30);
+    kirby.y = F(50);
+    kirby.vx = 0;
+    kirby.vy = 0;
+    kirby.width = 14;  // Slightly smaller than 16 for better feel
+    kirby.height = 14;
+    kirby.facing_right = 1;
+
+    // Point to the first OAM entry
+    kirby.obj = &oam_mem[0];
     
-    // Set up BG0
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
+    // Init Sprite visual
+    obj_set_attr(kirby.obj, 
+        ATTR0_SQUARE | ATTR0_4BPP, // Shape, Colors
+        ATTR1_SIZE_16,             // Size
+        ATTR2_PALBANK(0) | 0       // Palette 0, Tile Index 0
+    );
+
+    cam.x = 0;
+}
+
+void update_physics() {
+    // 1. Input -> Velocity
+    // Horizontal
+    if (key_is_down(KEY_LEFT)) {
+        kirby.vx = -MOVE_SPEED;
+        kirby.facing_right = 0;
+    } else if (key_is_down(KEY_RIGHT)) {
+        kirby.vx = MOVE_SPEED;
+        kirby.facing_right = 1;
+    } else {
+        // Simple friction
+        if (kirby.vx > 0) kirby.vx -= FRICTION;
+        if (kirby.vx < 0) kirby.vx += FRICTION;
+        if (abs(kirby.vx) < FRICTION) kirby.vx = 0;
+    }
+
+    // Vertical (Gravity)
+    kirby.vy += GRAVITY;
+
+    // Jumping / Floating
+    if (key_hit(KEY_A)) {
+        // Check if grounded to jump, OR allow floating if in air
+        // For Kirby style: always apply upward force, but capped
+        kirby.vy = -JUMP_FORCE; 
+    }
+
+    // --- Collision ---
     
-    // Load all graphics
-    loadGraphics();
+    // Horizontal Collision
+    int next_x = kirby.x + kirby.vx;
+    int pixel_x = I(next_x);
+    int pixel_y = I(kirby.y);
     
-    // Build initial background
-    buildBackground();
+    // Check Left/Right edges
+    if (kirby.vx < 0) { // Moving Left
+        if (is_solid(get_tile_at(pixel_x, pixel_y)) || 
+            is_solid(get_tile_at(pixel_x, pixel_y + kirby.height))) {
+            kirby.vx = 0;
+            next_x = kirby.x; // Cancel move
+        }
+    } else if (kirby.vx > 0) { // Moving Right
+        if (is_solid(get_tile_at(pixel_x + kirby.width, pixel_y)) || 
+            is_solid(get_tile_at(pixel_x + kirby.width, pixel_y + kirby.height))) {
+            kirby.vx = 0;
+            next_x = kirby.x;
+        }
+    }
+    kirby.x = next_x;
+
+    // Vertical Collision
+    int next_y = kirby.y + kirby.vy;
+    pixel_x = I(kirby.x);
+    int check_y_top = I(next_y);
+    int check_y_bottom = I(next_y) + kirby.height;
+
+    if (kirby.vy < 0) { // Moving Up
+        if (is_solid(get_tile_at(pixel_x + 2, check_y_top)) || 
+            is_solid(get_tile_at(pixel_x + kirby.width - 2, check_y_top))) {
+            kirby.vy = 0;
+            next_y = kirby.y;
+        }
+    } else if (kirby.vy > 0) { // Moving Down
+        if (is_solid(get_tile_at(pixel_x + 2, check_y_bottom)) || 
+            is_solid(get_tile_at(pixel_x + kirby.width - 2, check_y_bottom))) {
+            kirby.vy = 0;
+            // Snap to grid
+            next_y = F((check_y_bottom / 8) * 8 - kirby.height - 1); 
+            // Wait, simple snap:
+            next_y = F(check_y_bottom / 8 * 8 - kirby.height);
+            // This is "Grounded"
+        }
+    }
     
-    // Initialize game
-    initGame();
+    // Floor boundary
+    if (I(next_y) > (MAP_HEIGHT * 8)) {
+        kirby.y = 0; // Respawn top
+        kirby.vy = 0;
+    } else {
+        kirby.y = next_y;
+    }
+}
+
+void update_camera() {
+    int px = I(kirby.x);
     
-    // Main game loop
-    while (1) {
-        // Wait for VBlank
+    // Try to keep player in center
+    int target_cam_x = px - (SCREEN_WIDTH / 2);
+    
+    // Clamping
+    if (target_cam_x < 0) target_cam_x = 0;
+    if (target_cam_x > (MAP_WIDTH * 8) - SCREEN_WIDTH) target_cam_x = (MAP_WIDTH * 8) - SCREEN_WIDTH;
+
+    cam.x = target_cam_x;
+
+    // Update Hardware Registers
+    REG_BG0HOFS = cam.x;
+}
+
+void update_visuals() {
+    // Screen coords
+    int sx = I(kirby.x) - cam.x;
+    int sy = I(kirby.y);
+
+    // Update OAM
+    obj_set_pos(kirby.obj, sx, sy);
+    
+    // Flip sprite if facing left
+    if (!kirby.facing_right) {
+        kirby.obj->attr1 |= ATTR1_HFLIP;
+    } else {
+        kirby.obj->attr1 &= ~ATTR1_HFLIP;
+    }
+
+    // Simple Animation: Squish when jumping
+    // We only have one frame, so we change nothing here, 
+    // but this is where you'd change tile index based on vy.
+}
+
+// --- Main ---
+
+int main() {
+    init_game();
+
+    while(1) {
+        // VSync
         vid_vsync();
         
-        // Poll input
+        // Input
         key_poll();
+
+        // Game Logic
+        update_physics();
+        update_camera();
         
-        // Game logic
-        if (player.state == STATE_DEAD) {
-            gameOver();
-        } else {
-            updatePlayer();
-            updateEnemies();
-            updateStars();
-            updateCamera();
-            
-            // Shoot star with R button
-            if (key_hit(KEY_R)) {
-                int dir = player.facing ? -1 : 1;
-                shootStar(fixToInt(player.x) + 4, fixToInt(player.y) + 4, dir);
-            }
-            
-            // Respawn enemies periodically
-            if (gameFrame % 180 == 0) {
-                int spawnX = fixToInt(player.x) + (player.facing ? -200 : 200);
-                if (spawnX > 0 && spawnX < MAP_WIDTH * TILE_SIZE - 20) {
-                    spawnEnemy(spawnX, 100, 0);
-                }
-            }
-        }
+        // Render
+        update_visuals();
         
-        // Rendering
-        updateBackground();
-        renderSprites();
-        
-        gameFrame++;
+        // Flush OAM cache to VRAM
+        oam_copy(oam_mem, oam_mem, 1);
     }
-    
+
     return 0;
 }
