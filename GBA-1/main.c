@@ -933,23 +933,23 @@ int main(void)
 			// Character picker (with repeat)
 			int charset_len = (int)strlen(g_charset);
 
-			if(key_repeat(KEY_UP, 12, 3, &t_up))
+			if(key_repeat(KEY_UP))
 			{
 				g_sel_idx = (g_sel_idx + 1) % charset_len;
 				dirty = true;
 			}
-			if(key_repeat(KEY_DOWN, 12, 3, &t_dn))
+			if(key_repeat(KEY_DOWN))
 			{
 				g_sel_idx = (g_sel_idx - 1);
 				if(g_sel_idx < 0) g_sel_idx = charset_len-1;
 				dirty = true;
 			}
-			if(key_repeat(KEY_RIGHT, 12, 3, &t_rt))
+			if(key_repeat(KEY_RIGHT))
 			{
 				g_sel_idx = (g_sel_idx + 5) % charset_len;
 				dirty = true;
 			}
-			if(key_repeat(KEY_LEFT, 12, 3, &t_lt))
+			if(key_repeat(KEY_LEFT))
 			{
 				g_sel_idx = (g_sel_idx - 5);
 				while(g_sel_idx < 0) g_sel_idx += charset_len;
