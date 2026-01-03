@@ -23,6 +23,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define RGB15_C_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // ------------------------------------------------------------
 // Maxmod single-file embedding hook
 // ------------------------------------------------------------
@@ -132,12 +134,12 @@ static const u32 bg_tiles_4bpp[3 * 8] =
 
 static const u16 bg_pal[16] =
 {
-    RGB15(0,0,0),       // 0
-    RGB15(10,10,10),    // 1 fill
-    RGB15(24,24,24),    // 2 border
-    RGB15(0,10,20),     // 3 door center
-    RGB15(0,20,31),     // 4 door border
-    RGB15(31,31,31),    // 5
+    RGB15_C(0,0,0),       // 0
+    RGB15_C(10,10,10),    // 1 fill
+    RGB15_C(24,24,24),    // 2 border
+    RGB15_C(0,10,20),     // 3 door center
+    RGB15_C(0,20,31),     // 4 door border
+    RGB15_C(31,31,31),    // 5
     0,0,0,0,0,0,0,0,0,0
 };
 
@@ -250,15 +252,15 @@ static const u32 spr_enemy_4bpp[32] =
 
 static const u16 obj_pal[16] =
 {
-    RGB15(0,0,0),       // 0 transparent
-    RGB15(31,31,31),    // 1 player fill
-    RGB15(31,0,0),      // 2 player outline
-    RGB15(31,16,0),     // 3 accent
-    RGB15(0,0,0),       // 4 unused
-    RGB15(31,31,0),     // 5 bullet
-    RGB15(0,31,0),      // 6 enemy fill
-    RGB15(0,0,31),      // 7 enemy outline
-    RGB15(31,0,31),     // 8 enemy eye
+    RGB15_C(0,0,0),       // 0 transparent
+    RGB15_C(31,31,31),    // 1 player fill
+    RGB15_C(31,0,0),      // 2 player outline
+    RGB15_C(31,16,0),     // 3 accent
+    RGB15_C(0,0,0),       // 4 unused
+    RGB15_C(31,31,0),     // 5 bullet
+    RGB15_C(0,31,0),      // 6 enemy fill
+    RGB15_C(0,0,31),      // 7 enemy outline
+    RGB15_C(31,0,31),     // 8 enemy eye
     0,0,0,0,0,0,0
 };
 
