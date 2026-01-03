@@ -801,7 +801,7 @@ void updateEnemies(void) {
             case ENEMY_FLYER:
                 // Sine wave movement
                 e->x += e->vx;
-                e->y = int2fx(fx2int(e->y)) + fxsin(game.frameCount * 128) / 32;
+                e->y = int2fx(fx2int(e->y)) + lu_sin(game.frameCount * 128) / 32;
                 
                 // Bounce off walls
                 {
