@@ -40,6 +40,8 @@
 #define FIX_MUL(a,b)    (((a) * (b)) >> FIX_SHIFT)
 #define FIX_DIV(a,b)    (((a) << FIX_SHIFT) / (b))
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 //============================================================================
 // TYPES
 //============================================================================
@@ -155,11 +157,11 @@ static const u8 tex_patterns[5][8] = {
 
 // Base colors for each wall type (15-bit RGB)
 static const u16 wall_colors[5][2] = {
-    {RGB15(20, 8, 4), RGB15(14, 5, 2)},    // Brick: red-brown
-    {RGB15(18, 18, 18), RGB15(10, 10, 10)}, // Stone: gray
-    {RGB15(12, 12, 20), RGB15(6, 6, 14)},   // Metal: blue-gray
-    {RGB15(8, 20, 8), RGB15(4, 12, 4)},     // Tech: green
-    {RGB15(20, 14, 6), RGB15(14, 10, 4)}    // Wood: brown
+    {RGB15_C(20, 8, 4), RGB15_C(14, 5, 2)},    // Brick: red-brown
+    {RGB15_C(18, 18, 18), RGB15_C(10, 10, 10)}, // Stone: gray
+    {RGB15_C(12, 12, 20), RGB15_C(6, 6, 14)},   // Metal: blue-gray
+    {RGB15_C(8, 20, 8), RGB15_C(4, 12, 4)},     // Tech: green
+    {RGB15_C(20, 14, 6), RGB15_C(14, 10, 4)}    // Wood: brown
 };
 
 //============================================================================
