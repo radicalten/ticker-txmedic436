@@ -1,215 +1,291 @@
-// outrun_like.c
-// Simple pseudo-3D “into the screen” racer demo for GBA using tonc.
-// Mode 3 bitmap; draws a curved road and a simple car sprite-like rectangle.
+// outrunish.c - single-file pseudo-3D "into the screen" racer (OutRun-ish) for GBA using tonc
+// Controls:
+//   Left/Right: steer
+//   A: accelerate
+//   B: brake
+// Notes:
+//   - Mode 4 (240x160, 8bpp paletted) with page flipping
+//   - Procedural rendering: sky gradient + perspective road + stripes + simple "car" block
 
 #include <tonc.h>
-#include <math.h>
 
-#define SCREEN_W 240
-#define SCREEN_H 160
+// ----------------------------- Mode 4 helpers -----------------------------
+// In Mode 4: 240x160 pixels, 2 pixels packed per u16, 120 u16 per scanline.
 
-#define HORIZON_Y 40
-#define MAX_ROAD_HALF (SCREEN_W/2 - 8)
-
-// Convenience pointer to Mode 3 framebuffer
-#define VRAM16 ((u16*)MEM_VRAM)
-
-// Colors
-#define CLR_SKY        RGB15(8, 12, 31)
-#define CLR_GRASS      RGB15(0, 20, 0)
-#define CLR_ROAD       RGB15(10, 10, 10)
-#define CLR_RUMBLE1    RGB15(31, 31, 31)
-#define CLR_RUMBLE2    RGB15(31, 0, 0)
-#define CLR_CENTERLINE RGB15(31, 31, 0)
-#define CLR_CAR_BODY   RGB15(31, 0, 0)
-#define CLR_CAR_HIGHL  RGB15(31, 16, 16)
-
-// Draw a horizontal span of pixels y, from x0..x1 inclusive
-static inline void draw_span(int y, int x0, int x1, u16 clr)
+static inline u16* m4_backbuffer(void)
 {
-    if(y < 0 || y >= SCREEN_H)
-        return;
-
-    if(x0 < 0) x0 = 0;
-    if(x1 >= SCREEN_W) x1 = SCREEN_W - 1;
-    if(x0 > x1) return;
-
-    u16 *dst = &VRAM16[y*SCREEN_W + x0];
-    for(int x=x0; x<=x1; x++)
-        *dst++ = clr;
+	// When DCNT_PAGE is set, page 1 is visible at 0x600A000 and page 0 is backbuffer.
+	// When DCNT_PAGE is clear, page 0 is visible and page 1 is backbuffer.
+	return (REG_DISPCNT & DCNT_PAGE) ? (u16*)0x6000000 : (u16*)0x600A000;
 }
 
-// Clear screen to sky/grass background
-static void draw_background(void)
+static inline void m4_flip(void)
 {
-    // Sky
-    for(int y=0; y<HORIZON_Y; y++)
-    {
-        u16 *dst = &VRAM16[y*SCREEN_W];
-        for(int x=0; x<SCREEN_W; x++)
-            *dst++ = CLR_SKY;
-    }
-
-    // Ground (grass)
-    for(int y=HORIZON_Y; y<SCREEN_H; y++)
-    {
-        u16 *dst = &VRAM16[y*SCREEN_W];
-        for(int x=0; x<SCREEN_W; x++)
-            *dst++ = CLR_GRASS;
-    }
+	REG_DISPCNT ^= DCNT_PAGE;
 }
 
-// Very simple pseudo-3D road renderer
-static void draw_road(float scrollZ)
+static inline int clampi(int v, int lo, int hi)
 {
-    for(int y=HORIZON_Y; y<SCREEN_H; y++)
-    {
-        // Perspective factor: 0 at horizon, 1 at bottom
-        float p = (float)(y - HORIZON_Y) / (float)(SCREEN_H - HORIZON_Y);
-        if(p < 0.01f) p = 0.01f;
-
-        // Approximate distance along the road for this scanline
-        float z = scrollZ + (SCREEN_H - y);
-
-        // Curvature as a function of distance
-        float curve =
-            sinf(z * 0.035f) * 0.8f +
-            sinf(z * 0.012f) * 0.4f;
-
-        // Scale curvature; stronger near the bottom of the screen
-        float curveScale = p * p;
-        int   centerX    = SCREEN_W/2 + (int)(curve * 80.0f * curveScale);
-
-        // Perspective road width
-        int roadHalf = (int)(p * MAX_ROAD_HALF);
-        if(roadHalf < 10) roadHalf = 10;
-
-        int roadLeft  = centerX - roadHalf;
-        int roadRight = centerX + roadHalf;
-
-        if(roadLeft  < 0)           roadLeft  = 0;
-        if(roadRight >= SCREEN_W)   roadRight = SCREEN_W-1;
-
-        int rumbleWidth = roadHalf / 4;
-        if(rumbleWidth < 2) rumbleWidth = 2;
-
-        int leftRumbleStart   = roadLeft;
-        int leftRumbleEnd     = roadLeft + rumbleWidth;
-        int rightRumbleStart  = roadRight - rumbleWidth;
-        int rightRumbleEnd    = roadRight;
-
-        if(leftRumbleEnd   > rightRumbleStart)  leftRumbleEnd   = rightRumbleStart;
-        if(rightRumbleEnd  < leftRumbleStart)   rightRumbleEnd  = leftRumbleStart;
-
-        // Alternate rumble strip colors based on distance
-        int stripeIndex = ((int)z / 4) & 1;
-        u16 rumbleClr   = stripeIndex ? CLR_RUMBLE1 : CLR_RUMBLE2;
-
-        // Road body color, slightly shaded by distance
-        int shade = 10 + (int)(5.0f * (1.0f - p));
-        if(shade > 15) shade = 15;
-        u16 roadClr = RGB15(shade, shade, shade);
-
-        // Left rumble strip
-        draw_span(y, leftRumbleStart, leftRumbleEnd, rumbleClr);
-        // Right rumble strip
-        draw_span(y, rightRumbleStart, rightRumbleEnd, rumbleClr);
-
-        // Road interior
-        draw_span(y, leftRumbleEnd+1, rightRumbleStart-1, roadClr);
-
-        // Center dashed line
-        int centerStripeHalf = roadHalf / 16;
-        if(centerStripeHalf < 1) centerStripeHalf = 1;
-
-        // Dashed pattern along Z
-        if( ((int)(z / 8)) & 1 )
-        {
-            int stripeLeft  = centerX - centerStripeHalf;
-            int stripeRight = centerX + centerStripeHalf;
-
-            if(stripeLeft  < leftRumbleEnd+1)    stripeLeft  = leftRumbleEnd+1;
-            if(stripeRight > rightRumbleStart-1) stripeRight = rightRumbleStart-1;
-
-            draw_span(y, stripeLeft, stripeRight, CLR_CENTERLINE);
-        }
-    }
+	if(v < lo) return lo;
+	if(v > hi) return hi;
+	return v;
 }
 
-// Simple rectangle "car" at bottom of the screen
-static void draw_car(float playerX)
+static inline void m4_plot(u16* dstBase, int x, int y, u8 clrid)
 {
-    int carWidth  = 32;
-    int carHeight = 20;
-    int carY      = SCREEN_H - carHeight - 6;
+	if((unsigned)x >= 240u || (unsigned)y >= 160u) return;
 
-    // Map playerX in [-1,1] to on-screen offset
-    int maxOffset = SCREEN_W/2 - carWidth/2 - 6;
-    if(maxOffset < 8) maxOffset = 8;
+	u16* dst = dstBase + y*120 + (x>>1);
+	u16 px = *dst;
 
-    int carCenterX = SCREEN_W/2 + (int)(playerX * (float)maxOffset);
-    int carX       = carCenterX - carWidth/2;
+	if(x & 1)  px = (px & 0x00FF) | ((u16)clrid<<8);
+	else       px = (px & 0xFF00) | (u16)clrid;
 
-    if(carX < 0) carX = 0;
-    if(carX + carWidth >= SCREEN_W)
-        carX = SCREEN_W - carWidth - 1;
-
-    // Simple rectangular car with a lighter mid stripe
-    for(int y=0; y<carHeight; y++)
-    {
-        int yy = carY + y;
-        u16 bodyClr = CLR_CAR_BODY;
-
-        // Slight highlight around the middle
-        if(y > 4 && y < 10)
-            bodyClr = CLR_CAR_HIGHL;
-
-        u16 *dst = &VRAM16[yy*SCREEN_W + carX];
-        for(int x=0; x<carWidth; x++)
-            *dst++ = bodyClr;
-    }
+	*dst = px;
 }
 
+static inline void m4_hline(u16* dstBase, int y, int x1, int x2, u8 clrid)
+{
+	if((unsigned)y >= 160u) return;
+	if(x1 > x2) { int t=x1; x1=x2; x2=t; }
+
+	if(x2 < 0 || x1 > 239) return;
+	x1 = clampi(x1, 0, 239);
+	x2 = clampi(x2, 0, 239);
+
+	u16* dst = dstBase + y*120 + (x1>>1);
+
+	// handle first odd pixel
+	if(x1 & 1)
+	{
+		u16 px = *dst;
+		px = (px & 0x00FF) | ((u16)clrid<<8);
+		*dst++ = px;
+		x1++;
+		if(x1 > x2) return;
+	}
+
+	// now x1 is even
+	int n = x2 - x1 + 1;
+	u16 pack = (u16)clrid | ((u16)clrid<<8);
+
+	int halfwords = n>>1; // pairs
+	for(int i=0; i<halfwords; i++)
+		dst[i] = pack;
+
+	dst += halfwords;
+
+	// handle last dangling pixel
+	if(n & 1)
+	{
+		u16 px = *dst;
+		px = (px & 0xFF00) | (u16)clrid; // even pixel is low byte
+		*dst = px;
+	}
+}
+
+static inline void m4_rect(u16* dstBase, int x, int y, int w, int h, u8 clrid)
+{
+	if(w <= 0 || h <= 0) return;
+	for(int iy=0; iy<h; iy++)
+		m4_hline(dstBase, y+iy, x, x+w-1, clrid);
+}
+
+// ------------------------------ Palette IDs ------------------------------
+enum
+{
+	C_BLACK = 0,
+
+	// sky gradient (8 steps)
+	C_SKY0 = 1, C_SKY1, C_SKY2, C_SKY3, C_SKY4, C_SKY5, C_SKY6, C_SKY7,
+
+	// grass
+	C_GRASS_D = 16,
+	C_GRASS_L = 17,
+
+	// road
+	C_ROAD_D = 24,
+	C_ROAD_L = 25,
+
+	// rumble
+	C_RUMBLE_R = 32,
+	C_RUMBLE_W = 33,
+
+	// markings
+	C_MARK = 40,
+
+	// car
+	C_CAR = 48,
+	C_CAR_D = 49,
+};
+
+// ------------------------------ Rendering ------------------------------
+static void init_palette(void)
+{
+	// Background palette for Mode 4
+	pal_bg_mem[C_BLACK] = RGB15(0,0,0);
+
+	// Sky gradient (dark -> bright)
+	pal_bg_mem[C_SKY0] = RGB15( 2, 4, 10);
+	pal_bg_mem[C_SKY1] = RGB15( 3, 6, 14);
+	pal_bg_mem[C_SKY2] = RGB15( 4, 8, 18);
+	pal_bg_mem[C_SKY3] = RGB15( 6,10, 22);
+	pal_bg_mem[C_SKY4] = RGB15( 8,12, 26);
+	pal_bg_mem[C_SKY5] = RGB15(10,14, 28);
+	pal_bg_mem[C_SKY6] = RGB15(12,16, 30);
+	pal_bg_mem[C_SKY7] = RGB15(14,18, 31);
+
+	// Grass + road
+	pal_bg_mem[C_GRASS_D] = RGB15(2, 10, 2);
+	pal_bg_mem[C_GRASS_L] = RGB15(4, 15, 4);
+
+	pal_bg_mem[C_ROAD_D]  = RGB15(5, 5, 6);
+	pal_bg_mem[C_ROAD_L]  = RGB15(8, 8, 9);
+
+	// Rumble + markings
+	pal_bg_mem[C_RUMBLE_R] = RGB15(27, 3, 3);
+	pal_bg_mem[C_RUMBLE_W] = RGB15(28,28,28);
+	pal_bg_mem[C_MARK]     = RGB15(31,31,31);
+
+	// Car
+	pal_bg_mem[C_CAR]   = RGB15(31, 2, 2);
+	pal_bg_mem[C_CAR_D] = RGB15(18, 1, 1);
+}
+
+static void draw_scene(u16* bb, int horizon, int playerX, u32 scroll, u16 curvePhase)
+{
+	// ----- Sky -----
+	for(int y=0; y<horizon; y++)
+	{
+		// 8-step gradient
+		int idx = (y * 8) / horizon;           // 0..7
+		u8 sky = (u8)(C_SKY0 + idx);
+		m4_hline(bb, y, 0, 239, sky);
+	}
+
+	// ----- Road -----
+	const int maxZ = 159 - horizon;          // depth in scanlines
+	const int roadMinHalf = 10;              // near horizon
+	const int roadMaxHalf = 130;             // bottom
+	const int rumbleW = 3;
+
+	// Curve in pixels (sin LUT in tonc: lu_sin() returns approx [-32767..32767])
+	// Keep it modest so it doesn't fly offscreen.
+	s16 s = lu_sin(curvePhase);
+	int curvePix = (s * 55) / 32767;         // about [-55..55]
+
+	for(int y=horizon; y<160; y++)
+	{
+		int z = y - horizon;                  // 0..maxZ
+		// width grows with z
+		int halfW = roadMinHalf + (z * (roadMaxHalf - roadMinHalf)) / maxZ;
+
+		// shift grows with z (stronger curve near bottom)
+		int shift = (curvePix * z) / maxZ;
+
+		int center = 120 + playerX + shift;
+		int left   = center - halfW;
+		int right  = center + halfW;
+
+		// Animated banding based on "scroll" + depth
+		// (tweak these >> values to change stripe sizes)
+		u32 v = (scroll >> 8) + (u32)(z*6);
+
+		u8 grass = (v & 0x10) ? C_GRASS_L : C_GRASS_D;
+		u8 road  = (v & 0x08) ? C_ROAD_L  : C_ROAD_D;
+		u8 rumble= (v & 0x08) ? C_RUMBLE_W: C_RUMBLE_R;
+
+		// Fill full line with grass, then paint road on top.
+		m4_hline(bb, y, 0, 239, grass);
+		m4_hline(bb, y, left, right, road);
+
+		// Rumble strips
+		m4_hline(bb, y, left, left+rumbleW-1, rumble);
+		m4_hline(bb, y, right-rumbleW+1, right, rumble);
+
+		// Dashed center line (only when road is wide enough)
+		if(halfW > 18)
+		{
+			// dash pattern
+			if(((v >> 1) & 0x0F) < 6)
+				m4_hline(bb, y, center-1, center+1, C_MARK);
+		}
+	}
+
+	// ----- Simple "car" block at bottom -----
+	// (Drawn last so it sits on top.)
+	int carY = 132;
+	int carX = clampi(120 + playerX - 12, 0, 240-24);
+	m4_rect(bb, carX, carY,     24, 18, C_CAR);
+	m4_rect(bb, carX, carY+12,  24,  6, C_CAR_D);   // darker "bumper"
+	m4_rect(bb, carX+4, carY+4,  6,  6, C_MARK);    // simple "headlights"
+	m4_rect(bb, carX+14,carY+4,  6,  6, C_MARK);
+}
+
+// -------------------------------- Main --------------------------------
 int main(void)
 {
-    // Mode 3, BG2 on
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+	irq_init(NULL);
+	irq_add(II_VBLANK, NULL);
 
-    float scrollZ = 0.0f;
-    float speed   = 1.5f;   // world units per frame
-    float playerX = 0.0f;   // -1.0 (left) .. +1.0 (right)
+	REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
 
-    while(1)
-    {
-        vid_vsync();
+	init_palette();
 
-        // Input (use tonc's key constants, read directly from REG_KEYINPUT)
-        u16 keys = ~REG_KEYINPUT & KEY_MASK;
+	// Simulation state
+	int horizon = 48;
 
-        if(keys & KEY_LEFT)
-            playerX -= 0.04f;
-        if(keys & KEY_RIGHT)
-            playerX += 0.04f;
+	int playerX = 0;          // camera/player lateral offset (pixels)
+	s32 speed   = 0;          // 8.8 fixed
+	u32 scroll  = 0;          // accumulates speed for animation
 
-        if(keys & KEY_UP)
-            speed += 0.03f;
-        if(keys & KEY_DOWN)
-            speed -= 0.03f;
+	u16 curvePhase = 0;
 
-        // Clamp values
-        if(playerX < -1.0f) playerX = -1.0f;
-        if(playerX >  1.0f) playerX =  1.0f;
+	// Tuning
+	const s32 SPD_MAX = 7<<8;
+	const s32 ACC     = 10;   // per frame
+	const s32 BRAKE   = 22;
+	const s32 DRAG    = 6;
 
-        if(speed < 0.5f) speed = 0.5f;
-        if(speed > 4.0f) speed = 4.0f;
+	while(1)
+	{
+		key_poll();
 
-        scrollZ += speed;
+		// --- Speed control ---
+		if(key_is_down(KEY_A)) speed += ACC;
+		else                   speed -= DRAG;
 
-        // Render frame
-        draw_background();
-        draw_road(scrollZ);
-        draw_car(playerX);
-    }
+		if(key_is_down(KEY_B)) speed -= BRAKE;
 
-    return 0;
+		speed = clampi(speed, 0, SPD_MAX);
+
+		// --- Steering (stronger as you go faster) ---
+		int steer = 0;
+		if(key_is_down(KEY_LEFT))  steer -= 1;
+		if(key_is_down(KEY_RIGHT)) steer += 1;
+
+		// Pixels/frame-ish steering, scaled by speed
+		playerX += steer * (1 + (speed >> 9));
+		playerX = clampi(playerX, -90, 90);
+
+		// Auto-centering a bit when not steering
+		if(steer == 0)
+			playerX = (playerX * 15) / 16;
+
+		// --- Animate road movement ---
+		scroll += (u32)speed;
+
+		// --- Animate curve (also tied to speed so it "flows") ---
+		curvePhase += (u16)(200 + (speed >> 1));
+
+		// Render to backbuffer, then flip during VBlank
+		u16* bb = m4_backbuffer();
+		draw_scene(bb, horizon, playerX, scroll, curvePhase);
+
+		VBlankIntrWait();
+		m4_flip();
+	}
+
+	// not reached
+	return 0;
 }
