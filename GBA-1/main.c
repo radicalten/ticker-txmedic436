@@ -1,375 +1,325 @@
-// racer.c - single-file top-down-ish pseudo-3D racer for GBA (Mode 3) using tonc
+// ---------------------------------------------------------------------------
+// Simple top-down single-screen racing demo for GBA using tonc (Mode 3).
 //
-// Build idea (devkitARM + tonc):
-//   arm-none-eabi-gcc racer.c -mthumb-interwork -mthumb -O2 -specs=gba.specs -ltonc -o racer.elf
-//   arm-none-eabi-objcopy -O binary racer.elf racer.gba
+// Controls:
+//   D-Pad Up    = accelerate
+//   D-Pad Down  = reverse / brake
+//   D-Pad Left  = steer left
+//   D-Pad Right = steer right
 //
-// Notes:
-// - Uses Mode 3 bitmap drawing (no external art/assets).
-// - “Road” is rendered with a simple perspective + changing curve.
-// - Car steers left/right, A accelerates, B brakes, SELECT resets.
+// Build: use a typical tonc/devkitARM setup, e.g. link with -ltonc -lm
+// ---------------------------------------------------------------------------
 
 #include <tonc.h>
+#include <math.h>
+#include <stdbool.h>
+
+// ---------------------------------------------------------------------------
+// Constants and configuration
+// ---------------------------------------------------------------------------
 
 #define SCREEN_W 240
 #define SCREEN_H 160
 
-// ---------- tiny helpers (no dependencies beyond tonc types/regs) ----------
+// Track layout (all in screen coordinates)
+#define TRACK_OUTER_LEFT    20
+#define TRACK_OUTER_RIGHT   220
+#define TRACK_OUTER_TOP     10
+#define TRACK_OUTER_BOTTOM  150
 
-static inline int clampi(int v, int lo, int hi)
+#define TRACK_INNER_LEFT    60
+#define TRACK_INNER_RIGHT   180
+#define TRACK_INNER_TOP     40
+#define TRACK_INNER_BOTTOM  120
+
+// Car physics
+#define CAR_ACCEL       0.08f      // acceleration per frame when holding UP
+#define CAR_REVERSE     0.06f      // reverse / braking per frame when holding DOWN
+#define CAR_FRICTION    0.02f      // passive slowdown per frame
+#define CAR_MAX_SPEED   2.5f       // max forward speed (pixels/frame)
+#define CAR_MAX_REVERSE 1.2f       // max reverse speed (pixels/frame)
+#define CAR_TURN_SPEED  0.06f      // radians per frame when steering
+
+#define PI_F 3.1415926f
+
+// Colors (Mode 3, 15-bit RGB)
+#define CLR_GRASS   RGB15(0,12,0)
+#define CLR_ROAD    RGB15(10,10,10)
+#define CLR_BORDER  RGB15(20,20,20)
+#define CLR_LINE    RGB15(31,31,31)
+#define CLR_CAR     RGB15(31,0,0)
+#define CLR_CAR_NOSE RGB15(31,31,0)
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+typedef struct
 {
-	if(v < lo) return lo;
-	if(v > hi) return hi;
-	return v;
+    float x, y;    // position (center in pixels)
+    float speed;   // scalar speed (pixels per frame, signed: forward=+)
+    float angle;   // radians, 0=right, pi/2=down
+} Car;
+
+// ---------------------------------------------------------------------------
+// Drawing helpers (Mode 3)
+// ---------------------------------------------------------------------------
+
+static inline void m3_plot_safe(int x, int y, COLOR clr)
+{
+    if(x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H)
+        return;
+    vid_mem[y * SCREEN_W + x] = clr;
 }
 
-static inline void vsync(void)
+// Inclusive rectangle (x1,y1) .. (x2,y2)
+static void m3_rect_fill(int x1, int y1, int x2, int y2, COLOR clr)
 {
-	while(REG_VCOUNT >= 160) { }
-	while(REG_VCOUNT < 160)  { }
+    int x, y;
+
+    if(x1 > x2) { int t = x1; x1 = x2; x2 = t; }
+    if(y1 > y2) { int t = y1; y1 = y2; y2 = t; }
+
+    if(x1 < 0) x1 = 0;
+    if(y1 < 0) y1 = 0;
+    if(x2 >= SCREEN_W) x2 = SCREEN_W - 1;
+    if(y2 >= SCREEN_H) y2 = SCREEN_H - 1;
+
+    for(y = y1; y <= y2; y++)
+    {
+        u16 *row = &vid_mem[y * SCREEN_W];
+        for(x = x1; x <= x2; x++)
+            row[x] = clr;
+    }
 }
 
-static inline u16 key_now(void)
+// Simple 1-pixel-wide vertical line
+static void m3_vline(int x, int y1, int y2, COLOR clr)
 {
-	// REG_KEYS: 0 = pressed, 1 = released
-	return (~REG_KEYS) & KEY_MASK;
+    int y;
+    if(x < 0 || x >= SCREEN_W)
+        return;
+    if(y1 > y2) { int t = y1; y1 = y2; y2 = t; }
+    if(y1 < 0) y1 = 0;
+    if(y2 >= SCREEN_H) y2 = SCREEN_H - 1;
+
+    for(y = y1; y <= y2; y++)
+        vid_mem[y * SCREEN_W + x] = clr;
 }
 
-static u32 g_rng = 0x1234567;
-
-static inline u32 rng_u32(void)
+// Simple 1-pixel-wide horizontal line
+static void m3_hline(int x1, int x2, int y, COLOR clr)
 {
-	// Simple LCG
-	g_rng = g_rng*1664525u + 1013904223u;
-	return g_rng;
+    int x;
+    if(y < 0 || y >= SCREEN_H)
+        return;
+    if(x1 > x2) { int t = x1; x1 = x2; x2 = t; }
+    if(x1 < 0) x1 = 0;
+    if(x2 >= SCREEN_W) x2 = SCREEN_W - 1;
+
+    u16 *row = &vid_mem[y * SCREEN_W];
+    for(x = x1; x <= x2; x++)
+        row[x] = clr;
 }
 
-static inline int rng_range(int lo, int hi)
+// ---------------------------------------------------------------------------
+// Track logic
+// ---------------------------------------------------------------------------
+
+// Returns true if the given position is on the drivable road.
+static bool is_on_road(float fx, float fy)
 {
-	// inclusive range
-	u32 r = rng_u32();
-	int span = (hi - lo + 1);
-	return lo + (int)(r % (u32)span);
+    int x = (int)fx;
+    int y = (int)fy;
+
+    bool inside_outer =
+        (x >= TRACK_OUTER_LEFT  && x <= TRACK_OUTER_RIGHT &&
+         y >= TRACK_OUTER_TOP   && y <= TRACK_OUTER_BOTTOM);
+
+    bool inside_inner =
+        (x > TRACK_INNER_LEFT && x < TRACK_INNER_RIGHT &&
+         y > TRACK_INNER_TOP  && y < TRACK_INNER_BOTTOM);
+
+    return inside_outer && !inside_inner;
 }
 
-static inline void put_px(int x, int y, u16 c)
+// Draw the static track.
+static void draw_track(void)
 {
-	if((unsigned)x < SCREEN_W && (unsigned)y < SCREEN_H)
-		vid_mem[y*SCREEN_W + x] = c;
+    // Background grass
+    m3_rect_fill(0, 0, SCREEN_W-1, SCREEN_H-1, CLR_GRASS);
+
+    // Road ring
+    m3_rect_fill(
+        TRACK_OUTER_LEFT,
+        TRACK_OUTER_TOP,
+        TRACK_OUTER_RIGHT,
+        TRACK_OUTER_BOTTOM,
+        CLR_ROAD
+    );
+
+    // Infield (grass again)
+    m3_rect_fill(
+        TRACK_INNER_LEFT+1,
+        TRACK_INNER_TOP+1,
+        TRACK_INNER_RIGHT-1,
+        TRACK_INNER_BOTTOM-1,
+        CLR_GRASS
+    );
+
+    // Borders (simple darker lines)
+    // Outer border
+    m3_rect_fill(TRACK_OUTER_LEFT, TRACK_OUTER_TOP,
+                 TRACK_OUTER_RIGHT, TRACK_OUTER_TOP, CLR_BORDER);           // top
+    m3_rect_fill(TRACK_OUTER_LEFT, TRACK_OUTER_BOTTOM,
+                 TRACK_OUTER_RIGHT, TRACK_OUTER_BOTTOM, CLR_BORDER);       // bottom
+    m3_rect_fill(TRACK_OUTER_LEFT, TRACK_OUTER_TOP,
+                 TRACK_OUTER_LEFT, TRACK_OUTER_BOTTOM, CLR_BORDER);        // left
+    m3_rect_fill(TRACK_OUTER_RIGHT, TRACK_OUTER_TOP,
+                 TRACK_OUTER_RIGHT, TRACK_OUTER_BOTTOM, CLR_BORDER);       // right
+
+    // Inner border
+    m3_rect_fill(TRACK_INNER_LEFT, TRACK_INNER_TOP,
+                 TRACK_INNER_RIGHT, TRACK_INNER_TOP, CLR_BORDER);
+    m3_rect_fill(TRACK_INNER_LEFT, TRACK_INNER_BOTTOM,
+                 TRACK_INNER_RIGHT, TRACK_INNER_BOTTOM, CLR_BORDER);
+    m3_rect_fill(TRACK_INNER_LEFT, TRACK_INNER_TOP,
+                 TRACK_INNER_LEFT, TRACK_INNER_BOTTOM, CLR_BORDER);
+    m3_rect_fill(TRACK_INNER_RIGHT, TRACK_INNER_TOP,
+                 TRACK_INNER_RIGHT, TRACK_INNER_BOTTOM, CLR_BORDER);
+
+    // Center lines (just for looks)
+    m3_hline(TRACK_OUTER_LEFT+5, TRACK_OUTER_RIGHT-5,
+             (TRACK_OUTER_TOP+TRACK_INNER_TOP)/2, CLR_LINE);
+    m3_hline(TRACK_OUTER_LEFT+5, TRACK_OUTER_RIGHT-5,
+             (TRACK_OUTER_BOTTOM+TRACK_INNER_BOTTOM)/2, CLR_LINE);
+
+    // Start/finish line near bottom center
+    int sx = (TRACK_OUTER_LEFT + TRACK_OUTER_RIGHT) / 2;
+    int sy1 = TRACK_OUTER_BOTTOM - 16;
+    int sy2 = TRACK_OUTER_BOTTOM;
+    m3_rect_fill(sx-2, sy1, sx+2, sy2, CLR_LINE);
 }
 
-static void rect_fill(int x, int y, int w, int h, u16 c)
-{
-	if(w <= 0 || h <= 0) return;
-	int x0 = clampi(x, 0, SCREEN_W);
-	int y0 = clampi(y, 0, SCREEN_H);
-	int x1 = clampi(x + w, 0, SCREEN_W);
-	int y1 = clampi(y + h, 0, SCREEN_H);
+// ---------------------------------------------------------------------------
+// Car logic
+// ---------------------------------------------------------------------------
 
-	for(int yy=y0; yy<y1; yy++)
-	{
-		u16 *row = &vid_mem[yy*SCREEN_W];
-		for(int xx=x0; xx<x1; xx++)
-			row[xx] = c;
-	}
+static void update_car(Car *c)
+{
+    float accel = 0.0f;
+    u16 keys = key_curr_state();    // key_poll() must be called before this
+
+    if(keys & KEY_UP)
+        accel += CAR_ACCEL;
+    if(keys & KEY_DOWN)
+        accel -= CAR_REVERSE;
+
+    // Update speed with acceleration
+    c->speed += accel;
+
+    // Clamp speed
+    if(c->speed > CAR_MAX_SPEED)
+        c->speed = CAR_MAX_SPEED;
+    if(c->speed < -CAR_MAX_REVERSE)
+        c->speed = -CAR_MAX_REVERSE;
+
+    // Apply friction
+    if(c->speed > 0.0f)
+    {
+        c->speed -= CAR_FRICTION;
+        if(c->speed < 0.0f)
+            c->speed = 0.0f;
+    }
+    else if(c->speed < 0.0f)
+    {
+        c->speed += CAR_FRICTION;
+        if(c->speed > 0.0f)
+            c->speed = 0.0f;
+    }
+
+    // Steering
+    if(keys & KEY_LEFT)
+        c->angle -= CAR_TURN_SPEED;
+    if(keys & KEY_RIGHT)
+        c->angle += CAR_TURN_SPEED;
+
+    // Keep angle in -pi..pi (not strictly necessary, but keeps numbers small)
+    if(c->angle > PI_F)
+        c->angle -= 2.0f * PI_F;
+    else if(c->angle < -PI_F)
+        c->angle += 2.0f * PI_F;
+
+    // Move
+    float old_x = c->x;
+    float old_y = c->y;
+
+    float cs = cosf(c->angle);
+    float sn = sinf(c->angle);
+
+    c->x += cs * c->speed;
+    c->y += sn * c->speed;
+
+    // Collision with track: bounce back when leaving road
+    if(!is_on_road(c->x, c->y))
+    {
+        c->x = old_x;
+        c->y = old_y;
+        c->speed *= -0.4f;       // simple bounce/lose energy
+    }
+
+    // Clamp to screen just in case
+    if(c->x < 4)   c->x = 4;
+    if(c->x > SCREEN_W-5) c->x = SCREEN_W-5;
+    if(c->y < 4)   c->y = 4;
+    if(c->y > SCREEN_H-5) c->y = SCREEN_H-5;
 }
 
-// ---------- 3x5 digits for HUD ----------
-// Each row is 3 bits (MSB on left)
-static const u8 g_font3x5[10][5] =
+// Draw the car as a small square with a nose pixel showing heading.
+static void draw_car(const Car *c)
 {
-	{0b111,0b101,0b101,0b101,0b111}, // 0
-	{0b010,0b110,0b010,0b010,0b111}, // 1
-	{0b111,0b001,0b111,0b100,0b111}, // 2
-	{0b111,0b001,0b111,0b001,0b111}, // 3
-	{0b101,0b101,0b111,0b001,0b001}, // 4
-	{0b111,0b100,0b111,0b001,0b111}, // 5
-	{0b111,0b100,0b111,0b101,0b111}, // 6
-	{0b111,0b001,0b001,0b010,0b010}, // 7
-	{0b111,0b101,0b111,0b101,0b111}, // 8
-	{0b111,0b101,0b111,0b001,0b111}, // 9
-};
+    int cx = (int)(c->x + 0.5f);
+    int cy = (int)(c->y + 0.5f);
 
-static void draw_digit_3x5(int x, int y, int d, int scale, u16 col)
-{
-	if(d < 0 || d > 9) return;
-	if(scale < 1) scale = 1;
+    // Car body
+    m3_rect_fill(cx-3, cy-3, cx+3, cy+3, CLR_CAR);
 
-	for(int r=0; r<5; r++)
-	{
-		u8 bits = g_font3x5[d][r];
-		for(int c=0; c<3; c++)
-		{
-			if(bits & (1u << (2-c)))
-			{
-				rect_fill(x + c*scale, y + r*scale, scale, scale, col);
-			}
-		}
-	}
+    // Nose pixel to show direction
+    float cs = cosf(c->angle);
+    float sn = sinf(c->angle);
+    int nx = cx + (int)(cs * 6.0f);
+    int ny = cy + (int)(sn * 6.0f);
+    m3_plot_safe(nx, ny, CLR_CAR_NOSE);
 }
 
-static void draw_number(int x, int y, int value, int digits, int scale, u16 col)
-{
-	// draws fixed width, leading zeros if digits > needed
-	if(digits < 1) digits = 1;
-	int v = value;
-	if(v < 0) v = 0;
-
-	// compute divisor = 10^(digits-1)
-	int div = 1;
-	for(int i=1; i<digits; i++) div *= 10;
-
-	for(int i=0; i<digits; i++)
-	{
-		int d = (v / div) % 10;
-		draw_digit_3x5(x + i*(3*scale + scale), y, d, scale, col);
-		div /= 10;
-	}
-}
-
-// ---------- game ----------
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 
 int main(void)
 {
-	// Video: Mode 3, BG2
-	REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+    // Set video mode: Mode 3, BG2 on
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-	// Colors
-	const u16 COL_SKY    = RGB15(10, 18, 31);
-	const u16 COL_GRASS1 = RGB15( 5, 20,  5);
-	const u16 COL_GRASS2 = RGB15( 4, 16,  4);
-	const u16 COL_ROAD   = RGB15( 7,  7,  8);
-	const u16 COL_ROAD2  = RGB15( 8,  8,  9);
-	const u16 COL_RUM1   = RGB15(31, 31, 31);
-	const u16 COL_RUM2   = RGB15(31,  0,  0);
-	const u16 COL_LINE   = RGB15(31, 31,  0);
-	const u16 COL_CAR    = RGB15(31,  3,  3);
-	const u16 COL_CAR2   = RGB15(20,  0,  0);
-	const u16 COL_TIRE   = RGB15( 2,  2,  2);
-	const u16 COL_HUD    = RGB15(31, 31, 31);
+    // Initialize car roughly at bottom center of outer track, facing up
+    Car car;
+    car.x = (TRACK_OUTER_LEFT + TRACK_OUTER_RIGHT) * 0.5f;
+    car.y = TRACK_OUTER_BOTTOM - 12.0f;
+    car.speed = 0.0f;
+    car.angle = -PI_F / 2.0f;    // up
 
-	// Fixed-point 16.16
-	const int FX = 16;
-	const int ONE = 1 << FX;
+    while(1)
+    {
+        vid_vsync();     // tonc helper: wait for VBlank
 
-	// Car state (screen-space x, but “world” feel via road center comparison)
-	int car_x  = 120 * ONE;
-	int car_vx = 0;
+        key_poll();      // update key state in tonc
 
-	// Forward speed / distance
-	int speed = 2 * ONE;          // units per frame
-	int max_speed = 6 * ONE;
-	u32 dist = 0;                 // 16.16 "distance"
+        update_car(&car);
 
-	// Road generation state
-	int curve      = 0;           // 16.16 px shift per y
-	int curve_tgt  = 0;
-	int offset     = 0;           // 16.16 constant road center offset
-	int offset_tgt = 0;
+        draw_track();
+        draw_car(&car);
+    }
 
-	// Segment control
-	u32 next_seg_at = 0;          // in 16.16 distance
-	const u32 seg_len = (220u << FX);
-
-	// Camera-ish
-	const int horizon = 28;
-	const int car_y = 124;
-
-	for(;;)
-	{
-		vsync();
-
-		u16 keys = key_now();
-
-		if(keys & KEY_SELECT)
-		{
-			car_x = 120 * ONE;
-			car_vx = 0;
-			speed = 2 * ONE;
-			dist = 0;
-			curve = curve_tgt = 0;
-			offset = offset_tgt = 0;
-			next_seg_at = 0;
-		}
-
-		// Pick new road segment targets as you advance
-		if(dist >= next_seg_at)
-		{
-			next_seg_at = dist + seg_len;
-
-			// target curve: gentle most of the time, sometimes sharper
-			int c = rng_range(-42000, 42000);     // about +/-0.64 px per y
-			// occasionally force a straighter segment
-			if((rng_u32() & 3u) == 0) c /= 3;
-			curve_tgt = c;
-
-			// target offset drift so road doesn't live perfectly centered
-			offset_tgt = rng_range(-18, 18) * ONE;
-		}
-
-		// Smoothly approach targets
-		curve  += (curve_tgt  - curve ) / 32;
-		offset += (offset_tgt - offset) / 64;
-
-		// Controls
-		int steer = 0;
-		if(keys & KEY_LEFT)  steer -= 1;
-		if(keys & KEY_RIGHT) steer += 1;
-
-		// Accel / brake
-		if(keys & KEY_A) speed += (ONE / 16);
-		if(keys & KEY_B) speed -= (ONE / 14);
-
-		// Clamp speed
-		if(speed < 0) speed = 0;
-		if(speed > max_speed) speed = max_speed;
-
-		// Steering physics (more responsive with speed)
-		int steer_acc = (ONE / 10) + (speed / 6);
-		car_vx += steer * steer_acc;
-
-		// Damping
-		car_vx = (car_vx * 15) / 16;
-
-		// Integrate
-		car_x += car_vx;
-
-		// Advance distance by speed (simple)
-		dist += (u32)speed;
-
-		// Road at car position for collision/slowdown
-		int rel_car = car_y - horizon;
-		if(rel_car < 0) rel_car = 0;
-
-		// Perspective width at car_y
-		int road_w_car = 46 + rel_car*2;
-		road_w_car = clampi(road_w_car, 40, 220);
-
-		int center_car = 120
-			+ (offset >> FX)
-			+ (int)(((s32)curve * rel_car) >> FX);
-
-		int car_px = car_x >> FX;
-
-		// Off-road penalty
-		int half = road_w_car/2;
-		if(car_px < center_car - half + 2 || car_px > center_car + half - 2)
-		{
-			// slow down on grass; also reduce max while off-road
-			if(speed > ONE/2) speed -= ONE/10;
-			max_speed = 5 * ONE;
-		}
-		else
-		{
-			max_speed = 6 * ONE;
-		}
-
-		// Keep car somewhat on screen
-		car_x = clampi(car_x, 8*ONE, (SCREEN_W-8)*ONE);
-
-		// ---------- render ----------
-		for(int y=0; y<SCREEN_H; y++)
-		{
-			u16 *row = &vid_mem[y*SCREEN_W];
-
-			if(y < horizon)
-			{
-				// simple sky fill
-				for(int x=0; x<SCREEN_W; x++) row[x] = COL_SKY;
-				continue;
-			}
-
-			int rel = y - horizon;
-
-			// Width grows with y (perspective)
-			int road_w = 44 + rel*2;
-			road_w = clampi(road_w, 40, 236);
-
-			// Center drifts with curve (linear bend with y)
-			int center = 120
-				+ (offset >> FX)
-				+ (int)(((s32)curve * rel) >> FX);
-
-			// Rumble strip width grows slightly with y
-			int rum = 3 + rel/28;
-			rum = clampi(rum, 3, 7);
-
-			int left_road  = center - road_w/2;
-			int right_road = center + road_w/2;
-
-			int left_rum  = left_road  - rum;
-			int right_rum = right_road + rum;
-
-			// Clamp to screen
-			left_rum   = clampi(left_rum,  0, SCREEN_W);
-			left_road  = clampi(left_road, 0, SCREEN_W);
-			right_road = clampi(right_road,0, SCREEN_W);
-			right_rum  = clampi(right_rum, 0, SCREEN_W);
-
-			// Animate striping with distance; use integer part
-			int t = (int)(dist >> FX);
-			int grass_phase = ((t/6) + (y/3)) & 1;
-			int rum_phase   = ((t/4) + (y/2)) & 1;
-			int road_phase  = ((t/10) + (y/4)) & 1;
-
-			u16 grass = grass_phase ? COL_GRASS1 : COL_GRASS2;
-			u16 rumble = rum_phase ? COL_RUM1 : COL_RUM2;
-			u16 road = road_phase ? COL_ROAD : COL_ROAD2;
-
-			// Fill segments
-			for(int x=0; x<left_rum; x++) row[x] = grass;
-			for(int x=left_rum; x<left_road; x++) row[x] = rumble;
-			for(int x=left_road; x<right_road; x++) row[x] = road;
-			for(int x=right_road; x<right_rum; x++) row[x] = rumble;
-			for(int x=right_rum; x<SCREEN_W; x++) row[x] = grass;
-
-			// Center dashed line (only if road is wide enough)
-			if(road_w > 90)
-			{
-				int dash = ((t/2) + y) & 15;
-				if(dash < 8)
-				{
-					int cx = clampi(center, 1, SCREEN_W-2);
-					row[cx-1] = COL_LINE;
-					row[cx]   = COL_LINE;
-					row[cx+1] = COL_LINE;
-				}
-			}
-		}
-
-		// Draw car (simple sprite-like shape)
-		int cx = car_x >> FX;
-		int body_w = 12, body_h = 16;
-		int bx = cx - body_w/2;
-		int by = car_y - body_h/2;
-
-		// shadow
-		rect_fill(bx+1, by+1, body_w, body_h, RGB15(0,0,0));
-
-		// tires
-		rect_fill(bx-2, by+2, 3, 5, COL_TIRE);
-		rect_fill(bx-2, by+body_h-7, 3, 5, COL_TIRE);
-		rect_fill(bx+body_w-1, by+2, 3, 5, COL_TIRE);
-		rect_fill(bx+body_w-1, by+body_h-7, 3, 5, COL_TIRE);
-
-		// body + cab
-		rect_fill(bx, by, body_w, body_h, COL_CAR);
-		rect_fill(bx+2, by+3, body_w-4, 6, COL_CAR2);
-
-		// HUD
-		// speed_display: arbitrary units
-		int speed_display = (speed * 100) >> FX;     // 0..600ish
-		int dist_display  = (int)(dist >> FX);       // pixels-ish
-
-		// background strip for readability
-		rect_fill(0, 0, 94, 18, RGB15(0,0,0));
-
-		// "SPD" as three blocks + digits (no letters, keep it simple)
-		draw_number(4, 4, speed_display, 3, 2, COL_HUD);      // 3 digits
-
-		// distance right below
-		draw_number(4, 12, dist_display % 100000, 5, 1, COL_HUD);
-	}
-
-	return 0;
+    // Unreachable on GBA, but keeps compiler happy
+    return 0;
 }
