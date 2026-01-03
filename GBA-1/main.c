@@ -405,7 +405,7 @@ static void starfield_update(void)
         for(int row=0; row<32; row++)
         {
             int star = ((qran() & 0xFF) < 22) ? 1 : 0;
-            map[row*32 + newCol] = SE_BUILD(star, 0, 0);
+            map[row*32 + newCol] = SE_BUILD(star, 0, 0, 0);
         }
     }
 }
