@@ -80,7 +80,7 @@ u16* map_ptr; // Pointer to background map memory
 void init_graphics() {
     // 1. Load Palette
     // MEM_PAL_OBJ is strictly for sprites, MEM_PAL_BG for background
-    pal_obj_mem[0] = CLR_MAGENTA; // Transparent
+    pal_obj_mem[0] = CLR_MAG; // Transparent
     pal_obj_mem[1] = CLR_LIME;    // Player Color
     pal_obj_mem[2] = CLR_RED;     // Enemy Color
     pal_obj_mem[3] = CLR_YELLOW;  // Bullet Color
