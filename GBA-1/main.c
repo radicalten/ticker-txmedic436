@@ -346,19 +346,6 @@ static void init_sprites(void)
     oam_copy(oam_mem, obj_buffer, 128);
 }
 
-static void init_sound(void)
-{
-    // libgba-style interrupt init (tonc includes gba.h)
-    irq_init();
-    irq_set(IRQ_VBLANK, mmVBlank);
-    irq_enable(IRQ_VBLANK);
-
-    // Init maxmod with dummy soundbank, 8 channels
-    mmInitDefault((mm_addr)soundbank_bin, 8);
-
-    // If you have real music in your bank, uncomment:
-    // mmStart(MOD_MUSIC, MM_PLAY_LOOP);
-}
 
 // --------------------------------------------------------------------
 // Gameplay logic
