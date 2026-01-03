@@ -301,12 +301,6 @@ static const u8 font_3x5[64][5] = {
     }
 };
 
-static inline void m3_plot(int x, int y, u16 clr)
-{
-    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
-    m3_fb[y * SCREEN_W + x] = clr;
-}
-
 static void m3_clear(u16 clr)
 {
     u32 packed = (clr << 16) | clr;
