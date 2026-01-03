@@ -18,6 +18,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // --------------------------------------------------------------------
 // Dummy Maxmod soundbank + IDs
 // --------------------------------------------------------------------
@@ -151,43 +153,43 @@ static const u32 spr_tile_bullet[8] =
 // BG palette (16 entries)
 static const u16 bg_palette[16] =
 {
-    RGB15(0,0,0),       // 0: transparent/black
-    RGB15(8,8,8),       // 1: dark grey (solid ground)
-    RGB15(31,16,0),     // 2: orange (platform)
-    RGB15(0,0,0),       // 3
-    RGB15(0,0,0),       // 4
-    RGB15(0,0,0),       // 5
-    RGB15(0,0,0),       // 6
-    RGB15(0,0,0),       // 7
-    RGB15(0,0,0),       // 8
-    RGB15(0,0,0),       // 9
-    RGB15(0,0,0),       // 10
-    RGB15(0,0,0),       // 11
-    RGB15(0,0,0),       // 12
-    RGB15(0,0,0),       // 13
-    RGB15(0,0,0),       // 14
-    RGB15(0,0,0),       // 15
+    RGB15_C(0,0,0),       // 0: transparent/black
+    RGB15_C(8,8,8),       // 1: dark grey (solid ground)
+    RGB15_C(31,16,0),     // 2: orange (platform)
+    RGB15_C(0,0,0),       // 3
+    RGB15_C(0,0,0),       // 4
+    RGB15_C(0,0,0),       // 5
+    RGB15_C(0,0,0),       // 6
+    RGB15_C(0,0,0),       // 7
+    RGB15_C(0,0,0),       // 8
+    RGB15_C(0,0,0),       // 9
+    RGB15_C(0,0,0),       // 10
+    RGB15_C(0,0,0),       // 11
+    RGB15_C(0,0,0),       // 12
+    RGB15_C(0,0,0),       // 13
+    RGB15_C(0,0,0),       // 14
+    RGB15_C(0,0,0),       // 15
 };
 
 // OBJ palette (16 entries)
 static const u16 obj_palette[16] =
 {
-    RGB15(0,0,0),       // 0: transparent
-    RGB15(0,31,0),      // 1: green player
-    RGB15(31,0,0),      // 2: red enemy
-    RGB15(31,31,0),     // 3: yellow bullet
-    RGB15(0,0,0),       // 4
-    RGB15(0,0,0),       // 5
-    RGB15(0,0,0),       // 6
-    RGB15(0,0,0),       // 7
-    RGB15(0,0,0),       // 8
-    RGB15(0,0,0),       // 9
-    RGB15(0,0,0),       // 10
-    RGB15(0,0,0),       // 11
-    RGB15(0,0,0),       // 12
-    RGB15(0,0,0),       // 13
-    RGB15(0,0,0),       // 14
-    RGB15(0,0,0)        // 15
+    RGB15_C(0,0,0),       // 0: transparent
+    RGB15_C(0,31,0),      // 1: green player
+    RGB15_C(31,0,0),      // 2: red enemy
+    RGB15_C(31,31,0),     // 3: yellow bullet
+    RGB15_C(0,0,0),       // 4
+    RGB15_C(0,0,0),       // 5
+    RGB15_C(0,0,0),       // 6
+    RGB15_C(0,0,0),       // 7
+    RGB15_C(0,0,0),       // 8
+    RGB15_C(0,0,0),       // 9
+    RGB15_C(0,0,0),       // 10
+    RGB15_C(0,0,0),       // 11
+    RGB15_C(0,0,0),       // 12
+    RGB15_C(0,0,0),       // 13
+    RGB15_C(0,0,0),       // 14
+    RGB15_C(0,0,0)        // 15
 };
 
 // --------------------------------------------------------------------
