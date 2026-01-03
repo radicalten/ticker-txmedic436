@@ -83,7 +83,6 @@ static inline void keys_poll(void)
 }
 
 static inline u16 key_down(u16 k) { return g_keys & k; }
-static inline u16 key_hit(u16 k)  { return (g_keys & k) & ~(g_keys_prev & k); }
 
 // VRAM helpers (use raw pointers; works fine with tonc)
 static inline u32* CHARBLOCK_U32(int cbb) { return (u32*)(0x06000000 + cbb*0x4000); }
