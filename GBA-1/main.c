@@ -548,7 +548,6 @@ int main(void)
     init_enemy();
     init_bullets();
     init_sprites();
-    init_sound();
 
     REG_IME = 1;
 
