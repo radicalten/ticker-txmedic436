@@ -52,7 +52,7 @@ void load_generated_assets() {
     // 1. Palettes
     // Background Palette
     pal_bg_mem[0] = CLR_SKYBLUE;  // Transparent/Backdrop
-    pal_bg_mem[1] = CLR_MAGENTA;  // Debug/Error
+    pal_bg_mem[1] = CLR_MAG;  // Debug/Error
     pal_bg_mem[2] = RGB15(5, 20, 5); // Ground Green
     pal_bg_mem[3] = RGB15(10, 10, 5); // Block Brown
 
