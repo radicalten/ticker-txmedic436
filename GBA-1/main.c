@@ -540,7 +540,6 @@ static void draw_sprites(void)
 
 int main(void)
 {
-    irq_disable(IRQ_ADD);    // tonc macro, safe to call
     REG_IME = 0;
 
     init_video();
