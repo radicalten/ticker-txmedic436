@@ -33,7 +33,6 @@
 #define MAX_PROJECTILES 4
 
 #define FIX_SHIFT       8
-#define FIX_ONE         (1 << FIX_SHIFT)
 #define FIX_HALF        (FIX_ONE >> 1)
 
 #define TO_FIX(x)       ((x) << FIX_SHIFT)
