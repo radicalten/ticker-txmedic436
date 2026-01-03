@@ -252,7 +252,7 @@ static void build_bg_starfield(void)
     {
         // ~1/12 stars
         int star = ((qran() & 0xFF) < 22) ? 1 : 0;
-        map[y*32 + x] = SE_BUILD(star, 0, 0);
+        map[y*32 + x] = SE_BUILD(star, 0, 0, 0);
     }
 }
 
