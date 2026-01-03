@@ -705,7 +705,7 @@ static void update_player(void)
     key_poll();
 
     u16 held = key_curr_state();
-    u16 hit  = key_hit_state();
+    u16 hit  = key_prev_state();
 
     // Horizontal acceleration
     if(held & KEY_LEFT)
