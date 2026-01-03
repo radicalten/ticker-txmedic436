@@ -92,7 +92,7 @@ static void init_palette(void)
 	pal_bg_mem[C_CAR_D] = RGB15(18, 1, 1);
 }
 
-static void draw_scene(u16* bb, int horizon, int playerX, u32 scroll, u16 curvePhase)
+static void draw_scene(u16* horizon, int playerX, u32 scroll, u16 curvePhase)
 {
 	// ----- Sky -----
 	for(int y=0; y<horizon; y++)
