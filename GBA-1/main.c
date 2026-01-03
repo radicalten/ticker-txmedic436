@@ -1,600 +1,210 @@
-//======================================================================
-// OutRun-style Racing Game for GBA
-// Uses TONC library - Mode 4 bitmap graphics
-// Compile with: make (with standard GBA makefile)
-//======================================================================
-
 #include <tonc.h>
-#include <string.h>
 
-//----------------------------------------------------------------------
-// Constants
-//----------------------------------------------------------------------
-#define SCREEN_W        240
-#define SCREEN_H        160
-#define HORIZON         70
-#define ROAD_SEGMENTS   300
-#define SEG_LENGTH      200
-#define ROAD_WIDTH      2000
-#define RUMBLE_LEN      3
-#define DRAW_DIST       100
-#define CAM_HEIGHT      1000
-#define CAM_DEPTH       120
+// --- Constants ---
+#define SCREEN_W      240
+#define SCREEN_H      160
+#define HORIZON       60
+#define ROAD_WIDTH    2000  // Virtual road width
+#define CAM_HEIGHT    100   // Camera height from ground
+#define SEGMENT_LEN   50    // Distance of one road segment
 
-// Fixed point (16.16)
-#define FP_BITS         16
-#define FP_ONE          (1 << FP_BITS)
-#define FP_HALF         (FP_ONE >> 1)
-#define TO_FP(x)        ((x) << FP_BITS)
-#define FROM_FP(x)      ((x) >> FP_BITS)
-#define FP_MUL(a,b)     ((((s64)(a)) * (b)) >> FP_BITS)
-#define FP_DIV(a,b)     ((((s64)(a)) << FP_BITS) / (b))
+// Colors
+#define CLR_SKY       RGB15(5, 20, 31)
+#define CLR_GRASS_L   RGB15(2, 18, 2)
+#define CLR_GRASS_D   RGB15(1, 14, 1)
+#define CLR_ROAD_L    RGB15(12, 12, 12)
+#define CLR_ROAD_D    RGB15(10, 10, 10)
+#define CLR_RUMBLE_W  RGB15(31, 31, 31)
+#define CLR_RUMBLE_R  RGB15(31, 0, 0)
+#define CLR_CAR       RGB15(31, 0, 0)
 
-// Palette indices
-enum {
-    COL_BLACK = 0,
-    COL_SKY,
-    COL_HORIZON,
-    COL_GRASS1,
-    COL_GRASS2,
-    COL_ROAD1,
-    COL_ROAD2,
-    COL_RUMBLE1,
-    COL_RUMBLE2,
-    COL_LINE,
-    COL_CAR_BODY,
-    COL_CAR_WINDOW,
-    COL_CAR_WHEEL,
-    COL_TREE_TRUNK,
-    COL_TREE_LEAVES,
-    COL_WHITE
-};
+// --- Global State ---
+FIXED pos_z = 0;         // Camera Z position
+FIXED pos_x = 0;         // Camera X position (lateral)
+FIXED speed = 0;         // Current Speed
+FIXED current_curve = 0; // Current road curvature
+int   track_curve = 0;   // Target curvature of the track section
 
-//----------------------------------------------------------------------
-// Road Segment
-//----------------------------------------------------------------------
-typedef struct {
-    s32 curve;              // Curve amount
-    s32 hill;               // Hill amount (y delta)
-    s32 y;                  // World y position
-    u8  sprite_type;        // 0=none, 1=tree left, 2=tree right, 3=both
-} Segment;
+// --- Simple Car Drawing ---
+// Draws a pixel-art style car directly to VRAM
+void draw_car(int x, int y) {
+    // Simple 32x16 car shape centered at x,y
+    int cw = 30; // Car width
+    int ch = 14; // Car height
+    int left = x - cw/2;
+    int top = y - ch;
+    
+    // Bounds check
+    if (left < 0) left = 0;
+    if (left + cw > SCREEN_W) return;
+    if (top < 0) top = 0;
 
-//----------------------------------------------------------------------
-// Game State
-//----------------------------------------------------------------------
-static Segment  road[ROAD_SEGMENTS];
-static s32      player_x;           // Player x offset (fixed point)
-static s32      player_z;           // Distance traveled
-static s32      player_speed;       // Current speed
-static s32      max_speed;          // Maximum speed
-static s32      accel;              // Acceleration
-static s32      decel;              // Deceleration (natural)
-static s32      brake_power;        // Braking force
-static s32      offroad_limit;      // Speed limit when off road
-static s32      centrifugal;        // Centrifugal force factor
-static u32      frame_count;
-
-//----------------------------------------------------------------------
-// Z-buffer for sprites (simple version)
-//----------------------------------------------------------------------
-static s32      sprite_z[SCREEN_H];
-static s32      sprite_scale[SCREEN_H];
-static s32      sprite_x[SCREEN_H];
-
-//----------------------------------------------------------------------
-// Initialize palette
-//----------------------------------------------------------------------
-void init_palette(void)
-{
-    pal_bg_mem[COL_BLACK]      = RGB15(0, 0, 0);
-    pal_bg_mem[COL_SKY]        = RGB15(8, 16, 28);
-    pal_bg_mem[COL_HORIZON]    = RGB15(20, 24, 31);
-    pal_bg_mem[COL_GRASS1]     = RGB15(0, 18, 0);
-    pal_bg_mem[COL_GRASS2]     = RGB15(0, 22, 0);
-    pal_bg_mem[COL_ROAD1]      = RGB15(6, 6, 6);
-    pal_bg_mem[COL_ROAD2]      = RGB15(7, 7, 7);
-    pal_bg_mem[COL_RUMBLE1]    = RGB15(31, 0, 0);
-    pal_bg_mem[COL_RUMBLE2]    = RGB15(31, 31, 31);
-    pal_bg_mem[COL_LINE]       = RGB15(31, 31, 31);
-    pal_bg_mem[COL_CAR_BODY]   = RGB15(31, 8, 0);
-    pal_bg_mem[COL_CAR_WINDOW] = RGB15(10, 16, 24);
-    pal_bg_mem[COL_CAR_WHEEL]  = RGB15(3, 3, 3);
-    pal_bg_mem[COL_TREE_TRUNK] = RGB15(12, 6, 2);
-    pal_bg_mem[COL_TREE_LEAVES]= RGB15(0, 14, 0);
-    pal_bg_mem[COL_WHITE]      = RGB15(31, 31, 31);
+    // Draw main body (Red)
+    m3_rect(left, top + 4, left + cw, top + ch, CLR_CAR);
+    
+    // Draw cabin/windshield (Darker)
+    m3_rect(left + 4, top, left + cw - 4, top + 6, RGB15(10,0,0));
+    
+    // Draw tires
+    m3_rect(left - 2, top + 8, left + 2, top + 14, 0); // BL
+    m3_rect(left + cw - 2, top + 8, left + cw + 2, top + 14, 0); // BR
+    
+    // Lights
+    m3_plot(left + 2, top + 6, RGB15(31,31,0));
+    m3_plot(left + cw - 3, top + 6, RGB15(31,31,0));
 }
 
-//----------------------------------------------------------------------
-// Initialize road
-//----------------------------------------------------------------------
-void init_road(void)
-{
-    s32 y = 0;
-    
-    for (int i = 0; i < ROAD_SEGMENTS; i++) {
-        road[i].curve = 0;
-        road[i].hill = 0;
-        road[i].y = y;
-        road[i].sprite_type = 0;
-        
-        // Create varied terrain
-        // Straight section
-        if (i >= 10 && i < 30) {
-            road[i].curve = 0;
-        }
-        // Right curve
-        else if (i >= 30 && i < 60) {
-            road[i].curve = 8;
-        }
-        // Straight
-        else if (i >= 60 && i < 80) {
-            road[i].curve = 0;
-        }
-        // Left curve
-        else if (i >= 80 && i < 120) {
-            road[i].curve = -6;
-        }
-        // S-curve
-        else if (i >= 120 && i < 150) {
-            road[i].curve = 10;
-        }
-        else if (i >= 150 && i < 180) {
-            road[i].curve = -10;
-        }
-        // Hills
-        else if (i >= 180 && i < 200) {
-            road[i].hill = 20;
-        }
-        else if (i >= 200 && i < 220) {
-            road[i].hill = -20;
-        }
-        // Sharp turns
-        else if (i >= 240 && i < 280) {
-            road[i].curve = 15;
-        }
-        
-        y += road[i].hill;
-        
-        // Add roadside trees
-        if ((i % 10) == 0) {
-            road[i].sprite_type = 1;  // Left tree
-        }
-        if ((i % 10) == 5) {
-            road[i].sprite_type = 2;  // Right tree
-        }
-        if ((i % 25) == 0) {
-            road[i].sprite_type = 3;  // Both sides
-        }
-    }
-}
+// --- Main Rendering Loop ---
+int main() {
+    // Initialize Video Mode: Mode 3 (240x160 Bitmap), BG2 enabled
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-//----------------------------------------------------------------------
-// Initialize game state
-//----------------------------------------------------------------------
-void init_game(void)
-{
-    player_x = 0;
-    player_z = 0;
-    player_speed = 0;
-    max_speed = TO_FP(200);
-    accel = TO_FP(1);
-    decel = FP_ONE / 4;
-    brake_power = TO_FP(2);
-    offroad_limit = TO_FP(50);
-    centrifugal = FP_ONE / 3;
-    frame_count = 0;
-}
-
-//----------------------------------------------------------------------
-// Fast horizontal line (Mode 4)
-//----------------------------------------------------------------------
-IWRAM_CODE
-void hline_fast(int y, int x1, int x2, u8 color)
-{
-    if (x1 > x2) {
-        int t = x1; x1 = x2; x2 = t;
-    }
-    if (x1 < 0) x1 = 0;
-    if (x2 >= SCREEN_W) x2 = SCREEN_W - 1;
-    if (x1 > x2) return;
+    // Game loop variables
+    int y;
+    FIXED z, scale, screen_x, screen_w;
+    int half_w = SCREEN_W / 2;
     
-    u16 *base = (u16*)vid_mem;
-    int start = y * SCREEN_W + x1;
-    int end = y * SCREEN_W + x2;
-    
-    u16 color16 = color | (color << 8);
-    
-    // Align to 16-bit boundary
-    if (start & 1) {
-        u16 *p = &base[start >> 1];
-        *p = (*p & 0x00FF) | (color << 8);
-        start++;
-    }
-    
-    // Fill 16-bit aligned section
-    u16 *dst = &base[start >> 1];
-    int count = (end - start + 1) >> 1;
-    
-    while (count >= 8) {
-        dst[0] = color16;
-        dst[1] = color16;
-        dst[2] = color16;
-        dst[3] = color16;
-        dst[4] = color16;
-        dst[5] = color16;
-        dst[6] = color16;
-        dst[7] = color16;
-        dst += 8;
-        count -= 8;
-    }
-    while (count--) {
-        *dst++ = color16;
-    }
-    
-    // Handle odd end
-    if (!((end - start + 1) & 1) && ((end + 1) & 1)) {
-        u16 *p = &base[end >> 1];
-        *p = (*p & 0xFF00) | color;
-    }
-}
-
-//----------------------------------------------------------------------
-// Put pixel (Mode 4)
-//----------------------------------------------------------------------
-IWRAM_CODE
-static inline void put_pixel(int x, int y, u8 color)
-{
-    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
-    
-    u16 *dst = &((u16*)vid_mem)[(y * SCREEN_W + x) >> 1];
-    if (x & 1) {
-        *dst = (*dst & 0x00FF) | (color << 8);
-    } else {
-        *dst = (*dst & 0xFF00) | color;
-    }
-}
-
-//----------------------------------------------------------------------
-// Draw filled rectangle
-//----------------------------------------------------------------------
-void fill_rect(int x, int y, int w, int h, u8 color)
-{
-    for (int j = 0; j < h; j++) {
-        if (y + j >= 0 && y + j < SCREEN_H) {
-            hline_fast(y + j, x, x + w - 1, color);
-        }
-    }
-}
-
-//----------------------------------------------------------------------
-// Draw a simple tree sprite
-//----------------------------------------------------------------------
-void draw_tree(int screen_x, int screen_y, int scale)
-{
-    if (scale <= 0) return;
-    
-    int trunk_w = (4 * scale) >> 8;
-    int trunk_h = (20 * scale) >> 8;
-    int leaves_w = (16 * scale) >> 8;
-    int leaves_h = (24 * scale) >> 8;
-    
-    if (trunk_w < 1) trunk_w = 1;
-    if (trunk_h < 1) trunk_h = 1;
-    if (leaves_w < 2) leaves_w = 2;
-    if (leaves_h < 2) leaves_h = 2;
-    
-    int base_y = screen_y;
-    int trunk_x = screen_x - trunk_w / 2;
-    int trunk_y = base_y - trunk_h;
-    
-    // Draw trunk
-    for (int dy = 0; dy < trunk_h; dy++) {
-        int py = trunk_y + dy;
-        if (py >= HORIZON && py < SCREEN_H) {
-            for (int dx = 0; dx < trunk_w; dx++) {
-                put_pixel(trunk_x + dx, py, COL_TREE_TRUNK);
-            }
-        }
-    }
-    
-    // Draw leaves (triangle-ish shape)
-    int leaves_y = trunk_y - leaves_h;
-    for (int dy = 0; dy < leaves_h; dy++) {
-        int py = leaves_y + dy;
-        if (py >= 0 && py < SCREEN_H) {
-            int row_width = leaves_w * (leaves_h - dy) / leaves_h;
-            int lx = screen_x - row_width / 2;
-            for (int dx = 0; dx < row_width; dx++) {
-                put_pixel(lx + dx, py, COL_TREE_LEAVES);
-            }
-        }
-    }
-}
-
-//----------------------------------------------------------------------
-// Render the road
-//----------------------------------------------------------------------
-IWRAM_CODE
-void render_road(void)
-{
-    s32 base_seg = player_z / SEG_LENGTH;
-    s32 base_offset = player_z % SEG_LENGTH;
-    
-    s32 x_offset = 0;
-    s32 dx = 0;
-    s32 y_offset = 0;
-    s32 dy = 0;
-    
-    // Get current segment's curve for camera
-    int cur_seg = base_seg % ROAD_SEGMENTS;
-    s32 cam_curve = road[cur_seg].curve;
-    
-    // Clear sky with gradient
-    for (int y = 0; y < HORIZON; y++) {
-        u8 sky_col = (y < 30) ? COL_SKY : COL_HORIZON;
-        hline_fast(y, 0, SCREEN_W - 1, sky_col);
-    }
-    
-    // Render road from horizon to bottom
-    for (int y = HORIZON; y < SCREEN_H; y++) {
-        // Perspective calculation
-        s32 perspective = y - HORIZON;
-        if (perspective < 1) perspective = 1;
-        
-        // Z depth for this scanline
-        s32 z = (CAM_HEIGHT * CAM_DEPTH) / perspective;
-        
-        // Which segment are we looking at?
-        s32 seg_z = base_offset + z;
-        s32 seg_index = (base_seg + seg_z / SEG_LENGTH) % ROAD_SEGMENTS;
-        
-        Segment *seg = &road[seg_index];
-        
-        // Accumulate curve and hill
-        dx += seg->curve;
-        x_offset += dx;
-        dy += seg->hill;
-        y_offset += dy;
-        
-        // Project road width
-        s32 proj_w = (ROAD_WIDTH * CAM_DEPTH) / (z + 1);
-        if (proj_w < 4) proj_w = 4;
-        
-        // Road center with perspective curve
-        s32 center_x = SCREEN_W / 2;
-        center_x += (x_offset >> 6);                    // Curve offset
-        center_x -= FROM_FP(FP_MUL(player_x, proj_w));  // Player offset
-        
-        s32 road_l = center_x - proj_w / 2;
-        s32 road_r = center_x + proj_w / 2;
-        
-        // Rumble strip width
-        s32 rumble_w = proj_w / 10;
-        if (rumble_w < 2) rumble_w = 2;
-        
-        // Alternating colors based on segment index
-        int alt = (seg_index / RUMBLE_LEN) & 1;
-        
-        u8 grass_col  = alt ? COL_GRASS1 : COL_GRASS2;
-        u8 road_col   = alt ? COL_ROAD1 : COL_ROAD2;
-        u8 rumble_col = alt ? COL_RUMBLE1 : COL_RUMBLE2;
-        
-        // Draw scanline
-        // Left grass
-        hline_fast(y, 0, road_l - rumble_w - 1, grass_col);
-        // Left rumble
-        hline_fast(y, road_l - rumble_w, road_l - 1, rumble_col);
-        // Road
-        hline_fast(y, road_l, road_r, road_col);
-        // Right rumble  
-        hline_fast(y, road_r + 1, road_r + rumble_w, rumble_col);
-        // Right grass
-        hline_fast(y, road_r + rumble_w + 1, SCREEN_W - 1, grass_col);
-        
-        // Center line (dashed)
-        if (!alt && proj_w > 30) {
-            s32 line_w = proj_w / 30;
-            if (line_w < 1) line_w = 1;
-            if (line_w > 4) line_w = 4;
-            hline_fast(y, center_x - line_w, center_x + line_w, COL_LINE);
-        }
-        
-        // Store info for sprites
-        sprite_z[y] = z;
-        sprite_scale[y] = (256 * CAM_DEPTH) / (z + 1);
-        sprite_x[y] = center_x;
-    }
-    
-    // Draw roadside sprites (back to front)
-    for (int y = HORIZON + 1; y < SCREEN_H; y++) {
-        s32 z = sprite_z[y];
-        s32 seg_z = base_offset + z;
-        s32 seg_index = (base_seg + seg_z / SEG_LENGTH) % ROAD_SEGMENTS;
-        
-        Segment *seg = &road[seg_index];
-        
-        if (seg->sprite_type && (seg_z % SEG_LENGTH) < 50) {
-            s32 scale = sprite_scale[y];
-            s32 proj_w = (ROAD_WIDTH * CAM_DEPTH) / (z + 1);
-            
-            // Tree offset from road
-            s32 tree_offset = proj_w / 2 + (proj_w / 4);
-            
-            if (seg->sprite_type == 1 || seg->sprite_type == 3) {
-                // Left tree
-                int tx = sprite_x[y] - tree_offset;
-                draw_tree(tx, y, scale);
-            }
-            if (seg->sprite_type == 2 || seg->sprite_type == 3) {
-                // Right tree
-                int tx = sprite_x[y] + tree_offset;
-                draw_tree(tx, y, scale);
-            }
-        }
-    }
-}
-
-//----------------------------------------------------------------------
-// Draw player car
-//----------------------------------------------------------------------
-void draw_player_car(void)
-{
-    // Car dimensions
-    const int CAR_W = 40;
-    const int CAR_H = 24;
-    const int CAR_Y = SCREEN_H - CAR_H - 6;
-    
-    // Car position (centered, slight x offset based on steering)
-    int car_x = SCREEN_W / 2 - CAR_W / 2;
-    car_x += FROM_FP(player_x * 20);
-    
-    // Bounce based on speed
-    int bounce = 0;
-    if (player_speed > 0) {
-        bounce = ((frame_count * FROM_FP(player_speed)) >> 5) & 1;
-    }
-    
-    // Car body (main rectangle)
-    fill_rect(car_x + 4, CAR_Y + 8 - bounce, CAR_W - 8, 14, COL_CAR_BODY);
-    
-    // Car hood
-    fill_rect(car_x + 8, CAR_Y + 16 - bounce, CAR_W - 16, 6, COL_CAR_BODY);
-    
-    // Windshield/cabin
-    fill_rect(car_x + 10, CAR_Y + 4 - bounce, CAR_W - 20, 8, COL_CAR_WINDOW);
-    
-    // Wheels
-    fill_rect(car_x + 2, CAR_Y + 14 - bounce, 6, 8, COL_CAR_WHEEL);
-    fill_rect(car_x + CAR_W - 8, CAR_Y + 14 - bounce, 6, 8, COL_CAR_WHEEL);
-    
-    // Wheel shine (animation)
-    if ((frame_count >> 1) & 1) {
-        put_pixel(car_x + 4, CAR_Y + 16 - bounce, COL_WHITE);
-        put_pixel(car_x + CAR_W - 6, CAR_Y + 16 - bounce, COL_WHITE);
-    }
-}
-
-//----------------------------------------------------------------------
-// Draw HUD
-//----------------------------------------------------------------------
-void draw_hud(void)
-{
-    // Speed bar background
-    fill_rect(8, 8, 52, 8, COL_ROAD1);
-    
-    // Speed bar fill
-    s32 speed_pct = FP_MUL(player_speed, FP_DIV(FP_ONE, max_speed));
-    int bar_w = FROM_FP(speed_pct * 50);
-    if (bar_w < 0) bar_w = 0;
-    if (bar_w > 50) bar_w = 50;
-    
-    for (int i = 0; i < bar_w; i++) {
-        u8 col = (i < 25) ? COL_GRASS2 : ((i < 40) ? COL_RUMBLE1 : COL_CAR_BODY);
-        fill_rect(9 + i, 9, 1, 6, col);
-    }
-}
-
-//----------------------------------------------------------------------
-// Update game logic
-//----------------------------------------------------------------------
-void update_game(void)
-{
-    // Get current segment
-    int seg_idx = (player_z / SEG_LENGTH) % ROAD_SEGMENTS;
-    Segment *cur_seg = &road[seg_idx];
-    
-    // Check if player is on road
-    s32 road_half = TO_FP(1);  // Road boundary
-    int offroad = (player_x < -road_half || player_x > road_half);
-    
-    // Acceleration
-    if (key_is_down(KEY_A)) {
-        player_speed += accel;
-    } else if (key_is_down(KEY_B)) {
-        player_speed -= brake_power;
-    } else {
-        player_speed -= decel;
-    }
-    
-    // Off-road slowdown
-    if (offroad && player_speed > offroad_limit) {
-        player_speed -= accel * 3;
-    }
-    
-    // Clamp speed
-    if (player_speed > max_speed) player_speed = max_speed;
-    if (player_speed < 0) player_speed = 0;
-    
-    // Steering
-    s32 steer_amount = FP_ONE / 40;
-    if (player_speed > 0) {
-        // Steering is more effective at lower speeds
-        s32 steer_factor = FP_DIV(max_speed, player_speed + (max_speed / 4));
-        steer_amount = FP_MUL(steer_amount, steer_factor);
-    }
-    
-    if (key_is_down(KEY_LEFT)) {
-        player_x -= steer_amount;
-    }
-    if (key_is_down(KEY_RIGHT)) {
-        player_x += steer_amount;
-    }
-    
-    // Centrifugal force (push player to outside of curves)
-    if (player_speed > 0) {
-        s32 curve_force = FP_MUL(cur_seg->curve * 64, player_speed);
-        curve_force = FP_MUL(curve_force, centrifugal);
-        player_x += curve_force >> 16;
-    }
-    
-    // Limit player position (can go a bit off road)
-    s32 limit = TO_FP(2);
-    if (player_x < -limit) player_x = -limit;
-    if (player_x > limit) player_x = limit;
-    
-    // Move forward
-    player_z += FROM_FP(player_speed);
-    
-    // Wrap around track
-    if (player_z >= ROAD_SEGMENTS * SEG_LENGTH) {
-        player_z -= ROAD_SEGMENTS * SEG_LENGTH;
-    }
-    
-    frame_count++;
-}
-
-//----------------------------------------------------------------------
-// Main
-//----------------------------------------------------------------------
-int main(void)
-{
-    // Initialize display - Mode 4 (8bpp indexed)
-    REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
-    
-    // Initialize game
-    init_palette();
-    init_road();
-    init_game();
-    
-    // Main loop
     while (1) {
-        // Wait for VBlank
-        vid_vsync();
-        
-        // Poll keys
+        // 1. Input Handling
         key_poll();
         
-        // Update
-        update_game();
+        // Accelerate with A, Brake with B
+        if (key_is_down(KEY_A)) speed += 20;
+        else speed -= 5;
         
-        // Render (to back buffer)
-        // In Mode 4, we're writing directly to vid_mem (page 0)
-        // For proper double buffering, you'd use vid_flip()
-        render_road();
-        draw_player_car();
-        draw_hud();
+        if (key_is_down(KEY_B)) speed -= 20;
+
+        // Cap speed
+        if (speed < 0) speed = 0;
+        if (speed > 1200) speed = 1200; // Max speed
+
+        // Steer with D-Pad
+        // Car moves visually, but actually we move the world (pos_x)
+        if (key_is_down(KEY_LEFT))  pos_x -= 60;
+        if (key_is_down(KEY_RIGHT)) pos_x += 60;
+
+        // Apply speed to Z position
+        pos_z += speed;
+
+        // Handle Curvature (Procedurally change curve every 2000 units)
+        int track_section = (pos_z / 2000) / 1000; // Change occasionally
+        if (track_section % 4 == 0) track_curve = 0;        // Straight
+        else if (track_section % 4 == 1) track_curve = 200; // Right
+        else if (track_section % 4 == 2) track_curve = -150;// Left
+        else track_curve = 50;                              // Slight Right
+
+        // Smoothly interpolate current curve to target track curve
+        if (current_curve < track_curve) current_curve += 2;
+        if (current_curve > track_curve) current_curve -= 2;
+
+        // Auto-move X if in a curve (centrifugal force simulation)
+        if (speed > 0) pos_x -= (current_curve * speed) >> 12;
+
+        // 2. Rendering Phase
+        vid_vsync(); // Wait for VBlank to prevent tearing
+
+        // Draw Sky (Simple gradient or flat color fill)
+        // DMA Fill is fast: (value, destination, count)
+        // Note: Mode 3 is a u16 array.
+        // We clear the top half (sky)
+        DMA_TRANSFER(&vid_mem[0], &CLR_SKY, (SCREEN_W * HORIZON), 
+                     DMA_16 | DMA_ENABLE | DMA_SRC_FIXED);
+
+        // Render Road Line by Line (Bottom to Horizon)
+        // We use simple projection math: ScreenX = WorldX / Z
+        
+        FIXED dx = 0;     // Accumulated curve offset
+        FIXED ddx = 0;    // Curve increment per line
+        
+        // Calculate curve intensity based on current_curve
+        ddx = current_curve; 
+
+        for (y = SCREEN_H - 1; y >= HORIZON; y--) {
+            // Perspective Math
+            // Z depth increases as Y goes up the screen.
+            // Formula: Z = Y_Camera * Scale / (Y_Screen - Horizon)
+            int line_y = y - HORIZON;
+            if (line_y == 0) line_y = 1; // Prevent divide by zero at infinity
+            
+            // Map screen Y to World Z
+            // Note: Shifts (<<) used for fixed point precision
+            z = (CAM_HEIGHT << 8) / line_y; 
+            
+            // Scale factor for width at this Z
+            scale = (1 << 8) / z; // Inverse Z
+            
+            // Screen width of the road at this scanline
+            screen_w = (ROAD_WIDTH * 256) / z; 
+
+            // Calculate World Position for color alternation
+            // Add current Z position to find "texture" coordinate
+            int total_z = pos_z + z;
+            
+            // Alternating Colors (Checkerboard effect)
+            int segment = (total_z / SEGMENT_LEN) % 2;
+            
+            u16 grass_color = (segment == 0) ? CLR_GRASS_L : CLR_GRASS_D;
+            u16 road_color  = (segment == 0) ? CLR_ROAD_L  : CLR_ROAD_D;
+            u16 rumble_color= (segment == 0) ? CLR_RUMBLE_W : CLR_RUMBLE_R;
+
+            // Calculate Center X of the road on screen
+            // Start at center, subtract camera X (scaled by depth), add curve offset
+            screen_x = half_w - ((pos_x * 256) / z) + dx;
+
+            // Apply curve accumulation for the next line up
+            dx += ddx; 
+            // Perspective makes curves sharper closer to horizon? 
+            // Actually in this simple projection, linear addition works for a parabolic look.
+            ddx += current_curve / 10; 
+
+            // Drawing the Scanline
+            // We calculate left and right edges
+            int l_grass = 0;
+            int l_rumble = screen_x - screen_w - (screen_w/6);
+            int l_road = screen_x - screen_w;
+            int r_road = screen_x + screen_w;
+            int r_rumble = screen_x + screen_w + (screen_w/6);
+            int r_grass = SCREEN_W;
+
+            // Clamp values to screen bounds to prevent wrapping
+            if (l_rumble < 0) l_rumble = 0; if (l_rumble > SCREEN_W) l_rumble = SCREEN_W;
+            if (l_road < 0) l_road = 0;     if (l_road > SCREEN_W) l_road = SCREEN_W;
+            if (r_road < 0) r_road = 0;     if (r_road > SCREEN_W) r_road = SCREEN_W;
+            if (r_rumble < 0) r_rumble = 0; if (r_rumble > SCREEN_W) r_rumble = SCREEN_W;
+
+            // Optimization: Get pointer to the start of this scanline in VRAM
+            u16 *line_ptr = &vid_mem[y * SCREEN_W];
+
+            // Use DMA for fast horizontal filling (or fast loops)
+            // 1. Left Grass
+            if (l_rumble > 0) 
+                dma3_fill(line_ptr, grass_color, l_rumble);
+            
+            // 2. Left Rumble Strip
+            if (l_road > l_rumble) 
+                dma3_fill(line_ptr + l_rumble, rumble_color, l_road - l_rumble);
+            
+            // 3. Road
+            if (r_road > l_road) 
+                dma3_fill(line_ptr + l_road, road_color, r_road - l_road);
+            
+            // 4. Right Rumble Strip
+            if (r_rumble > r_road) 
+                dma3_fill(line_ptr + r_road, rumble_color, r_rumble - r_road);
+            
+            // 5. Right Grass
+            if (SCREEN_W > r_rumble) 
+                dma3_fill(line_ptr + r_rumble, grass_color, SCREEN_W - r_rumble);
+        }
+
+        // Draw Player Car
+        // Bounce car up and down slightly based on speed
+        int bounce = (speed > 0) ? ((pos_z / 500) % 2) : 0;
+        draw_car(half_w, SCREEN_H - 10 + bounce);
+        
+        // Draw HUD (Simple Speed Bar)
+        m3_rect(10, 10, 10 + (speed/10), 15, RGB15(0,31,31));
     }
-    
+
     return 0;
 }
