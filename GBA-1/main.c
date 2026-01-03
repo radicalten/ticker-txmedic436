@@ -338,7 +338,7 @@ static void ui_draw_number(int x, int y, int value, int digits)
     {
         int d = value % 10;
         value /= 10;
-        ui[y*32 + (x+i)] = SE_BUILD(FT_0 + d, 0, 0);
+        ui[y*32 + (x+i)] = SE_BUILD(FT_0 + d, 0, 0, 0);
     }
 }
 
