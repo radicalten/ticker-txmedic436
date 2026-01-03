@@ -1110,7 +1110,7 @@ void drawGame(void) {
             int iy = items[i].y - game.scrollY;
             
             // Bobbing animation
-            iy += (fxsin(game.frameCount * 256) >> 13);
+            iy += (lu_sin(game.frameCount * 256) >> 13);
             
             if(ix > -8 && ix < SCREEN_WIDTH && iy > -8 && iy < SCREEN_HEIGHT) {
                 obj_set_attr(&obj_buffer[spriteIdx],
