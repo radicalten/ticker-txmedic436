@@ -169,8 +169,8 @@ int main() {
         
         // A. Clear Background (Floor/Ceiling)
         // Optimization: DMA Fill is much faster than pixel plotting
-        DMA_TRANSFER(&vid_mem[0], &((u16){CLR_CEILING}), (SW*SH/2) | DMA_32 | DMA_SRC_FIXED);
-        DMA_TRANSFER(&vid_mem[SW*SH/2], &((u16){CLR_FLOOR}), (SW*SH/2) | DMA_32 | DMA_SRC_FIXED);
+        DMA_TRANSFER(&vid_mem[0], &((u16){CLR_CEILING}), (SW*SH/2) , DMA_32 , DMA_SRC_FIXED);
+        DMA_TRANSFER(&vid_mem[SW*SH/2], &((u16){CLR_FLOOR}), (SW*SH/2) , DMA_32 , DMA_SRC_FIXED);
 
         // B. Raycasting Loop
         for(int x = 0; x < SW; x++) {
