@@ -32,10 +32,10 @@
 
 #define PLAYER_WIDTH    16
 #define PLAYER_HEIGHT   24
-#define PLAYER_SPEED    FX_ONE
-#define PLAYER_JUMP     (3 * FX_ONE)
-#define GRAVITY         (FX_ONE / 8)
-#define MAX_FALL_SPEED  (4 * FX_ONE)
+#define PLAYER_SPEED    FIX_ONE
+#define PLAYER_JUMP     (3 * FIX_ONE)
+#define GRAVITY         (FIX_ONE / 8)
+#define MAX_FALL_SPEED  (4 * FIX_ONE)
 
 #define MAX_BULLETS     8
 #define BULLET_SPEED    4
