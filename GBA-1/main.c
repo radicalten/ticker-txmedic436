@@ -1,279 +1,444 @@
-// iso_racer.c
+// iso_offroad_tonc.c
+// Single-screen isometric racer demo for GBA (Mode 3 bitmap), using tonc.
+// Track is procedural (no external art assets).
 //
-// Minimal single-file GBA isometric-style racing demo using Tonc.
-// Controls:
-//   D-Pad LEFT/RIGHT : steer
-//   D-Pad UP         : accelerate
-//   D-Pad DOWN       : brake/reverse
+// Build idea (devkitARM + tonc):
+//   arm-none-eabi-gcc iso_offroad_tonc.c -mthumb -O2 -Wall -Wextra -I<tonc>/include -L<tonc>/lib -ltonc -lm -o game.elf
+//
+// Notes:
+// - Uses Mode 3 (240x160 16-bit) and draws isometric diamonds in software.
+// - This is a small demo inspired by the feel of classic off-road racers,
+//   not a content/asset clone.
+//
+// References:
+// - Tonc (GBA dev tutorial / headers): https://www.coranac.com/tonc/text/
+// - GBATEK (registers, display modes, VCOUNT, keys): https://problemkaputt.de/gbatek.htm
 
 #include <tonc.h>
 #include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
 
-#define SCREEN_WIDTH   240
-#define SCREEN_HEIGHT  160
+#define SCREEN_W 240
+#define SCREEN_H 160
 
-// Colors (15-bit BGR)
-#define COL_GRASS   RGB15( 4, 12,  4)
-#define COL_ROAD    RGB15(16, 16, 16)
-#define COL_PLAYER  RGB15(31,  0,  0)
-#define COL_AI      RGB15( 0,  0, 31)
+// Isometric tile geometry (diamond)
+#define TILE_W 16
+#define TILE_H 8
 
-// Simple car struct in world space (top-down)
-typedef struct
+// Single-screen map size (picked to fit comfortably on 240x160)
+#define MAP_W 14
+#define MAP_H 14
+
+// Key mask if not provided
+#ifndef KEY_MASK
+#define KEY_MASK 0x03FF
+#endif
+
+typedef uint16_t COLOR;
+
+// Tile types
+enum {
+	T_GRASS = 0,
+	T_ROAD  = 1,
+	T_MUD   = 2,
+	T_FINISH= 3,
+};
+
+static uint8_t g_map[MAP_H][MAP_W];
+
+// ------------------------------
+// Minimal Mode 3 drawing helpers
+// ------------------------------
+static inline void vsync(void)
 {
-    float wx, wy;    // world position (0..~256)
-    float angle;     // facing angle in radians
-    float speed;     // scalar speed
+	// Wait until we're out of vblank, then wait until vblank begins.
+	while(REG_VCOUNT >= 160) {}
+	while(REG_VCOUNT < 160) {}
+}
+
+static inline void pset(int x, int y, COLOR c)
+{
+	if((unsigned)x < SCREEN_W && (unsigned)y < SCREEN_H)
+		vid_mem[y*SCREEN_W + x] = c;
+}
+
+static void hline(int x1, int x2, int y, COLOR c)
+{
+	if((unsigned)y >= SCREEN_H) return;
+	if(x1 > x2) { int t=x1; x1=x2; x2=t; }
+
+	if(x2 < 0 || x1 >= SCREEN_W) return;
+	if(x1 < 0) x1 = 0;
+	if(x2 >= SCREEN_W) x2 = SCREEN_W-1;
+
+	COLOR *dst = &vid_mem[y*SCREEN_W + x1];
+	for(int x=x1; x<=x2; x++)
+		*dst++ = c;
+}
+
+static void clear_screen(COLOR c)
+{
+	for(int i=0; i<SCREEN_W*SCREEN_H; i++)
+		vid_mem[i] = c;
+}
+
+static void rect_fill(int x, int y, int w, int h, COLOR c)
+{
+	int x2 = x + w - 1;
+	int y2 = y + h - 1;
+	for(int yy=y; yy<=y2; yy++)
+		hline(x, x2, yy, c);
+}
+
+static void line(int x0, int y0, int x1, int y1, COLOR c)
+{
+	// Bresenham
+	int dx = (x1>x0) ? (x1-x0) : (x0-x1);
+	int sx = (x0<x1) ? 1 : -1;
+	int dy = (y1>y0) ? (y0-y1) : (y1-y0); // negative
+	int sy = (y0<y1) ? 1 : -1;
+	int err = dx + dy;
+
+	while(1)
+	{
+		pset(x0,y0,c);
+		if(x0==x1 && y0==y1) break;
+		int e2 = 2*err;
+		if(e2 >= dy) { err += dy; x0 += sx; }
+		if(e2 <= dx) { err += dx; y0 += sy; }
+	}
+}
+
+// Draw a filled isometric diamond centered at (cx,cy)
+static void diamond_fill(int cx, int cy, int w, int h, COLOR c)
+{
+	const int halfH = h/2;           // for TILE_H=8 -> 4
+	const int step  = w/halfH;       // for TILE_W=16 -> 4
+
+	for(int r=0; r<h; r++)
+	{
+		int k = (r < halfH) ? (r+1) : (h-r);
+		int width = k * step;         // 4,8,12,16,16,12,8,4 for 16x8
+		int y = cy - halfH + r;
+		int x1 = cx - width/2;
+		int x2 = x1 + width - 1;
+		hline(x1, x2, y, c);
+	}
+}
+
+// Striped finish tile (simple scanline stripes)
+static void diamond_finish(int cx, int cy, int w, int h, int phase)
+{
+	const int halfH = h/2;
+	const int step  = w/halfH;
+
+	COLOR c0 = RGB15(31,31,31);
+	COLOR c1 = RGB15( 2, 2, 2);
+
+	for(int r=0; r<h; r++)
+	{
+		int k = (r < halfH) ? (r+1) : (h-r);
+		int width = k * step;
+		int y = cy - halfH + r;
+		int x1 = cx - width/2;
+		int x2 = x1 + width - 1;
+
+		// Alternate every 2 pixels, offset by row & phase
+		for(int x=x1; x<=x2; x++)
+		{
+			COLOR cc = (((x + (r<<1) + phase) >> 1) & 1) ? c0 : c1;
+			pset(x, y, cc);
+		}
+	}
+}
+
+// ------------------------------
+// Isometric projection
+// ------------------------------
+static inline void iso_project(float wx, float wy, int *sx, int *sy)
+{
+	// Center map around origin in world space.
+	const float cx = (MAP_W-1) * 0.5f;
+	const float cy = (MAP_H-1) * 0.5f;
+
+	float dx = wx - cx;
+	float dy = wy - cy;
+
+	// Screen origin for centered single-screen view
+	const int ORGX = 120;
+	const int ORGY = 80;
+
+	float px = (dx - dy) * (TILE_W * 0.5f);
+	float py = (dx + dy) * (TILE_H * 0.5f);
+
+	*sx = ORGX + (int)lroundf(px);
+	*sy = ORGY + (int)lroundf(py);
+}
+
+// ------------------------------
+// Track generation
+// ------------------------------
+static void build_track(void)
+{
+	// Fill grass
+	for(int y=0; y<MAP_H; y++)
+		for(int x=0; x<MAP_W; x++)
+			g_map[y][x] = T_GRASS;
+
+	// Simple square loop track (ring) with width 2
+	const int o0 = 2, o1 = 11; // outer bounds
+	const int w  = 2;
+
+	for(int y=o0; y<=o1; y++)
+	{
+		for(int x=o0; x<=o1; x++)
+		{
+			bool on_outer =
+				(x==o0 || x==o1 || y==o0 || y==o1 ||
+				 x==o0+1 || x==o1-1 || y==o0+1 || y==o1-1);
+
+			if(on_outer)
+				g_map[y][x] = T_ROAD;
+		}
+	}
+
+	// Finish line on the top straight
+	g_map[o0][6] = T_FINISH;
+	g_map[o0][7] = T_FINISH;
+
+	// Mud patch on right straight
+	for(int y=6; y<=8; y++)
+		g_map[y][o1-1] = T_MUD;
+
+	(void)w;
+}
+
+static inline uint8_t tile_at(float wx, float wy)
+{
+	int x = (int)floorf(wx);
+	int y = (int)floorf(wy);
+	if(x<0 || x>=MAP_W || y<0 || y>=MAP_H) return T_GRASS;
+	return g_map[y][x];
+}
+
+// ------------------------------
+// Car + physics
+// ------------------------------
+typedef struct Car
+{
+	float x, y;        // world in tile coords
+	float vx, vy;      // world vel (tiles/frame)
+	float ang;         // radians
+	int laps;
+	bool on_finish_prev;
 } Car;
 
-static Car player;
-static Car ai;
-static float aiParam = 0.25f;   // 0..1 around the track
-
-//------------------------------------------------------------------------------
-// World / track helpers
-//------------------------------------------------------------------------------
-
-// Returns non-zero if (wx,wy) is on the road.
-// Track is a square ring: outer square minus inner square.
-static int isRoad(int wx, int wy)
+static void car_reset(Car *c)
 {
-    const int outerMin = 32, outerMax = 224;
-    const int innerMin = 96, innerMax = 160;
-
-    // Outside outer bounds -> not road
-    if (wx < outerMin || wx > outerMax || wy < outerMin || wy > outerMax)
-        return 0;
-
-    // Inside inner "infield" -> not road
-    if (wx > innerMin && wx < innerMax && wy > innerMin && wy < innerMax)
-        return 0;
-
-    // Otherwise it's road
-    return 1;
+	*c = (Car){
+		.x = 6.5f,
+		.y = 3.5f,
+		.vx = 0.0f,
+		.vy = 0.0f,
+		.ang = 1.5707963f, // ~pi/2
+		.laps = 0,
+		.on_finish_prev = false
+	};
 }
 
-// Convert world (wx, wy) into isometric screen coords (sx, sy).
-// World is a flat square; we project it into a diamond.
-static void world_to_screen(int wx, int wy, int *sx, int *sy)
+static void car_update(Car *c, uint16_t keys)
 {
-    // Simple isometric-ish projection
-    int ix = (wx - wy) / 2;
-    int iy = (wx + wy) / 4;
+	// Parameters tuned for “arcade-ish” feel in tile-space
+	const float accel      = 0.020f;
+	const float brake      = 0.018f;
+	const float turn_rate  = 0.060f; // radians/frame
+	const float max_speed  = 0.60f;
 
-    *sx = ix + SCREEN_WIDTH / 2;   // center horizontally
-    *sy = iy + 24;                 // shift down a bit
+	const bool up    = (keys & KEY_UP)    != 0;
+	const bool down  = (keys & KEY_DOWN)  != 0;
+	const bool left  = (keys & KEY_LEFT)  != 0;
+	const bool right = (keys & KEY_RIGHT) != 0;
+	const bool turbo = (keys & KEY_A)     != 0;
+	const bool reset = (keys & KEY_B)     != 0;
+
+	if(reset)
+	{
+		car_reset(c);
+		return;
+	}
+
+	uint8_t t = tile_at(c->x, c->y);
+
+	// Surface-dependent drag/traction
+	float drag = 0.985f;
+	float grip = 1.00f;
+	if(t == T_GRASS) { drag = 0.965f; grip = 0.70f; }
+	if(t == T_MUD)   { drag = 0.955f; grip = 0.55f; }
+
+	// Steering effectiveness scales with speed (tiny when stopped)
+	float speed = sqrtf(c->vx*c->vx + c->vy*c->vy);
+	float steer = turn_rate * (0.25f + 1.25f*speed) * grip;
+
+	if(left)  c->ang -= steer;
+	if(right) c->ang += steer;
+
+	// Accel along heading
+	float ax = 0.0f, ay = 0.0f;
+	float hx = cosf(c->ang);
+	float hy = sinf(c->ang);
+
+	if(up)
+	{
+		float a = accel * (turbo ? 1.8f : 1.0f);
+		ax += hx * a;
+		ay += hy * a;
+	}
+	if(down)
+	{
+		ax -= hx * brake;
+		ay -= hy * brake;
+	}
+
+	// Integrate velocity with drag
+	c->vx = c->vx * drag + ax;
+	c->vy = c->vy * drag + ay;
+
+	// Speed clamp
+	speed = sqrtf(c->vx*c->vx + c->vy*c->vy);
+	if(speed > max_speed)
+	{
+		float s = max_speed / speed;
+		c->vx *= s;
+		c->vy *= s;
+	}
+
+	// Integrate position
+	c->x += c->vx;
+	c->y += c->vy;
+
+	// Keep within world bounds (simple clamp + damp)
+	if(c->x < 0.2f) { c->x = 0.2f; c->vx *= -0.2f; }
+	if(c->y < 0.2f) { c->y = 0.2f; c->vy *= -0.2f; }
+	if(c->x > (MAP_W-1) + 0.8f) { c->x = (MAP_W-1) + 0.8f; c->vx *= -0.2f; }
+	if(c->y > (MAP_H-1) + 0.8f) { c->y = (MAP_H-1) + 0.8f; c->vy *= -0.2f; }
+
+	// Lap detection: count when you newly enter a finish tile with some motion
+	bool on_finish = (tile_at(c->x, c->y) == T_FINISH);
+	if(on_finish && !c->on_finish_prev && speed > 0.08f)
+		c->laps++;
+	c->on_finish_prev = on_finish;
 }
 
-//------------------------------------------------------------------------------
-// Drawing helpers (Mode 3)
-//------------------------------------------------------------------------------
-
-// Clear entire Mode 3 screen to a single color.
-static void clear_screen(u16 clr)
+// ------------------------------
+// Rendering
+// ------------------------------
+static inline COLOR shade(COLOR c, int darker)
 {
-    int count = SCREEN_WIDTH * SCREEN_HEIGHT;
-    int i;
-    for (i = 0; i < count; i++)
-        vid_mem[i] = clr;
+	// Very tiny “manual shading”: choose between two pre-picked colors in caller.
+	(void)c; (void)darker;
+	return c;
 }
 
-// Draw a filled rectangle with clipping.
-static void draw_rect(int x, int y, int w, int h, u16 clr)
+static void draw_world(int frame_phase)
 {
-    if (x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT)
-        return;
+	// Back-to-front order for isometric: increasing (x+y)
+	for(int s=0; s<MAP_W+MAP_H-1; s++)
+	{
+		for(int y=0; y<MAP_H; y++)
+		{
+			int x = s - y;
+			if(x < 0 || x >= MAP_W) continue;
 
-    int x2 = x + w;
-    int y2 = y + h;
+			int sx, sy;
+			iso_project((float)x + 0.5f, (float)y + 0.5f, &sx, &sy);
 
-    if (x2 <= 0 || y2 <= 0)
-        return;
+			int checker = (x ^ y) & 1;
 
-    if (x < 0)  x = 0;
-    if (y < 0)  y = 0;
-    if (x2 > SCREEN_WIDTH)  x2 = SCREEN_WIDTH;
-    if (y2 > SCREEN_HEIGHT) y2 = SCREEN_HEIGHT;
-
-    for (int iy = y; iy < y2; iy++)
-    {
-        u16 *row = &vid_mem[iy * SCREEN_WIDTH];
-        for (int ix = x; ix < x2; ix++)
-            row[ix] = clr;
-    }
+			uint8_t t = g_map[y][x];
+			if(t == T_GRASS)
+			{
+				COLOR c = checker ? RGB15(6, 17, 6) : RGB15(5, 14, 5);
+				diamond_fill(sx, sy, TILE_W, TILE_H, c);
+			}
+			else if(t == T_ROAD)
+			{
+				COLOR c = checker ? RGB15(12, 12, 12) : RGB15(10, 10, 10);
+				diamond_fill(sx, sy, TILE_W, TILE_H, c);
+			}
+			else if(t == T_MUD)
+			{
+				COLOR c = checker ? RGB15(12, 7, 3) : RGB15(10, 6, 3);
+				diamond_fill(sx, sy, TILE_W, TILE_H, c);
+			}
+			else // T_FINISH
+			{
+				diamond_finish(sx, sy, TILE_W, TILE_H, (x + y + frame_phase) & 3);
+			}
+		}
+	}
 }
 
-// Stamp the track onto the screen by sampling world positions
-// and drawing small road patches at their projected positions.
-static void draw_track(void)
+static void draw_car(const Car *c)
 {
-    // Coarse grid sampling in world space
-    for (int wy = 32; wy <= 224; wy += 3)
-    {
-        for (int wx = 32; wx <= 224; wx += 3)
-        {
-            if (isRoad(wx, wy))
-            {
-                int sx, sy;
-                world_to_screen(wx, wy, &sx, &sy);
-                // Small 3x3 road tile
-                draw_rect(sx - 1, sy - 1, 3, 3, COL_ROAD);
-            }
-        }
-    }
+	int cx, cy;
+	iso_project(c->x, c->y, &cx, &cy);
+
+	// Car body
+	rect_fill(cx-3, cy-2, 7, 5, RGB15(31, 4, 4));
+	rect_fill(cx-2, cy-1, 5, 3, RGB15(31, 20, 20));
+
+	// Heading indicator: transform world heading into screen space direction
+	float hx = cosf(c->ang);
+	float hy = sinf(c->ang);
+	float sx = (hx - hy) * (TILE_W * 0.5f);
+	float sy = (hx + hy) * (TILE_H * 0.5f);
+
+	// Normalize for consistent length
+	float len = sqrtf(sx*sx + sy*sy);
+	if(len < 0.0001f) len = 1.0f;
+	sx /= len; sy /= len;
+
+	int fx = cx + (int)lroundf(sx * 10.0f);
+	int fy = cy + (int)lroundf(sy * 10.0f);
+	line(cx, cy, fx, fy, RGB15(31, 31, 0));
 }
 
-//------------------------------------------------------------------------------
-// AI path around centerline of the ring
-//------------------------------------------------------------------------------
-
-static void path_pos(float t, float *wx, float *wy)
-{
-    const float x1 = 64.0f, y1 = 64.0f;
-    const float x2 = 192.0f, y2 = 192.0f;
-
-    // Wrap t into [0,1)
-    t = fmodf(t, 1.0f);
-    if (t < 0.0f)
-        t += 1.0f;
-
-    float seg = t * 4.0f;      // 4 segments
-    int   si  = (int)seg;      // which side
-    float ft  = seg - si;      // fraction along that side
-
-    switch (si)
-    {
-    case 0: // Top edge: (x1,y1) -> (x2,y1)
-        *wx = x1 + (x2 - x1) * ft;
-        *wy = y1;
-        break;
-    case 1: // Right edge: (x2,y1) -> (x2,y2)
-        *wx = x2;
-        *wy = y1 + (y2 - y1) * ft;
-        break;
-    case 2: // Bottom edge: (x2,y2) -> (x1,y2)
-        *wx = x2 - (x2 - x1) * ft;
-        *wy = y2;
-        break;
-    case 3: // Left edge: (x1,y2) -> (x1,y1)
-    default:
-        *wx = x1;
-        *wy = y2 - (y2 - y1) * ft;
-        break;
-    }
-}
-
-//------------------------------------------------------------------------------
-// Game update & draw
-//------------------------------------------------------------------------------
-
-static void update_player(void)
-{
-    const float TURN_RATE = 0.03f;
-    const float ACCEL     = 0.05f;
-    const float FRICTION  = 0.985f;
-    const float MAX_FWD   = 2.0f;
-    const float MAX_REV   = -1.0f;
-
-    key_poll();
-
-    if (key_is_down(KEY_LEFT))
-        player.angle -= TURN_RATE;
-    if (key_is_down(KEY_RIGHT))
-        player.angle += TURN_RATE;
-
-    if (key_is_down(KEY_UP))
-        player.speed += ACCEL;
-    if (key_is_down(KEY_DOWN))
-        player.speed -= ACCEL * 0.7f;
-
-    // Friction
-    player.speed *= FRICTION;
-
-    // Clamp speed
-    if (player.speed >  MAX_FWD) player.speed =  MAX_FWD;
-    if (player.speed <  MAX_REV) player.speed =  MAX_REV;
-
-    // Move in facing direction
-    float dx = cosf(player.angle) * player.speed;
-    float dy = sinf(player.angle) * player.speed;
-
-    float newx = player.wx + dx;
-    float newy = player.wy + dy;
-
-    if (isRoad((int)newx, (int)newy))
-    {
-        player.wx = newx;
-        player.wy = newy;
-    }
-    else
-    {
-        // Simple bounce against walls
-        player.speed *= -0.3f;
-    }
-}
-
-static void update_ai(void)
-{
-    // Constant-speed parametric motion around centerline
-    aiParam += 0.0015f;
-    path_pos(aiParam, &ai.wx, &ai.wy);
-}
-
-// Draw the two cars on top of the track.
-static void draw_cars(void)
-{
-    int sx, sy;
-
-    // AI car
-    world_to_screen((int)ai.wx, (int)ai.wy, &sx, &sy);
-    draw_rect(sx - 2, sy - 2, 5, 5, COL_AI);
-
-    // Player car
-    world_to_screen((int)player.wx, (int)player.wy, &sx, &sy);
-    draw_rect(sx - 2, sy - 2, 5, 5, COL_PLAYER);
-}
-
-//------------------------------------------------------------------------------
-// Init and main
-//------------------------------------------------------------------------------
-
-static void init_game(void)
-{
-    // Mode 3, BG2 on
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
-
-    // Player starting position: somewhere on the track
-    player.wx    = 64.0f;
-    player.wy    = 160.0f;
-    player.angle = 0.0f;
-    player.speed = 0.0f;
-
-    // AI car initial position
-    ai.angle = 0.0f;
-    ai.speed = 0.0f;
-    path_pos(aiParam, &ai.wx, &ai.wy);
-}
-
+// ------------------------------
+// Main
+// ------------------------------
 int main(void)
 {
-    init_game();
+	REG_DISPCNT = DCNT_MODE3 | DCNT_BG2; // Mode 3 bitmap on BG2 (GBATEK/Tonc)
 
-    while (1)
-    {
-        vid_vsync();                // Wait for VBlank
+	build_track();
 
-        // Clear to grass; road will be drawn on top
-        clear_screen(COL_GRASS);
+	Car car;
+	car_reset(&car);
 
-        // Update
-        update_player();
-        update_ai();
+	int frame = 0;
 
-        // Draw
-        draw_track();
-        draw_cars();
-    }
+	while(1)
+	{
+		vsync();
 
-    return 0;
+		// Read keys (pressed = 1)
+		uint16_t keys = (uint16_t)(~REG_KEYINPUT) & KEY_MASK;
+
+		car_update(&car, keys);
+
+		// Draw
+		clear_screen(RGB15(0, 0, 0));     // black frame border
+		draw_world(frame);
+		draw_car(&car);
+
+		// Minimal HUD (no tonc text engine used to keep this file self-contained):
+		// Draw tiny lap pips at top-left.
+		for(int i=0; i<car.laps && i<20; i++)
+			rect_fill(4 + i*6, 4, 4, 4, RGB15(31,31,31));
+
+		frame++;
+	}
+
+	return 0;
 }
