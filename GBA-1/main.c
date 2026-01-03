@@ -1,296 +1,284 @@
-// ==================================================================================
-// GBA Gradius-Clone (Single File Example)
-// Requires: devkitPro and libtonc
-// Compile with: arm-none-eabi-gcc -mthumb -mthumb-interwork -c main.c
-//               (Link with tonc.specs via Makefile usually)
-// ==================================================================================
+// main.c - simple DOOM-like (Wolf3D-style) raycaster for GBA using tonc
+// Single source file, uses Mode 3 bitmap rendering.
+//
+// Controls:
+//   D-Pad UP / DOWN : move forward / backward
+//   D-Pad LEFT / RIGHT : rotate view
+//   L / R : strafe left / right
 
 #include <tonc.h>
-#include <string.h>
-#include <stdlib.h>
 
-// --- Constants ---
-#define MAX_BULLETS 10
-#define MAX_ENEMIES 8
-#define SCREEN_WIDTH 240
-#define SCREEN_HEIGHT 160
-#define PLAYER_SPEED 2
-#define BULLET_SPEED 5
-#define ENEMY_SPEED 1
+#define SCREEN_W 240
+#define SCREEN_H 160
 
-// --- Graphics Data (Embedded to keep this a single file) ---
-// 4bpp (16 colors) 8x8 tiles. 
-// 0 = Transparent, 1 = Color 1, 2 = Color 2...
+#define MAP_W 16
+#define MAP_H 16
 
-// Tile 0: The Player Ship (Sideways triangle)
-const unsigned int tile_ship[8] = {
-    0x00000000, 0x00000011, 0x00001111, 0x11111111, 
-    0x11111111, 0x00001111, 0x00000011, 0x00000000
+// Simple 16x16 map: 0 = empty, 1..4 = wall types
+static const int worldMap[MAP_H][MAP_W] =
+{
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,2,0,0,0,0,0,0,0,3,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,4,4,4,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,4,0,4,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,4,4,4,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,2,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,3,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
 
-// Tile 1: The Enemy (Roundish shape)
-const unsigned int tile_enemy[8] = {
-    0x00222200, 0x02222220, 0x22200222, 0x22000022, 
-    0x22000022, 0x22200222, 0x02222220, 0x00222200
-};
-
-// Tile 2: Bullet (Small line)
-const unsigned int tile_bullet[8] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00333300, 
-    0x00333300, 0x00000000, 0x00000000, 0x00000000
-};
-
-// Tile 3: Star (Background)
-const unsigned int tile_star[8] = {
-    0x00000000, 0x00004000, 0x00044400, 0x00004000, 
-    0x00000000, 0x00000000, 0x00000000, 0x00000000
-};
-
-// --- Structures ---
-
-typedef struct {
-    int x, y;
-    int w, h;
-    bool active;
-} Bullet;
-
-typedef struct {
-    int x, y;
-    int w, h;
-    bool active;
-    int frame_offset; // For sine wave movement
-} Enemy;
-
-typedef struct {
-    int x, y;
-    int w, h;
-    int cooldown;
-} Player;
-
-// --- Global State ---
-Player player;
-Bullet bullets[MAX_BULLETS];
-Enemy enemies[MAX_ENEMIES];
-OBJ_ATTR obj_buffer[128]; // OAM Buffer
-int bg_scroll_x = 0;
-u16* map_ptr; // Pointer to background map memory
-
-// --- Functions ---
-
-void init_graphics() {
-    // 1. Load Palette
-    // MEM_PAL_OBJ is strictly for sprites, MEM_PAL_BG for background
-    pal_obj_mem[0] = CLR_MAG; // Transparent
-    pal_obj_mem[1] = CLR_LIME;    // Player Color
-    pal_obj_mem[2] = CLR_RED;     // Enemy Color
-    pal_obj_mem[3] = CLR_YELLOW;  // Bullet Color
-    
-    pal_bg_mem[0] = CLR_BLACK;    // BG Background
-    pal_bg_mem[4] = CLR_WHITE;    // Star Color
-
-    // 2. Load Tiles into VRAM (Character Block 4 for sprites)
-    memcpy32(&tile_mem[4][0], tile_ship, 8);   // Sprite Tile 0
-    memcpy32(&tile_mem[4][1], tile_enemy, 8);  // Sprite Tile 1
-    memcpy32(&tile_mem[4][2], tile_bullet, 8); // Sprite Tile 2
-
-    // Load Tiles into VRAM (Character Block 0 for BG)
-    memcpy32(&tile_mem[0][1], tile_star, 8);   // BG Tile 1 (0 is empty)
+// Small helper to avoid <math.h>
+static inline float f_abs(float x)
+{
+    return (x < 0.0f) ? -x : x;
 }
 
-void init_background() {
-    // Set up a starfield in BG0
-    // CBB = 0 (Tile data), SBB = 30 (Map data)
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
-    
-    map_ptr = (u16*)se_mem[30]; // Screen Entry Block 30
+int main(void)
+{
+    // Basic GBA/tonc init
+    irq_init(NULL);
+    irq_add(II_VBLANK, NULL);
 
-    // Clear map
-    for(int i=0; i<1024; i++) map_ptr[i] = 0;
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-    // Scatter some stars randomly
-    for(int i=0; i<50; i++) {
-        int tx = qran_range(0, 32);
-        int ty = qran_range(0, 32);
-        // Set tile index 1, palette 0
-        map_ptr[ty * 32 + tx] = SE_PALBANK(0) | 1; 
-    }
-}
+    // Player state
+    float posX = 8.0f;   // player position in map space
+    float posY = 8.0f;
+    float dirX = -1.0f;  // initial direction vector
+    float dirY =  0.0f;
+    float planeX = 0.0f;     // camera plane (controls FOV)
+    float planeY = 0.66f;    // FOV ~ 66°
 
-void init_game() {
-    // Player init
-    player.x = 20;
-    player.y = SCREEN_HEIGHT / 2;
-    player.w = 8;
-    player.h = 8;
-    player.cooldown = 0;
+    // Movement / rotation constants
+    const float moveSpeed = 0.08f;     // per frame
+    // Rotation of about 0.1 radians (~5.7 degrees)
+    const float rotCos   = 0.99500417f;  // cos(0.1)
+    const float rotSin   = 0.09983342f;  // sin(0.1)
 
-    // Clear entities
-    for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = false;
-    for(int i=0; i<MAX_ENEMIES; i++) enemies[i].active = false;
+    // Colors
+    const u16 skyColor   = RGB15(8, 8, 16);
+    const u16 floorColor = RGB15(4, 12, 4);
 
-    // Reset OAM buffer
-    oam_init(obj_buffer, 128);
-}
+    while(1)
+    {
+        // Wait for VBlank
+        vid_vsync();
+        key_poll();
 
-// Simple AABB Collision
-bool check_collision(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2) {
-    return (x1 < x2 + w2 && x1 + w1 > x2 &&
-            y1 < y2 + h2 && y1 + h1 > y2);
-}
+        // --- Movement ---
 
-void update() {
-    // 1. Player Movement
-    int dx = key_tri_horz();
-    int dy = key_tri_vert();
+        // Forward
+        if(key_is_down(KEY_UP))
+        {
+            float newX = posX + dirX * moveSpeed;
+            float newY = posY + dirY * moveSpeed;
 
-    player.x += dx * PLAYER_SPEED;
-    player.y += dy * PLAYER_SPEED;
+            // Basic collision: only move if target tile is empty (0)
+            if(worldMap[(int)posY][(int)newX] == 0) posX = newX;
+            if(worldMap[(int)newY][(int)posX] == 0) posY = newY;
+        }
+        // Backward
+        if(key_is_down(KEY_DOWN))
+        {
+            float newX = posX - dirX * moveSpeed;
+            float newY = posY - dirY * moveSpeed;
 
-    // Clamp to screen
-    if(player.x < 0) player.x = 0;
-    if(player.x > SCREEN_WIDTH - 8) player.x = SCREEN_WIDTH - 8;
-    if(player.y < 0) player.y = 0;
-    if(player.y > SCREEN_HEIGHT - 8) player.y = SCREEN_HEIGHT - 8;
+            if(worldMap[(int)posY][(int)newX] == 0) posX = newX;
+            if(worldMap[(int)newY][(int)posX] == 0) posY = newY;
+        }
 
-    // 2. Shooting
-    if(player.cooldown > 0) player.cooldown--;
-    if(key_held(KEY_A) && player.cooldown == 0) {
-        for(int i=0; i<MAX_BULLETS; i++) {
-            if(!bullets[i].active) {
-                bullets[i].active = true;
-                bullets[i].x = player.x + 4;
-                bullets[i].y = player.y;
-                bullets[i].w = 8;
-                bullets[i].h = 8;
-                player.cooldown = 15; // Fire rate
-                break;
+        // Strafe left (L)
+        if(key_is_down(KEY_L))
+        {
+            float newX = posX - planeX * moveSpeed;
+            float newY = posY - planeY * moveSpeed;
+
+            if(worldMap[(int)posY][(int)newX] == 0) posX = newX;
+            if(worldMap[(int)newY][(int)posX] == 0) posY = newY;
+        }
+
+        // Strafe right (R)
+        if(key_is_down(KEY_R))
+        {
+            float newX = posX + planeX * moveSpeed;
+            float newY = posY + planeY * moveSpeed;
+
+            if(worldMap[(int)posY][(int)newX] == 0) posX = newX;
+            if(worldMap[(int)newY][(int)posX] == 0) posY = newY;
+        }
+
+        // Rotate left
+        if(key_is_down(KEY_LEFT))
+        {
+            float oldDirX   = dirX;
+            float oldPlaneX = planeX;
+
+            dirX   = dirX   * rotCos - dirY   * rotSin;
+            dirY   = oldDirX * rotSin + dirY  * rotCos;
+
+            planeX = planeX * rotCos - planeY * rotSin;
+            planeY = oldPlaneX * rotSin + planeY * rotCos;
+        }
+
+        // Rotate right
+        if(key_is_down(KEY_RIGHT))
+        {
+            float oldDirX   = dirX;
+            float oldPlaneX = planeX;
+
+            // Rotation by -angle
+            dirX   = dirX   * rotCos + dirY   * rotSin;
+            dirY   = -oldDirX * rotSin + dirY * rotCos;
+
+            planeX = planeX * rotCos + planeY * rotSin;
+            planeY = -oldPlaneX * rotSin + planeY * rotCos;
+        }
+
+        // --- Clear screen with sky/floor ---
+
+        int y, x;
+        for(y=0; y<SCREEN_H/2; y++)
+            for(x=0; x<SCREEN_W; x++)
+                m3_plot(x, y, skyColor);
+
+        for(; y<SCREEN_H; y++)
+            for(x=0; x<SCREEN_W; x++)
+                m3_plot(x, y, floorColor);
+
+        // --- Raycasting per vertical stripe ---
+
+        // Use 2-pixel wide columns for speed
+        for(x=0; x<SCREEN_W; x += 2)
+        {
+            // Camera space x coordinate: -1 to +1
+            float cameraX = 2.0f * x / (float)SCREEN_W - 1.0f;
+
+            float rayDirX = dirX + planeX * cameraX;
+            float rayDirY = dirY + planeY * cameraX;
+
+            int mapX = (int)posX;
+            int mapY = (int)posY;
+
+            float sideDistX;
+            float sideDistY;
+
+            float deltaDistX = (rayDirX == 0.0f) ? 1e30f : f_abs(1.0f / rayDirX);
+            float deltaDistY = (rayDirY == 0.0f) ? 1e30f : f_abs(1.0f / rayDirY);
+
+            int stepX, stepY;
+            int hit = 0;
+            int side = 0;
+
+            // Initial step and side distances
+            if(rayDirX < 0.0f)
+            {
+                stepX = -1;
+                sideDistX = (posX - mapX) * deltaDistX;
             }
-        }
-    }
-
-    // 3. Update Bullets
-    for(int i=0; i<MAX_BULLETS; i++) {
-        if(bullets[i].active) {
-            bullets[i].x += BULLET_SPEED;
-            if(bullets[i].x > SCREEN_WIDTH) bullets[i].active = false;
-        }
-    }
-
-    // 4. Update Enemies (Spawn and Move)
-    if(qran_range(0, 100) < 2) { // 2% chance to spawn per frame
-        for(int i=0; i<MAX_ENEMIES; i++) {
-            if(!enemies[i].active) {
-                enemies[i].active = true;
-                enemies[i].x = SCREEN_WIDTH;
-                enemies[i].y = qran_range(10, SCREEN_HEIGHT - 10);
-                enemies[i].w = 8;
-                enemies[i].h = 8;
-                enemies[i].frame_offset = qran_range(0, 360);
-                break;
+            else
+            {
+                stepX = 1;
+                sideDistX = (mapX + 1.0f - posX) * deltaDistX;
             }
-        }
-    }
 
-    for(int i=0; i<MAX_ENEMIES; i++) {
-        if(enemies[i].active) {
-            enemies[i].x -= ENEMY_SPEED;
-            // Sine wave motion
-            enemies[i].y += (lu_sin(enemies[i].frame_offset) >> 10); 
-            enemies[i].frame_offset += 500; // Advance sine wave
+            if(rayDirY < 0.0f)
+            {
+                stepY = -1;
+                sideDistY = (posY - mapY) * deltaDistY;
+            }
+            else
+            {
+                stepY = 1;
+                sideDistY = (mapY + 1.0f - posY) * deltaDistY;
+            }
 
-            if(enemies[i].x < -8) enemies[i].active = false;
-
-            // Collision: Bullet vs Enemy
-            for(int b=0; b<MAX_BULLETS; b++) {
-                if(bullets[b].active && check_collision(
-                    bullets[b].x, bullets[b].y, bullets[b].w, bullets[b].h,
-                    enemies[i].x, enemies[i].y, enemies[i].w, enemies[i].h
-                )) {
-                    bullets[b].active = false;
-                    enemies[i].active = false;
-                    // Could add score here
+            // DDA: step through map grid until we hit a wall
+            while(!hit)
+            {
+                if(sideDistX < sideDistY)
+                {
+                    sideDistX += deltaDistX;
+                    mapX += stepX;
+                    side = 0;
                 }
+                else
+                {
+                    sideDistY += deltaDistY;
+                    mapY += stepY;
+                    side = 1;
+                }
+
+                // Map is fully enclosed by walls, so no need for bounds check:
+                if(worldMap[mapY][mapX] > 0)
+                    hit = 1;
             }
 
-            // Collision: Player vs Enemy
-            if(check_collision(
-                player.x, player.y, player.w, player.h,
-                enemies[i].x, enemies[i].y, enemies[i].w, enemies[i].h
-            )) {
-                // Die / Reset
-                init_game();
+            // Perpendicular distance to the wall
+            float perpWallDist;
+            if(side == 0)
+                perpWallDist = sideDistX - deltaDistX;
+            else
+                perpWallDist = sideDistY - deltaDistY;
+
+            if(perpWallDist <= 0.0f)
+                perpWallDist = 0.1f;
+
+            int lineHeight = (int)(SCREEN_H / perpWallDist);
+
+            int drawStart = -lineHeight / 2 + SCREEN_H / 2;
+            if(drawStart < 0) drawStart = 0;
+
+            int drawEnd = lineHeight / 2 + SCREEN_H / 2;
+            if(drawEnd >= SCREEN_H) drawEnd = SCREEN_H - 1;
+
+            // Choose wall color based on tile
+            int tile = worldMap[mapY][mapX];
+            u16 color;
+            switch(tile)
+            {
+                case 1: color = RGB15(31, 0, 0);  break; // red
+                case 2: color = RGB15(0, 31, 0);  break; // green
+                case 3: color = RGB15(0, 0, 31);  break; // blue
+                case 4: color = RGB15(31, 31, 0); break; // yellow
+                default: color = RGB15(31, 31, 31); break;
+            }
+
+            // Simple shading for y-sides
+            if(side == 1)
+                color = (color >> 1) & 0x7BDE;
+
+            // Draw the vertical wall slice, 2 pixels wide for speed
+            for(y = drawStart; y <= drawEnd; y++)
+            {
+                m3_plot(x,   y, color);
+                if(x+1 < SCREEN_W)
+                    m3_plot(x+1, y, color);
+            }
+        }
+
+        // Optional crosshair at center of screen
+        {
+            int cx = SCREEN_W/2;
+            int cy = SCREEN_H/2;
+            u16 crossColor = RGB15(31, 31, 31);
+
+            int i;
+            for(i=-4; i<=4; i++)
+            {
+                m3_plot(cx + i, cy, crossColor);
+                m3_plot(cx, cy + i, crossColor);
             }
         }
     }
 
-    // 5. Scroll Background
-    bg_scroll_x++;
-}
-
-void draw() {
-    int oam_id = 0;
-
-    // Draw Player (Tile 0)
-    obj_set_attr(&obj_buffer[oam_id++], 
-                 ATTR0_SQUARE,      // Shape
-                 ATTR1_SIZE_8,      // Size
-                 ATTR2_PALBANK(0) | 0); // Tile Index 0
-    
-    obj_set_pos(&obj_buffer[oam_id-1], player.x, player.y);
-
-    // Draw Bullets (Tile 2)
-    for(int i=0; i<MAX_BULLETS; i++) {
-        if(bullets[i].active) {
-            obj_set_attr(&obj_buffer[oam_id++], 
-                         ATTR0_SQUARE, 
-                         ATTR1_SIZE_8, 
-                         ATTR2_PALBANK(0) | 2); // Tile 2
-            obj_set_pos(&obj_buffer[oam_id-1], bullets[i].x, bullets[i].y);
-        }
-    }
-
-    // Draw Enemies (Tile 1)
-    for(int i=0; i<MAX_ENEMIES; i++) {
-        if(enemies[i].active) {
-            obj_set_attr(&obj_buffer[oam_id++], 
-                         ATTR0_SQUARE, 
-                         ATTR1_SIZE_8, 
-                         ATTR2_PALBANK(0) | 1); // Tile 1
-            obj_set_pos(&obj_buffer[oam_id-1], enemies[i].x, enemies[i].y);
-        }
-    }
-
-    // Hide remaining sprites in buffer
-    for(int i = oam_id; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
-
-    // Copy buffer to actual OAM memory
-    oam_copy(oam_mem, obj_buffer, 128);
-
-    // Update Background scroll register
-    REG_BG0HOFS = bg_scroll_x;
-}
-
-int main() {
-    // 1. Initialization
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-    
-    init_graphics();
-    init_background();
-    init_game();
-    
-    // Seed random number generator
-    sqran(0);
-
-    // 2. Main Loop
-    while(1) {
-        vid_vsync(); // Wait for VBlank (60 FPS cap)
-        key_poll();  // Update inputs
-        
-        update();
-        draw();
-    }
-
+    // Never reached
     return 0;
 }
