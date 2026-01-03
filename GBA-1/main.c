@@ -349,9 +349,9 @@ static void init_sprites(void)
 static void init_sound(void)
 {
     // libgba-style interrupt init (tonc includes gba.h)
-    irqInit();
-    irqSet(IRQ_VBLANK, mmVBlank);
-    irqEnable(IRQ_VBLANK);
+    irq_init();
+    irq_set(IRQ_VBLANK, mmVBlank);
+    irq_enable(IRQ_VBLANK);
 
     // Init maxmod with dummy soundbank, 8 channels
     mmInitDefault((mm_addr)soundbank_bin, 8);
@@ -553,7 +553,7 @@ static void draw_sprites(void)
 
 int main(void)
 {
-    irq_disable(IRQ_ALL);    // tonc macro, safe to call
+    irq_disable(IRQ_ADD);    // tonc macro, safe to call
     REG_IME = 0;
 
     init_video();
