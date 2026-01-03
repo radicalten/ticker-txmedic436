@@ -384,11 +384,6 @@ static inline void key_poll_simple(void)
     keys_curr = (u16)(~REG_KEYINPUT & KEY_MASK);
 }
 
-static inline int key_hit(u16 key)
-{
-    return (keys_curr & ~keys_prev) & key;
-}
-
 // -----------------------------------------------------------------------------
 // Game data
 // -----------------------------------------------------------------------------
