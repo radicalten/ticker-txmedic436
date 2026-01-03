@@ -1,994 +1,1038 @@
-// zork_like_gba.c
+// zork_gba_tonc_singlefile.c
+// A tiny Zork-like text adventure for GBA (Mode 3 bitmap) using tonc headers.
 //
-// Minimal Zork-like text adventure for GBA using tonc.
-// Single-file, mode 3, with a tiny built‑in 3x5 font and
-// a simple on-screen keyboard controlled by the D‑pad.
+// Controls (default):
+//   UP/DOWN        Pick character
+//   LEFT/RIGHT     Jump +/-5 characters
+//   A              Add selected character to command line
+//   B              Backspace
+//   SELECT         Clear command line
+//   START          Submit command
+//   R + D-PAD      Quick-move (R+UP=N, R+DOWN=S, R+LEFT=W, R+RIGHT=E)
 //
-// Controls:
-//   D-Pad : Move selection on keyboard
-//   A     : Add selected letter (or space) to command
-//   B     : Backspace
-//   START : Submit command
+// Supported commands (examples):
+//   LOOK / L
+//   INVENTORY / I
+//   GO NORTH  (or: NORTH, N, GO N)
+//   TAKE LANTERN
+//   DROP KEY
+//   USE LANTERN
+//   USE KEY
+//   USE COIN
+//   EXAMINE BOOK
+//   HELP
 //
-// Build (example):
-//   arm-none-eabi-gcc -std=c99 -O2 -mthumb -mthumb-interwork \
-//       -I/path/to/tonc/include -L/path/to/tonc/lib \
-//       zork_like_gba.c -ltonc -o zork_like_gba.elf
-//
-// Then convert ELF to GBA with your usual toolchain (e.g. objcopy).
+// Build note:
+//   - This file expects you have tonc available so `#include <tonc.h>` works.
+//   - You can link without tonclib because this file avoids tonc helper funcs.
+//     It only uses register/key/color macros/types from tonc.h.
 
+#include <tonc.h>
 #include <string.h>
-#include "tonc.h"
+#include <stdbool.h>
+#include <stddef.h>
 
-// -----------------------------------------------------------------------------
-// Basic video setup (Mode 3)
-// -----------------------------------------------------------------------------
-
+// ------------------------------------------------------------
+// Video (Mode 3 bitmap) helpers
+// ------------------------------------------------------------
 #define SCREEN_W 240
 #define SCREEN_H 160
 
-static u16 *const m3_fb = (u16 *)0x6000000;
+static volatile u16 *const VRAM = (volatile u16*)0x06000000;
 
-// Simple busy-wait VBlank sync (no interrupts needed).
-static void vsync(void)
+static inline void vsync(void)
 {
-    while (REG_VCOUNT >= 160);
-    while (REG_VCOUNT < 160);
+	// Wait until we're in VBlank then out of it (simple, no IRQ needed).
+	while(REG_VCOUNT >= 160) {}
+	while(REG_VCOUNT <  160) {}
 }
 
-// Colors (RGB15, 0-31 each)
-#define CLR_BG     RGB15(0, 0, 0)
-#define CLR_TEXT   RGB15(31, 31, 31)
-#define CLR_TITLE  RGB15(0, 31, 0)
-#define CLR_HUD    RGB15(31, 31, 0)
-#define CLR_SEL    RGB15(31, 0, 0)
+static inline void pset(int x, int y, u16 clr)
+{
+	if((unsigned)x < SCREEN_W && (unsigned)y < SCREEN_H)
+		VRAM[y*SCREEN_W + x] = clr;
+}
 
-// -----------------------------------------------------------------------------
-// Tiny 3x5 font (scaled 2x to 6x10, in 8x12 cells)
-// -----------------------------------------------------------------------------
+static void fill_screen(u16 clr)
+{
+	for(int i=0; i<SCREEN_W*SCREEN_H; i++)
+		VRAM[i] = clr;
+}
 
-#define FONT_SCALE  2
-#define FONT_W      3
-#define FONT_H      5
-#define CELL_W      ((FONT_W+1)*FONT_SCALE)   // 8 px
-#define CELL_H      ((FONT_H+1)*FONT_SCALE)   // 12 px
-#define TEXT_COLS   (SCREEN_W / CELL_W)       // 30 columns
-#define TEXT_ROWS   (SCREEN_H / CELL_H)       // 13 rows
+static void fill_rect(int x, int y, int w, int h, u16 clr)
+{
+	if(w <= 0 || h <= 0) return;
+	if(x < 0) { w += x; x = 0; }
+	if(y < 0) { h += y; y = 0; }
+	if(x+w > SCREEN_W) w = SCREEN_W-x;
+	if(y+h > SCREEN_H) h = SCREEN_H-y;
+	if(w <= 0 || h <= 0) return;
 
-typedef unsigned char u8;
+	for(int yy=y; yy<y+h; yy++)
+	{
+		volatile u16 *row = &VRAM[yy*SCREEN_W + x];
+		for(int xx=0; xx<w; xx++) row[xx] = clr;
+	}
+}
 
-#define B3(a,b,c)  ((u8)(((a)<<2)|((b)<<1)|(c)))
+// ------------------------------------------------------------
+// Minimal 5x7 font (drawn into 6x8 cells with 1px spacing)
+// Glyph rows are 5 bits wide: bit4..bit0
+// ------------------------------------------------------------
+typedef struct Glyph
+{
+	char c;
+	u8 rows[7];
+} Glyph;
 
-// Characters 32 (' ') .. 95 ('_')
-static const u8 font_3x5[64][5] = {
-    // 32 ' '
-    [32-32] = { 0, 0, 0, 0, 0 },
+#define G(ch,r0,r1,r2,r3,r4,r5,r6) { (ch), { (u8)(r0),(u8)(r1),(u8)(r2),(u8)(r3),(u8)(r4),(u8)(r5),(u8)(r6) } }
 
-    // 33 '!'
-    [33-32] = {
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,0,0),
-        B3(0,1,0)
-    },
+static const Glyph g_font[] =
+{
+	// Space + punctuation
+	G(' ', 0x00,0x00,0x00,0x00,0x00,0x00,0x00),
+	G('.', 0x00,0x00,0x00,0x00,0x00,0x04,0x04),
+	G(',', 0x00,0x00,0x00,0x00,0x00,0x04,0x08),
+	G('!', 0x04,0x04,0x04,0x04,0x04,0x00,0x04),
+	G('?', 0x0E,0x11,0x01,0x02,0x04,0x00,0x04),
+	G('\'',0x04,0x04,0x00,0x00,0x00,0x00,0x00),
+	G('-', 0x00,0x00,0x00,0x1F,0x00,0x00,0x00),
+	G(':', 0x00,0x04,0x04,0x00,0x04,0x04,0x00),
+	G('/', 0x01,0x02,0x04,0x08,0x10,0x00,0x00),
+	G('>', 0x10,0x08,0x04,0x02,0x04,0x08,0x10),
+	G('<', 0x01,0x02,0x04,0x08,0x04,0x02,0x01),
+	G('_', 0x00,0x00,0x00,0x00,0x00,0x00,0x1F),
+	G('=', 0x00,0x1F,0x00,0x1F,0x00,0x00,0x00),
 
-    // 46 '.'
-    [46-32] = {
-        B3(0,0,0),
-        B3(0,0,0),
-        B3(0,0,0),
-        B3(0,0,0),
-        B3(0,1,0)
-    },
+	// Digits
+	G('0', 0x0E,0x11,0x13,0x15,0x19,0x11,0x0E),
+	G('1', 0x04,0x0C,0x04,0x04,0x04,0x04,0x0E),
+	G('2', 0x0E,0x11,0x01,0x02,0x04,0x08,0x1F),
+	G('3', 0x1F,0x02,0x04,0x02,0x01,0x11,0x0E),
+	G('4', 0x02,0x06,0x0A,0x12,0x1F,0x02,0x02),
+	G('5', 0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E),
+	G('6', 0x06,0x08,0x10,0x1E,0x11,0x11,0x0E),
+	G('7', 0x1F,0x01,0x02,0x04,0x08,0x08,0x08),
+	G('8', 0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E),
+	G('9', 0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C),
 
-    // 65 'A'
-    [65-32] = {
-        B3(0,1,0),
-        B3(1,0,1),
-        B3(1,1,1),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 66 'B'
-    [66-32] = {
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,1,0)
-    },
-    // 67 'C'
-    [67-32] = {
-        B3(0,1,1),
-        B3(1,0,0),
-        B3(1,0,0),
-        B3(1,0,0),
-        B3(0,1,1)
-    },
-    // 68 'D'
-    [68-32] = {
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,1,0)
-    },
-    // 69 'E'
-    [69-32] = {
-        B3(1,1,1),
-        B3(1,0,0),
-        B3(1,1,0),
-        B3(1,0,0),
-        B3(1,1,1)
-    },
-    // 70 'F'
-    [70-32] = {
-        B3(1,1,1),
-        B3(1,0,0),
-        B3(1,1,0),
-        B3(1,0,0),
-        B3(1,0,0)
-    },
-    // 71 'G'
-    [71-32] = {
-        B3(0,1,1),
-        B3(1,0,0),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,1)
-    },
-    // 72 'H'
-    [72-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,1,1),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 73 'I'
-    [73-32] = {
-        B3(1,1,1),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(1,1,1)
-    },
-    // 74 'J'
-    [74-32] = {
-        B3(0,0,1),
-        B3(0,0,1),
-        B3(0,0,1),
-        B3(0,0,1),
-        B3(1,1,0)
-    },
-    // 75 'K'
-    [75-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 76 'L'
-    [76-32] = {
-        B3(1,0,0),
-        B3(1,0,0),
-        B3(1,0,0),
-        B3(1,0,0),
-        B3(1,1,1)
-    },
-    // 77 'M'
-    [77-32] = {
-        B3(1,0,1),
-        B3(1,1,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 78 'N'
-    [78-32] = {
-        B3(1,0,0),
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 79 'O'
-    [79-32] = {
-        B3(0,1,0),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,0)
-    },
-    // 80 'P'
-    [80-32] = {
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,1,0),
-        B3(1,0,0),
-        B3(1,0,0)
-    },
-    // 81 'Q'
-    [81-32] = {
-        B3(0,1,0),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,0),
-        B3(0,0,1)
-    },
-    // 82 'R'
-    [82-32] = {
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,1,0),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 83 'S'
-    [83-32] = {
-        B3(1,1,1),
-        B3(1,0,0),
-        B3(1,1,1),
-        B3(0,0,1),
-        B3(1,1,1)
-    },
-    // 84 'T'
-    [84-32] = {
-        B3(1,1,1),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,1,0)
-    },
-    // 85 'U'
-    [85-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,1)
-    },
-    // 86 'V'
-    [86-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,0),
-        B3(0,1,0)
-    },
-    // 87 'W'
-    [87-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(1,1,1),
-        B3(1,1,1)
-    },
-    // 88 'X'
-    [88-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,0),
-        B3(1,0,1),
-        B3(1,0,1)
-    },
-    // 89 'Y'
-    [89-32] = {
-        B3(1,0,1),
-        B3(1,0,1),
-        B3(0,1,0),
-        B3(0,1,0),
-        B3(0,1,0)
-    },
-    // 90 'Z'
-    [90-32] = {
-        B3(1,1,1),
-        B3(0,0,1),
-        B3(0,1,0),
-        B3(1,0,0),
-        B3(1,1,1)
-    },
-
-    // 95 '_'
-    [95-32] = {
-        B3(0,0,0),
-        B3(0,0,0),
-        B3(0,0,0),
-        B3(1,1,1),
-        B3(0,0,0)
-    }
+	// Uppercase letters A-Z (we’ll map lowercase to these)
+	G('A', 0x0E,0x11,0x11,0x1F,0x11,0x11,0x11),
+	G('B', 0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E),
+	G('C', 0x0F,0x10,0x10,0x10,0x10,0x10,0x0F),
+	G('D', 0x1E,0x11,0x11,0x11,0x11,0x11,0x1E),
+	G('E', 0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F),
+	G('F', 0x1F,0x10,0x10,0x1E,0x10,0x10,0x10),
+	G('G', 0x0F,0x10,0x10,0x13,0x11,0x11,0x0F),
+	G('H', 0x11,0x11,0x11,0x1F,0x11,0x11,0x11),
+	G('I', 0x0E,0x04,0x04,0x04,0x04,0x04,0x0E),
+	G('J', 0x01,0x01,0x01,0x01,0x11,0x11,0x0E),
+	G('K', 0x11,0x12,0x14,0x18,0x14,0x12,0x11),
+	G('L', 0x10,0x10,0x10,0x10,0x10,0x10,0x1F),
+	G('M', 0x11,0x1B,0x15,0x15,0x11,0x11,0x11),
+	G('N', 0x11,0x19,0x15,0x13,0x11,0x11,0x11),
+	G('O', 0x0E,0x11,0x11,0x11,0x11,0x11,0x0E),
+	G('P', 0x1E,0x11,0x11,0x1E,0x10,0x10,0x10),
+	G('Q', 0x0E,0x11,0x11,0x11,0x15,0x12,0x0D),
+	G('R', 0x1E,0x11,0x11,0x1E,0x14,0x12,0x11),
+	G('S', 0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E),
+	G('T', 0x1F,0x04,0x04,0x04,0x04,0x04,0x04),
+	G('U', 0x11,0x11,0x11,0x11,0x11,0x11,0x0E),
+	G('V', 0x11,0x11,0x11,0x11,0x11,0x0A,0x04),
+	G('W', 0x11,0x11,0x11,0x15,0x15,0x15,0x0A),
+	G('X', 0x11,0x11,0x0A,0x04,0x0A,0x11,0x11),
+	G('Y', 0x11,0x11,0x0A,0x04,0x04,0x04,0x04),
+	G('Z', 0x1F,0x01,0x02,0x04,0x08,0x10,0x1F),
 };
 
-static void m3_clear(u16 clr)
+static const u8 g_unknown[7] = { 0x0E,0x11,0x01,0x02,0x04,0x00,0x04 }; // '?'
+
+static inline char to_upper_ascii(char c)
 {
-    u32 packed = (clr << 16) | clr;
-    u32 *dst = (u32 *)m3_fb;
-    int count = (SCREEN_W * SCREEN_H) / 2;
-    for (int i = 0; i < count; i++)
-        dst[i] = packed;
+	if(c >= 'a' && c <= 'z') return (char)(c - 'a' + 'A');
+	return c;
 }
 
-static void draw_char_cell(int tx, int ty, char ch, u16 clr)
+static const u8* glyph_rows(char c)
 {
-    if (tx < 0 || tx >= TEXT_COLS || ty < 0 || ty >= TEXT_ROWS)
-        return;
-    if (ch < 32 || ch > 95)
-        return;
-
-    const u8 *glyph = font_3x5[ch - 32];
-    int x0 = tx * CELL_W;
-    int y0 = ty * CELL_H;
-
-    for (int row = 0; row < FONT_H; row++)
-    {
-        u8 bits = glyph[row];
-        for (int col = 0; col < FONT_W; col++)
-        {
-            if (bits & (1 << (FONT_W - 1 - col)))
-            {
-                int px = x0 + col * FONT_SCALE;
-                int py = y0 + row * FONT_SCALE;
-                for (int dy = 0; dy < FONT_SCALE; dy++)
-                    for (int dx = 0; dx < FONT_SCALE; dx++)
-                        m3_plot(px + dx, py + dy, clr);
-            }
-        }
-    }
+	c = to_upper_ascii(c);
+	for(size_t i=0; i<sizeof(g_font)/sizeof(g_font[0]); i++)
+	{
+		if(g_font[i].c == c) return g_font[i].rows;
+	}
+	return g_unknown;
 }
 
-static void draw_text_cell(int tx, int ty, const char *str, u16 clr)
+static void draw_char_cell(int col, int row, char c, u16 fg)
 {
-    int x = tx;
-    int y = ty;
+	// 6x8 cell, text area starts at (0,0)
+	int x0 = col*6;
+	int y0 = row*8;
 
-    for (int i = 0; str[i] != '\0'; i++)
-    {
-        char c = str[i];
-        if (c == '\n')
-        {
-            x = tx;
-            y++;
-            if (y >= TEXT_ROWS)
-                break;
-            continue;
-        }
-
-        draw_char_cell(x, y, c, clr);
-        x++;
-        if (x >= TEXT_COLS)
-        {
-            x = tx;
-            y++;
-            if (y >= TEXT_ROWS)
-                break;
-        }
-    }
+	const u8* rows = glyph_rows(c);
+	for(int y=0; y<7; y++)
+	{
+		u8 bits = rows[y];
+		for(int x=0; x<5; x++)
+		{
+			if(bits & (1<<(4-x)))
+				pset(x0+x, y0+y, fg);
+		}
+	}
 }
 
-// -----------------------------------------------------------------------------
-// Simple key input (no tonc helper functions, just REG_KEYINPUT)
-// -----------------------------------------------------------------------------
-
-#ifndef KEY_MASK
-#define KEY_MASK 0x03FF
-#endif
-
-static u16 keys_curr = 0;
-static u16 keys_prev = 0;
-
-static inline void key_poll_simple(void)
+static void draw_text(int col, int row, const char *s, u16 fg)
 {
-    keys_prev = keys_curr;
-    keys_curr = (u16)(~REG_KEYINPUT & KEY_MASK);
+	for(int i=0; s[i] && col < 40; i++, col++)
+		draw_char_cell(col, row, s[i], fg);
 }
 
-// -----------------------------------------------------------------------------
-// Game data
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------------
+// Tiny text console (fixed grid: 40 cols x 20 rows)
+// Layout:
+//   row 0: status
+//   row 1..18: log
+//   row 19: input
+// ------------------------------------------------------------
+#define CON_COLS 40
+#define CON_ROWS 20
+#define LOG_TOP  1
+#define LOG_ROWS 18
+#define INPUT_ROW 19
 
-enum { DIR_NORTH = 0, DIR_EAST = 1, DIR_SOUTH = 2, DIR_WEST = 3 };
+static char g_log[LOG_ROWS][CON_COLS+1];
+static int  g_log_count = 0; // number of valid lines (<= LOG_ROWS)
 
-typedef struct
+static void log_clear(void)
 {
-    const char *name;
-    const char *desc;
-    int exits[4];      // {N, E, S, W}, -1 if no exit
+	for(int i=0; i<LOG_ROWS; i++)
+	{
+		memset(g_log[i], ' ', CON_COLS);
+		g_log[i][CON_COLS] = '\0';
+	}
+	g_log_count = 0;
+}
+
+static void log_push_blank_line(void)
+{
+	// Shift up
+	for(int i=0; i<LOG_ROWS-1; i++)
+		memcpy(g_log[i], g_log[i+1], CON_COLS+1);
+
+	// Clear last
+	memset(g_log[LOG_ROWS-1], ' ', CON_COLS);
+	g_log[LOG_ROWS-1][CON_COLS] = '\0';
+	if(g_log_count < LOG_ROWS) g_log_count++;
+}
+
+static void log_write_wrapped(const char *msg)
+{
+	int col = 0;
+	int line = LOG_ROWS-1;
+
+	// Ensure we have at least one line to write into
+	if(g_log_count == 0)
+	{
+		log_push_blank_line();
+		line = LOG_ROWS-1;
+	}
+
+	// Find current end-of-text in the last line
+	for(col=0; col<CON_COLS; col++)
+	{
+		if(g_log[line][col] == ' ') break;
+	}
+	if(col >= CON_COLS) { log_push_blank_line(); col = 0; }
+
+	for(const char *p=msg; *p; p++)
+	{
+		char c = *p;
+		if(c == '\n')
+		{
+			log_push_blank_line();
+			col = 0;
+			continue;
+		}
+		if(col >= CON_COLS)
+		{
+			log_push_blank_line();
+			col = 0;
+		}
+		// Replace tabs with space
+		if(c == '\t') c = ' ';
+		// We keep original case in strings, but our font maps to uppercase anyway.
+		g_log[LOG_ROWS-1][col++] = c;
+	}
+}
+
+static void log_say(const char *msg)
+{
+	log_push_blank_line();
+	log_write_wrapped(msg);
+}
+
+// ------------------------------------------------------------
+// Game world
+// ------------------------------------------------------------
+enum { DIR_N=0, DIR_S, DIR_E, DIR_W, DIR_U, DIR_D, DIR_COUNT };
+
+typedef struct Room
+{
+	const char *name;
+	const char *desc;
+	int exits[DIR_COUNT]; // room index or -1
+	bool dark;
 } Room;
 
-typedef struct
+typedef struct Item
 {
-    const char *name;
-    const char *desc;
-    int location;      // room index, or LOC_INVENTORY, or LOC_NOWHERE
+	const char *name;   // single token for parser
+	const char *pretty; // for listing
+	const char *desc;
+	int loc;            // room index, or -1 for inventory, or -2 for "nowhere"
+	bool portable;
 } Item;
 
-#define ROOM_FOREST    0
-#define ROOM_CAVE_ENT  1
-#define ROOM_TUNNEL    2
-#define ROOM_CHAMBER   3
-
-#define ITEM_LAMP      0
-#define ITEM_TREASURE  1
-
-#define LOC_INVENTORY  (-1)
-#define LOC_NOWHERE    (-2)
-
-static Room rooms[] =
+enum
 {
-    {
-        "FOREST CLEARING",
-        "YOU ARE IN A SMALL FOREST CLEARING.\nA PATH LEADS NORTH TO A CAVE ENTRANCE.",
-        { ROOM_CAVE_ENT, -1, -1, -1 }
-    },
-    {
-        "CAVE ENTRANCE",
-        "YOU STAND AT THE MOUTH OF A DARK CAVE.\nTHE FOREST CLEARING IS SOUTH.",
-        { ROOM_TUNNEL, -1, ROOM_FOREST, -1 }
-    },
-    {
-        "DARK TUNNEL",
-        "YOU ARE IN A NARROW TUNNEL.\nTHE CAVE ENTRANCE IS SOUTH.",
-        { ROOM_CHAMBER, -1, ROOM_CAVE_ENT, -1 }
-    },
-    {
-        "UNDERGROUND CHAMBER",
-        "YOU ARE IN A SMALL UNDERGROUND CHAMBER.\nTHE ONLY EXIT IS SOUTH.",
-        { -1, -1, ROOM_TUNNEL, -1 }
-    }
+	ROOM_FOYER=0,
+	ROOM_HALL,
+	ROOM_LIBRARY,
+	ROOM_STUDY,
+	ROOM_GARDEN,
+	ROOM_CELLAR,
+	ROOM_TREASURE,
+	ROOM_COUNT
 };
 
-static Item items[] =
+enum
 {
-    { "LAMP",     "AN OLD BUT WORKING LAMP.",   ROOM_CAVE_ENT },
-    { "TREASURE", "A SMALL CHEST OF GOLD.",     ROOM_CHAMBER  }
+	ITEM_LANTERN=0,
+	ITEM_KEY,
+	ITEM_COIN,
+	ITEM_BOOK,
+	ITEM_IDOL,
+	ITEM_COUNT
 };
 
-static int current_room = ROOM_FOREST;
-static int game_over    = 0;
-static int game_won     = 0;
-
-static char last_msg[80] = "";
-
-// -----------------------------------------------------------------------------
-// Game helpers
-// -----------------------------------------------------------------------------
-
-static int has_item(int itemId)
+static Room g_rooms[ROOM_COUNT] =
 {
-    return items[itemId].location == LOC_INVENTORY;
+	// FOYER
+	{
+		"FOYER",
+		"YOU ARE IN A DUSTY FOYER. A HALLWAY LIES NORTH. A GARDEN IS EAST.",
+		{ ROOM_HALL, -1, ROOM_GARDEN, -1, -1, -1 },
+		false
+	},
+	// HALL
+	{
+		"HALL",
+		"YOU ARE IN A NARROW HALL. A TRAPDOOR IS SET INTO THE FLOOR.",
+		{ -1, ROOM_FOYER, ROOM_LIBRARY, -1, -1, ROOM_CELLAR },
+		false
+	},
+	// LIBRARY
+	{
+		"LIBRARY",
+		"YOU ARE IN A QUIET LIBRARY. BOOKS LINE THE WALLS. A STUDY IS NORTH.",
+		{ ROOM_STUDY, -1, -1, ROOM_HALL, -1, -1 },
+		false
+	},
+	// STUDY
+	{
+		"STUDY",
+		"YOU ARE IN A SMALL STUDY. A GATE TO THE EAST HAS A COIN SLOT.",
+		{ -1, ROOM_LIBRARY, ROOM_TREASURE, -1, -1, -1 },
+		false
+	},
+	// GARDEN
+	{
+		"GARDEN",
+		"YOU ARE IN AN OVERGROWN GARDEN. VINES CRAWL OVER BROKEN STONE.",
+		{ -1, -1, -1, ROOM_FOYER, -1, -1 },
+		false
+	},
+	// CELLAR (dark)
+	{
+		"CELLAR",
+		"YOU ARE IN A COLD CELLAR. WATER DRIPS SOMEWHERE IN THE DARK.",
+		{ -1, -1, -1, -1, ROOM_HALL, -1 },
+		true
+	},
+	// TREASURE
+	{
+		"TREASURE ROOM",
+		"YOU ARE IN A TREASURE ROOM. SOMETHING GLITTERS ON A PEDESTAL.",
+		{ -1, -1, -1, ROOM_STUDY, -1, -1 },
+		false
+	},
+};
+
+static Item g_items[ITEM_COUNT] =
+{
+	{ "LANTERN", "A BRASS LANTERN", "AN OLD LANTERN. IT MIGHT STILL WORK.", ROOM_FOYER,  true  },
+	{ "KEY",     "A SMALL KEY",     "A SMALL IRON KEY, COLD TO THE TOUCH.", ROOM_GARDEN, true  },
+	{ "COIN",    "A SILVER COIN",   "A SILVER COIN WITH STRANGE MARKS.",    ROOM_CELLAR, true  },
+	{ "BOOK",    "A THIN BOOK",     "A THIN BOOK. ONE PAGE IS DOG-EARED.",  ROOM_LIBRARY,true  },
+	{ "IDOL",    "A GOLD IDOL",     "A GOLD IDOL. IT FEELS UNNATURALLY HEAVY.", ROOM_TREASURE, true },
+};
+
+static int  g_player_room = ROOM_FOYER;
+static bool g_trapdoor_unlocked = false;
+static bool g_gate_open = false;
+static bool g_lantern_lit = false;
+static bool g_game_won = false;
+
+static bool player_has_item(int item_id)
+{
+	return g_items[item_id].loc == -1;
 }
 
-static void set_msg(const char *s)
+static int find_item_by_token(const char *tok)
 {
-    strncpy(last_msg, s, sizeof(last_msg)-1);
-    last_msg[sizeof(last_msg)-1] = '\0';
+	if(!tok || !tok[0]) return -1;
+	for(int i=0; i<ITEM_COUNT; i++)
+	{
+		if(strcmp(tok, g_items[i].name) == 0)
+			return i;
+	}
+	return -1;
 }
 
-static int match_word(const char *a, const char *b)
+static bool room_is_visible(int room_id)
 {
-    return strcmp(a, b) == 0;
+	if(!g_rooms[room_id].dark) return true;
+	return g_lantern_lit && player_has_item(ITEM_LANTERN);
 }
 
-// Split on spaces, in-place. Returns word count.
-static int tokenize(char *s, char *words[], int max_words)
+static bool item_is_visible_here(int item_id)
 {
-    int count = 0;
-    char *p = s;
-
-    while (*p != '\0' && count < max_words)
-    {
-        while (*p == ' ') p++;
-        if (*p == '\0')
-            break;
-
-        words[count++] = p;
-
-        while (*p != '\0' && *p != ' ')
-            p++;
-
-        if (*p == ' ')
-        {
-            *p = '\0';
-            p++;
-        }
-    }
-    return count;
+	if(g_items[item_id].loc != g_player_room) return false;
+	return room_is_visible(g_player_room);
 }
 
-static int parse_dir(const char *w)
+// ------------------------------------------------------------
+// Parsing helpers
+// ------------------------------------------------------------
+static void str_upper_inplace(char *s)
 {
-    if (match_word(w, "N") || match_word(w, "NORTH"))
-        return DIR_NORTH;
-    if (match_word(w, "E") || match_word(w, "EAST"))
-        return DIR_EAST;
-    if (match_word(w, "S") || match_word(w, "SOUTH"))
-        return DIR_SOUTH;
-    if (match_word(w, "W") || match_word(w, "WEST"))
-        return DIR_WEST;
-    return -1;
+	for(int i=0; s[i]; i++)
+	{
+		char c = s[i];
+		if(c >= 'a' && c <= 'z') s[i] = (char)(c - 'a' + 'A');
+	}
 }
 
-// -----------------------------------------------------------------------------
-// Command implementations
-// -----------------------------------------------------------------------------
-
-static void do_look(void)
+static int tokenize(char *s, char *out[], int max_out)
 {
-    set_msg("YOU LOOK AROUND.");
+	int n = 0;
+	while(*s)
+	{
+		while(*s == ' ') s++;
+		if(!*s) break;
+		if(n >= max_out) break;
+		out[n++] = s;
+		while(*s && *s != ' ') s++;
+		if(*s) { *s = '\0'; s++; }
+	}
+	return n;
 }
 
-static void do_help(void)
+static int dir_from_token(const char *t)
 {
-    set_msg("TRY GO NORTH TAKE LAMP LOOK INVENTORY HELP.");
+	if(!t) return -1;
+	if(strcmp(t, "N") == 0 || strcmp(t, "NORTH") == 0) return DIR_N;
+	if(strcmp(t, "S") == 0 || strcmp(t, "SOUTH") == 0) return DIR_S;
+	if(strcmp(t, "E") == 0 || strcmp(t, "EAST")  == 0) return DIR_E;
+	if(strcmp(t, "W") == 0 || strcmp(t, "WEST")  == 0) return DIR_W;
+	if(strcmp(t, "U") == 0 || strcmp(t, "UP")    == 0) return DIR_U;
+	if(strcmp(t, "D") == 0 || strcmp(t, "DOWN")  == 0) return DIR_D;
+	return -1;
 }
 
-static void do_go(int dir)
+// ------------------------------------------------------------
+// Game actions
+// ------------------------------------------------------------
+static void describe_room(void)
 {
-    Room *r = &rooms[current_room];
-    int dest = r->exits[dir];
+	if(!room_is_visible(g_player_room))
+	{
+		log_say("IT IS PITCH BLACK. YOU CANNOT SEE.");
+		log_say("YOU CAN PROBABLY GO UP.");
+		return;
+	}
 
-    if (dest < 0)
-    {
-        set_msg("YOU CANNOT GO THAT WAY.");
-        return;
-    }
+	log_say(g_rooms[g_player_room].desc);
 
-    // Simple puzzle: need lamp to enter the dark tunnel
-    if (dest == ROOM_TUNNEL && !has_item(ITEM_LAMP))
-    {
-        set_msg("IT IS TOO DARK TO ENTER WITHOUT A LAMP.");
-        return;
-    }
+	// List items in room
+	bool any = false;
+	char line[64];
 
-    current_room = dest;
-    set_msg("OK.");
+	for(int i=0; i<ITEM_COUNT; i++)
+	{
+		if(item_is_visible_here(i))
+		{
+			if(!any)
+			{
+				log_say("YOU SEE:");
+				any = true;
+			}
+			memset(line, 0, sizeof(line));
+			strncpy(line, "- ", sizeof(line)-1);
+			strncat(line, g_items[i].pretty, sizeof(line)-1-strlen(line));
+			log_say(line);
+		}
+	}
+
+	// List exits
+	char exits[64];
+	strcpy(exits, "EXITS: ");
+
+	bool first = true;
+	for(int d=0; d<DIR_COUNT; d++)
+	{
+		int to = g_rooms[g_player_room].exits[d];
+		if(to < 0) continue;
+
+		// Gate/trapdoor logic
+		if(g_player_room == ROOM_HALL && d == DIR_D && !g_trapdoor_unlocked) continue;
+		if(g_player_room == ROOM_STUDY && d == DIR_E && !g_gate_open) continue;
+
+		const char *name = NULL;
+		switch(d)
+		{
+			case DIR_N: name="N"; break;
+			case DIR_S: name="S"; break;
+			case DIR_E: name="E"; break;
+			case DIR_W: name="W"; break;
+			case DIR_U: name="U"; break;
+			case DIR_D: name="D"; break;
+		}
+
+		if(!first) strncat(exits, " ", sizeof(exits)-1-strlen(exits));
+		strncat(exits, name, sizeof(exits)-1-strlen(exits));
+		first = false;
+	}
+	log_say(exits);
 }
 
-static void do_take(const char *noun)
+static void show_inventory(void)
 {
-    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
-    {
-        if (items[i].location == current_room &&
-            match_word(items[i].name, noun))
-        {
-            items[i].location = LOC_INVENTORY;
-            set_msg("TAKEN.");
-            return;
-        }
-    }
-    set_msg("YOU DO NOT SEE THAT HERE.");
+	bool any = false;
+	log_say("YOU ARE CARRYING:");
+
+	for(int i=0; i<ITEM_COUNT; i++)
+	{
+		if(g_items[i].loc == -1)
+		{
+			any = true;
+			char line[64];
+			snprintf(line, sizeof(line), "- %s", g_items[i].pretty);
+			log_say(line);
+		}
+	}
+
+	if(!any)
+		log_say("(NOTHING)");
 }
 
-static void do_drop(const char *noun)
+static void try_move(int dir)
 {
-    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
-    {
-        if (items[i].location == LOC_INVENTORY &&
-            match_word(items[i].name, noun))
-        {
-            items[i].location = current_room;
-            set_msg("DROPPED.");
-            return;
-        }
-    }
-    set_msg("YOU ARE NOT CARRYING THAT.");
+	int to = g_rooms[g_player_room].exits[dir];
+	if(to < 0)
+	{
+		log_say("YOU CANNOT GO THAT WAY.");
+		return;
+	}
+
+	// Trapdoor lock
+	if(g_player_room == ROOM_HALL && dir == DIR_D && !g_trapdoor_unlocked)
+	{
+		log_say("THE TRAPDOOR IS LOCKED.");
+		return;
+	}
+
+	// Gate lock
+	if(g_player_room == ROOM_STUDY && dir == DIR_E && !g_gate_open)
+	{
+		log_say("THE GATE IS SHUT. THERE IS A COIN SLOT.");
+		return;
+	}
+
+	g_player_room = to;
+
+	// Auto-win condition (taking idol is the win, but entering feels good too)
+	describe_room();
 }
 
-static void do_inventory(void)
+static void try_take(const char *tok)
 {
-    char buf[80];
-    int count = 0;
+	if(!room_is_visible(g_player_room))
+	{
+		log_say("YOU FUMBLE IN THE DARK AND FIND NOTHING.");
+		return;
+	}
 
-    buf[0] = '\0';
-    strcpy(buf, "YOU CARRY");
+	int it = find_item_by_token(tok);
+	if(it < 0) { log_say("TAKE WHAT?"); return; }
 
-    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
-    {
-        if (items[i].location == LOC_INVENTORY)
-        {
-            if (count == 0)
-                strcat(buf, " ");
-            else
-                strcat(buf, " AND ");
+	if(g_items[it].loc != g_player_room)
+	{
+		log_say("IT IS NOT HERE.");
+		return;
+	}
+	if(!g_items[it].portable)
+	{
+		log_say("YOU CANNOT TAKE THAT.");
+		return;
+	}
 
-            strcat(buf, items[i].name);
-            count++;
-        }
-    }
+	g_items[it].loc = -1;
+	log_say("TAKEN.");
 
-    if (count == 0)
-    {
-        set_msg("YOU ARE CARRYING NOTHING.");
-        return;
-    }
-
-    strcat(buf, ".");
-    set_msg(buf);
+	if(it == ITEM_IDOL)
+	{
+		g_game_won = true;
+		log_say("AS YOU LIFT THE IDOL, THE AIR SHIMMERS.");
+		log_say("YOU HAVE WON!");
+	}
 }
 
-// -----------------------------------------------------------------------------
-// Text for exits/items
-// -----------------------------------------------------------------------------
-
-static void build_exits_text(char *buf, int buf_size)
+static void try_drop(const char *tok)
 {
-    Room *r = &rooms[current_room];
-    int first = 1;
+	int it = find_item_by_token(tok);
+	if(it < 0) { log_say("DROP WHAT?"); return; }
 
-    buf[0] = '\0';
-    strncpy(buf, "EXITS", buf_size-1);
-    buf[buf_size-1] = '\0';
+	if(g_items[it].loc != -1)
+	{
+		log_say("YOU ARE NOT CARRYING THAT.");
+		return;
+	}
 
-    if (r->exits[DIR_NORTH] >= 0)
-    {
-        strncat(buf, " NORTH", buf_size-1 - strlen(buf));
-        first = 0;
-    }
-    if (r->exits[DIR_EAST] >= 0)
-    {
-        strncat(buf, first ? " EAST" : " EAST", buf_size-1 - strlen(buf));
-        first = 0;
-    }
-    if (r->exits[DIR_SOUTH] >= 0)
-    {
-        strncat(buf, first ? " SOUTH" : " SOUTH", buf_size-1 - strlen(buf));
-        first = 0;
-    }
-    if (r->exits[DIR_WEST] >= 0)
-    {
-        strncat(buf, first ? " WEST" : " WEST", buf_size-1 - strlen(buf));
-        first = 0;
-    }
-
-    if (first)
-    {
-        strncpy(buf, "NO EXITS.", buf_size-1);
-        buf[buf_size-1] = '\0';
-    }
+	g_items[it].loc = g_player_room;
+	log_say("DROPPED.");
 }
 
-static void build_items_text(char *buf, int buf_size)
+static void try_examine(const char *tok)
 {
-    int any = 0;
+	int it = find_item_by_token(tok);
+	if(it < 0) { log_say("EXAMINE WHAT?"); return; }
 
-    buf[0] = '\0';
-    strncpy(buf, "YOU SEE", buf_size-1);
-    buf[buf_size-1] = '\0';
+	bool in_inv = (g_items[it].loc == -1);
+	bool here   = (g_items[it].loc == g_player_room);
 
-    for (unsigned i = 0; i < sizeof(items)/sizeof(items[0]); i++)
-    {
-        if (items[i].location == current_room)
-        {
-            strncat(buf, " ", buf_size-1 - strlen(buf));
-            strncat(buf, items[i].name, buf_size-1 - strlen(buf));
-            any = 1;
-        }
-    }
+	if(here && !room_is_visible(g_player_room))
+	{
+		log_say("IT IS TOO DARK TO SEE.");
+		return;
+	}
 
-    if (any)
-    {
-        strncat(buf, " HERE.", buf_size-1 - strlen(buf));
-    }
-    else
-    {
-        strncpy(buf, "YOU SEE NOTHING HERE.", buf_size-1);
-        buf[buf_size-1] = '\0';
-    }
+	if(!in_inv && !here)
+	{
+		log_say("YOU DO NOT SEE THAT HERE.");
+		return;
+	}
+
+	log_say(g_items[it].desc);
 }
 
-// -----------------------------------------------------------------------------
-// On-screen keyboard
-// -----------------------------------------------------------------------------
-
-#define KB_COLS 9
-#define KB_ROWS 3
-#define KB_X0   1     // starting column for keyboard
-#define KB_Y0   10    // starting row for keyboard
-
-static void draw_keyboard(int sel)
+static void try_use(const char *tok)
 {
-    for (int r = 0; r < KB_ROWS; r++)
-    {
-        for (int c = 0; c < KB_COLS; c++)
-        {
-            int idx = r * KB_COLS + c;
-            if (idx > 26)
-                continue;
+	int it = find_item_by_token(tok);
+	if(it < 0) { log_say("USE WHAT?"); return; }
 
-            char ch;
-            if (idx < 26)
-                ch = 'A' + idx;
-            else
-                ch = '_';       // label for space
+	if(g_items[it].loc != -1)
+	{
+		log_say("YOU ARE NOT CARRYING THAT.");
+		return;
+	}
 
-            u16 col = (idx == sel) ? CLR_SEL : CLR_HUD;
-            int tx = KB_X0 + c * 2;
-            int ty = KB_Y0 + r;
-            draw_char_cell(tx, ty, ch, col);
-        }
-    }
+	if(it == ITEM_LANTERN)
+	{
+		g_lantern_lit = !g_lantern_lit;
+		log_say(g_lantern_lit ? "THE LANTERN IS NOW LIT." : "THE LANTERN GOES DARK.");
+		return;
+	}
+
+	if(it == ITEM_KEY)
+	{
+		if(g_player_room == ROOM_HALL && !g_trapdoor_unlocked)
+		{
+			g_trapdoor_unlocked = true;
+			log_say("YOU UNLOCK THE TRAPDOOR.");
+			return;
+		}
+		log_say("NOTHING HAPPENS.");
+		return;
+	}
+
+	if(it == ITEM_COIN)
+	{
+		if(g_player_room == ROOM_STUDY && !g_gate_open)
+		{
+			g_gate_open = true;
+			log_say("YOU SLIDE THE COIN INTO THE SLOT.");
+			log_say("THE GATE CLICKS OPEN.");
+			return;
+		}
+		log_say("YOU JINGLE THE COIN. NOTHING HAPPENS.");
+		return;
+	}
+
+	log_say("NOTHING HAPPENS.");
 }
 
-// -----------------------------------------------------------------------------
-// Screen drawing
-// -----------------------------------------------------------------------------
-
-static void draw_world_view(const char *cmd, int kb_sel)
+static void show_help(void)
 {
-    m3_clear(CLR_BG);
-
-    Room *r = &rooms[current_room];
-
-    // Room name and description
-    draw_text_cell(0, 0, r->name, CLR_TITLE);
-    draw_text_cell(0, 1, r->desc, CLR_TEXT);   // uses embedded '\n'
-
-    // Exits
-    char buf[80];
-    build_exits_text(buf, sizeof(buf));
-    draw_text_cell(0, 4, buf, CLR_TEXT);
-
-    // Items
-    build_items_text(buf, sizeof(buf));
-    draw_text_cell(0, 5, buf, CLR_TEXT);
-
-    // Last message
-    if (last_msg[0] != '\0')
-        draw_text_cell(0, 6, last_msg, CLR_HUD);
-
-    if (game_over)
-    {
-        draw_text_cell(0, 8, "GAME OVER.", CLR_HUD);
-        return;
-    }
-
-    // Keyboard help line
-    draw_text_cell(0, 8, "B BACKSPACE  START OK", CLR_HUD);
-
-    // Command line
-    char cmdline[40];
-    cmdline[0] = '\0';
-    strncpy(cmdline, "COMMAND ", sizeof(cmdline)-1);
-    cmdline[sizeof(cmdline)-1] = '\0';
-    strncat(cmdline, cmd, sizeof(cmdline)-1 - strlen(cmdline));
-    draw_text_cell(0, 9, cmdline, CLR_TEXT);
-
-    // On-screen keyboard
-    if (kb_sel >= 0)
-        draw_keyboard(kb_sel);
+	log_say("COMMANDS:");
+	log_say("LOOK (L), INVENTORY (I)");
+	log_say("GO NORTH/SOUTH/EAST/WEST/UP/DOWN (OR N/S/E/W/U/D)");
+	log_say("TAKE <ITEM>, DROP <ITEM>");
+	log_say("USE <ITEM>, EXAMINE <ITEM>");
+	log_say("TIP: HOLD R + D-PAD TO QUICK-MOVE.");
 }
 
-// -----------------------------------------------------------------------------
-// Command input (reads a line using the on-screen keyboard)
-// -----------------------------------------------------------------------------
-
-static void get_command(char *out_cmd, int max_len)
+// ------------------------------------------------------------
+// Command execution
+// ------------------------------------------------------------
+static void exec_command(const char *cmd_in)
 {
-    int sel = 0;          // 0..26 (A..Z, space)
-    int len = 0;
+	char buf[96];
+	memset(buf, 0, sizeof(buf));
+	strncpy(buf, cmd_in, sizeof(buf)-1);
 
-    out_cmd[0] = '\0';
+	// Echo command
+	{
+		char echo[96];
+		snprintf(echo, sizeof(echo), "> %s", buf);
+		log_say(echo);
+	}
 
-    while (1)
-    {
-        vsync();
-        key_poll_simple();
+	// Normalize to uppercase for parsing
+	str_upper_inplace(buf);
 
-        // Move selection
-        if (key_hit(KEY_LEFT))
-        {
-            if (sel % KB_COLS > 0)
-                sel--;
-        }
-        if (key_hit(KEY_RIGHT))
-        {
-            if (sel % KB_COLS < KB_COLS - 1 && sel + 1 <= 26)
-                sel++;
-        }
-        if (key_hit(KEY_UP))
-        {
-            if (sel >= KB_COLS)
-                sel -= KB_COLS;
-        }
-        if (key_hit(KEY_DOWN))
-        {
-            if (sel + KB_COLS <= 26)
-                sel += KB_COLS;
-        }
+	char *argv[4] = {0};
+	int argc = tokenize(buf, argv, 4);
 
-        // Add character
-        if (key_hit(KEY_A))
-        {
-            char ch;
-            if (sel < 26)
-                ch = (char)('A' + sel);
-            else
-                ch = ' ';
+	if(argc == 0) { describe_room(); return; }
 
-            if (len < max_len - 1)
-            {
-                out_cmd[len++] = ch;
-                out_cmd[len] = '\0';
-            }
-        }
+	// If game won, still allow LOOK/INVENTORY/HELP, otherwise just celebrate
+	if(g_game_won)
+	{
+		if(strcmp(argv[0], "LOOK")==0 || strcmp(argv[0], "L")==0) { describe_room(); return; }
+		if(strcmp(argv[0], "INVENTORY")==0 || strcmp(argv[0], "I")==0) { show_inventory(); return; }
+		if(strcmp(argv[0], "HELP")==0) { show_help(); return; }
+		log_say("YOU HAVE ALREADY WON. (PRESS SELECT TO CLEAR, OR KEEP EXPLORING.)");
+		return;
+	}
 
-        // Backspace
-        if (key_hit(KEY_B))
-        {
-            if (len > 0)
-            {
-                len--;
-                out_cmd[len] = '\0';
-            }
-        }
+	// Single-token directions
+	{
+		int d = dir_from_token(argv[0]);
+		if(d >= 0) { try_move(d); return; }
+	}
 
-        // Submit
-        if (key_hit(KEY_START))
-        {
-            break;
-        }
+	// GO <dir>
+	if(strcmp(argv[0], "GO") == 0 && argc >= 2)
+	{
+		int d = dir_from_token(argv[1]);
+		if(d >= 0) { try_move(d); return; }
+		log_say("GO WHERE?");
+		return;
+	}
 
-        draw_world_view(out_cmd, sel);
-    }
+	if(strcmp(argv[0], "LOOK") == 0 || strcmp(argv[0], "L") == 0)
+	{
+		describe_room();
+		return;
+	}
 
-    // Trim leading and trailing spaces
-    // (parser already copes, but this keeps things neat)
-    int start = 0;
-    while (start < len && out_cmd[start] == ' ')
-        start++;
+	if(strcmp(argv[0], "INVENTORY") == 0 || strcmp(argv[0], "I") == 0)
+	{
+		show_inventory();
+		return;
+	}
 
-    int end = len - 1;
-    while (end >= start && out_cmd[end] == ' ')
-        end--;
+	if(strcmp(argv[0], "HELP") == 0)
+	{
+		show_help();
+		return;
+	}
 
-    int new_len = 0;
-    for (int i = start; i <= end; i++)
-        out_cmd[new_len++] = out_cmd[i];
+	if((strcmp(argv[0], "TAKE") == 0 || strcmp(argv[0], "GET") == 0) && argc >= 2)
+	{
+		try_take(argv[1]);
+		return;
+	}
 
-    out_cmd[new_len] = '\0';
+	if(strcmp(argv[0], "DROP") == 0 && argc >= 2)
+	{
+		try_drop(argv[1]);
+		return;
+	}
+
+	if(strcmp(argv[0], "USE") == 0 && argc >= 2)
+	{
+		try_use(argv[1]);
+		return;
+	}
+
+	if((strcmp(argv[0], "EXAMINE") == 0 || strcmp(argv[0], "X") == 0) && argc >= 2)
+	{
+		try_examine(argv[1]);
+		return;
+	}
+
+	log_say("I DO NOT UNDERSTAND THAT.");
+	log_say("TYPE HELP.");
 }
 
-// -----------------------------------------------------------------------------
-// Command dispatcher
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------------
+// UI state + rendering
+// ------------------------------------------------------------
+static const char g_charset[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'-/:=_";
+static int  g_sel_idx = 1; // start at 'A'
+static char g_cmd[64] = {0};
 
-static void handle_command(char *cmd)
+static u16 g_keys_curr = 0, g_keys_prev = 0;
+
+static void keys_poll(void)
 {
-    char *words[4];
-    int wc = tokenize(cmd, words, 4);
-
-    if (wc == 0)
-    {
-        set_msg("TYPE A COMMAND FIRST.");
-        return;
-    }
-
-    char *v = words[0];
-
-    // LOOK
-    if (match_word(v, "LOOK") || match_word(v, "L"))
-    {
-        do_look();
-        goto after;
-    }
-
-    // HELP
-    if (match_word(v, "HELP"))
-    {
-        do_help();
-        goto after;
-    }
-
-    // One-word direction: N, NORTH, etc.
-    {
-        int dir = parse_dir(v);
-        if (dir >= 0)
-        {
-            do_go(dir);
-            goto after;
-        }
-    }
-
-    // GO <dir>
-    if (match_word(v, "GO") || match_word(v, "G"))
-    {
-        if (wc < 2)
-        {
-            set_msg("GO WHERE");
-            goto after;
-        }
-        int dir = parse_dir(words[1]);
-        if (dir < 0)
-            set_msg("I DO NOT KNOW THAT WAY.");
-        else
-            do_go(dir);
-        goto after;
-    }
-
-    // TAKE / GET <item>
-    if (match_word(v, "TAKE") || match_word(v, "GET"))
-    {
-        if (wc < 2)
-        {
-            set_msg("TAKE WHAT");
-            goto after;
-        }
-        do_take(words[1]);
-        goto after;
-    }
-
-    // DROP <item>
-    if (match_word(v, "DROP"))
-    {
-        if (wc < 2)
-        {
-            set_msg("DROP WHAT");
-            goto after;
-        }
-        do_drop(words[1]);
-        goto after;
-    }
-
-    // INVENTORY / I
-    if (match_word(v, "INVENTORY") || match_word(v, "I"))
-    {
-        do_inventory();
-        goto after;
-    }
-
-    // QUIT / Q
-    if (match_word(v, "QUIT") || match_word(v, "Q"))
-    {
-        set_msg("GOODBYE.");
-        game_over = 1;
-        return;
-    }
-
-    // Unknown
-    set_msg("I DO NOT UNDERSTAND.");
-
-after:
-    // Win condition: have treasure and be back in forest
-    if (!game_won && has_item(ITEM_TREASURE) && current_room == ROOM_FOREST)
-    {
-        set_msg("YOU ESCAPED WITH THE TREASURE!");
-        game_won  = 1;
-        game_over = 1;
-    }
+	g_keys_prev = g_keys_curr;
+	// GBA keys are active-low. KEY_MASK is typically 0x03FF.
+	g_keys_curr = (u16)(~REG_KEYINPUT & 0x03FF);
 }
 
-// -----------------------------------------------------------------------------
+static inline bool key_hit(u16 k)  { return (g_keys_curr & (u16)~g_keys_prev) & k; }
+static inline bool key_held(u16 k) { return (g_keys_curr & k) != 0; }
+
+static bool key_repeat(u16 k, int delay, int interval, int *timer)
+{
+	if(key_hit(k))
+	{
+		*timer = 0;
+		return true;
+	}
+	if(key_held(k))
+	{
+		(*timer)++;
+		if(*timer >= delay && interval > 0 && ((*timer - delay) % interval) == 0)
+			return true;
+	}
+	else
+	{
+		*timer = 0;
+	}
+	return false;
+}
+
+static void render_status(u16 fg, u16 bg)
+{
+	// Status bar background
+	fill_rect(0, 0, SCREEN_W, 8, bg);
+
+	char line[CON_COLS+1];
+	memset(line, ' ', CON_COLS);
+	line[CON_COLS] = '\0';
+
+	// Left: room name
+	{
+		const char *rn = g_rooms[g_player_room].name;
+		int i=0;
+		for(; rn[i] && i<CON_COLS; i++) line[i] = rn[i];
+	}
+
+	// Right: flags
+	{
+		char flags[64];
+		snprintf(flags, sizeof(flags),
+			"LANTERN:%s  DOOR:%s  GATE:%s",
+			(g_lantern_lit ? "ON" : "OFF"),
+			(g_trapdoor_unlocked ? "OPEN" : "LOCK"),
+			(g_gate_open ? "OPEN" : "SHUT")
+		);
+
+		int len = (int)strlen(flags);
+		int start = CON_COLS - len;
+		if(start < 0) start = 0;
+		for(int i=0; i<len && (start+i)<CON_COLS; i++)
+			line[start+i] = flags[i];
+	}
+
+	// Draw status text
+	for(int c=0; c<CON_COLS; c++)
+		draw_char_cell(c, 0, line[c], fg);
+}
+
+static void render_log(u16 fg)
+{
+	for(int r=0; r<LOG_ROWS; r++)
+	{
+		for(int c=0; c<CON_COLS; c++)
+			draw_char_cell(c, LOG_TOP + r, g_log[r][c], fg);
+	}
+}
+
+static void render_input(u16 fg, u16 bg)
+{
+	fill_rect(0, INPUT_ROW*8, SCREEN_W, 8, bg);
+
+	char line[CON_COLS+1];
+	memset(line, ' ', CON_COLS);
+	line[CON_COLS] = '\0';
+
+	// Build: "> <cmd> _  [X]"
+	int pos = 0;
+	line[pos++] = '>';
+	line[pos++] = ' ';
+
+	// cmd
+	for(int i=0; g_cmd[i] && pos < CON_COLS-6; i++)
+		line[pos++] = g_cmd[i];
+
+	// caret
+	if(pos < CON_COLS-6) line[pos++] = '_';
+
+	// selected char indicator at end
+	// e.g. " [A]"
+	const char sel = g_charset[g_sel_idx];
+	int tail = CON_COLS-4;
+	line[tail+0] = '[';
+	line[tail+1] = sel;
+	line[tail+2] = ']';
+	line[tail+3] = ' ';
+
+	// Draw
+	for(int c=0; c<CON_COLS; c++)
+		draw_char_cell(c, INPUT_ROW, line[c], fg);
+}
+
+static void render_all(void)
+{
+	const u16 CLR_BG      = RGB15(2, 2, 4);
+	const u16 CLR_FG      = RGB15(31,31,31);
+	const u16 CLR_STATUSB = RGB15(31,31,31);
+	const u16 CLR_STATUSF = RGB15(0, 0, 0);
+	const u16 CLR_INPUTB  = RGB15(0, 0, 0);
+
+	fill_screen(CLR_BG);
+	render_status(CLR_STATUSF, CLR_STATUSB);
+	render_log(CLR_FG);
+	render_input(CLR_FG, CLR_INPUTB);
+}
+
+// ------------------------------------------------------------
 // Main
-// -----------------------------------------------------------------------------
-
+// ------------------------------------------------------------
 int main(void)
 {
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+	REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-    current_room = ROOM_FOREST;
-    game_over    = 0;
-    game_won     = 0;
+	log_clear();
 
-    set_msg("WELCOME. TYPE HELP FOR HELP.");
+	log_say("TINY TONC ADVENTURE");
+	log_say("TYPE HELP FOR COMMANDS.");
+	describe_room();
 
-    key_poll_simple(); // prime key state
+	bool dirty = true;
 
-    char cmd[32];
+	int t_up=0, t_dn=0, t_lt=0, t_rt=0;
 
-    while (!game_over)
-    {
-        get_command(cmd, sizeof(cmd));
-        handle_command(cmd);
-    }
+	for(;;)
+	{
+		vsync();
+		keys_poll();
 
-    // Final screen: no further input, just show result
-    for (;;)
-    {
-        vsync();
-        draw_world_view("", -1);
-    }
+		// Quick-move with R + D-pad
+		if(key_held(KEY_R))
+		{
+			if(key_hit(KEY_UP))    { try_move(DIR_N); dirty = true; }
+			if(key_hit(KEY_DOWN))  { try_move(DIR_S); dirty = true; }
+			if(key_hit(KEY_LEFT))  { try_move(DIR_W); dirty = true; }
+			if(key_hit(KEY_RIGHT)) { try_move(DIR_E); dirty = true; }
+		}
+		else
+		{
+			// Character picker (with repeat)
+			int charset_len = (int)strlen(g_charset);
 
-    return 0;
+			if(key_repeat(KEY_UP, 12, 3, &t_up))
+			{
+				g_sel_idx = (g_sel_idx + 1) % charset_len;
+				dirty = true;
+			}
+			if(key_repeat(KEY_DOWN, 12, 3, &t_dn))
+			{
+				g_sel_idx = (g_sel_idx - 1);
+				if(g_sel_idx < 0) g_sel_idx = charset_len-1;
+				dirty = true;
+			}
+			if(key_repeat(KEY_RIGHT, 12, 3, &t_rt))
+			{
+				g_sel_idx = (g_sel_idx + 5) % charset_len;
+				dirty = true;
+			}
+			if(key_repeat(KEY_LEFT, 12, 3, &t_lt))
+			{
+				g_sel_idx = (g_sel_idx - 5);
+				while(g_sel_idx < 0) g_sel_idx += charset_len;
+				dirty = true;
+			}
+		}
+
+		// Add char
+		if(key_hit(KEY_A))
+		{
+			size_t n = strlen(g_cmd);
+			if(n+1 < sizeof(g_cmd))
+			{
+				char ch = g_charset[g_sel_idx];
+				g_cmd[n] = ch;
+				g_cmd[n+1] = '\0';
+				dirty = true;
+			}
+		}
+
+		// Backspace
+		if(key_hit(KEY_B))
+		{
+			size_t n = strlen(g_cmd);
+			if(n > 0)
+			{
+				g_cmd[n-1] = '\0';
+				dirty = true;
+			}
+		}
+
+		// Clear line
+		if(key_hit(KEY_SELECT))
+		{
+			g_cmd[0] = '\0';
+			dirty = true;
+		}
+
+		// Submit
+		if(key_hit(KEY_START))
+		{
+			if(g_cmd[0] == '\0')
+			{
+				describe_room();
+			}
+			else
+			{
+				exec_command(g_cmd);
+				g_cmd[0] = '\0';
+			}
+			dirty = true;
+		}
+
+		if(dirty)
+		{
+			render_all();
+			dirty = false;
+		}
+	}
+
+	// Unreachable
+	// return 0;
 }
