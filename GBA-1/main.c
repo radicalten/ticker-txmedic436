@@ -312,20 +312,20 @@ static void build_ui_font(void)
     // Clear UI map
     SCR_ENTRY *ui = se_mem[SBB_UI];
     for(int i=0; i<32*32; i++)
-        ui[i] = SE_BUILD(FT_BLANK, 0, 0);
+        ui[i] = SE_BUILD(FT_BLANK, 0, 0, 0);
 
     // Write static labels: "SCORE" and "LIVES"
-    ui[0*32 + 0] = SE_BUILD(FT_S, 0, 0);
-    ui[0*32 + 1] = SE_BUILD(FT_C, 0, 0);
-    ui[0*32 + 2] = SE_BUILD(FT_O, 0, 0);
-    ui[0*32 + 3] = SE_BUILD(FT_R, 0, 0);
-    ui[0*32 + 4] = SE_BUILD(FT_E, 0, 0);
+    ui[0*32 + 0] = SE_BUILD(FT_S, 0, 0, 0);
+    ui[0*32 + 1] = SE_BUILD(FT_C, 0, 0, 0);
+    ui[0*32 + 2] = SE_BUILD(FT_O, 0, 0, 0);
+    ui[0*32 + 3] = SE_BUILD(FT_R, 0, 0, 0);
+    ui[0*32 + 4] = SE_BUILD(FT_E, 0, 0, 0);
 
-    ui[0*32 + 20] = SE_BUILD(FT_L, 0, 0);
-    ui[0*32 + 21] = SE_BUILD(FT_I, 0, 0);
-    ui[0*32 + 22] = SE_BUILD(FT_V, 0, 0);
-    ui[0*32 + 23] = SE_BUILD(FT_E, 0, 0);
-    ui[0*32 + 24] = SE_BUILD(FT_S, 0, 0);
+    ui[0*32 + 20] = SE_BUILD(FT_L, 0, 0, 0);
+    ui[0*32 + 21] = SE_BUILD(FT_I, 0, 0, 0);
+    ui[0*32 + 22] = SE_BUILD(FT_V, 0, 0, 0);
+    ui[0*32 + 23] = SE_BUILD(FT_E, 0, 0, 0);
+    ui[0*32 + 24] = SE_BUILD(FT_S, 0, 0, 0);
 }
 
 static void ui_draw_number(int x, int y, int value, int digits)
