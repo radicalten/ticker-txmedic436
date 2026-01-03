@@ -7,6 +7,8 @@
 #include <maxmod.h>
 #include <stdlib.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // =================================================================================
 // ASSETS (Embedded Data)
 // =================================================================================
@@ -14,8 +16,8 @@
 // 1. PALETTE (16 colors)
 // Index 1: Samus Orange, Index 2: Ground Blue, Index 3: Bullet Yellow
 const unsigned short main_pal[16] = {
-    RGB15(0,0,0),    RGB15(31,15,0),  RGB15(0,10,25),  RGB15(31,31,0),
-    RGB15(31,0,0),   RGB15(0,31,0),   RGB15(0,0,31),   RGB15(20,20,20),
+    RGB15_C(0,0,0),    RGB15_C(31,15,0),  RGB15_C(0,10,25),  RGB15_C(31,31,0),
+    RGB15_C(31,0,0),   RGB15_C(0,31,0),   RGB15_C(0,0,31),   RGB15_C(20,20,20),
     0,0,0,0,0,0,0,0
 };
 
