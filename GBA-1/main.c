@@ -1,803 +1,330 @@
-// main.c - Single-file "TwinBee-like" vertical shmup demo for GBA using tonc.
-// Features: tilemap starfield scroll, player ship, enemies, bullets, bell powerups,
-//           simple collisions, lives/power, all graphics generated in code (no assets).
-//
-// Build (typical devkitARM + tonc setup):
-//   arm-none-eabi-gcc -mthumb-interwork -mthumb -O2 -Wall -Wextra -std=c11 main.c -ltonc -o game.elf
-// Then convert/link as your environment expects (or use a tonc template Makefile).
+/*
+ * TwinBee-like Vertical Shmup for GBA
+ * 
+ * COMPILATION:
+ * This requires the devkitPro GBA toolchain and libtonc.
+ * Compile using: 
+ * arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -Wall -c main.c -o main.o
+ * arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -specs=gba.specs main.o -ltonc -o game.elf
+ * objcopy -O binary game.elf game.gba
+ * gbafix game.gba
+ */
 
 #include <tonc.h>
-#include <stdbool.h>
-#include <stddef.h>
+#include <stdlib.h> // For rand()
 
-// ----------------------------- Config ---------------------------------
+// Constants
+#define MAX_BULLETS 10
+#define MAX_ENEMIES 8
+#define PLAYER_SPEED 2
+#define BULLET_SPEED 4
+#define ENEMY_SPEED 1
+#define SPAWN_RATE 60 // Frames
 
-#define SCR_W 240
-#define SCR_H 160
+// Tile Indices (in VRAM)
+#define TID_PLAYER  0
+#define TID_ENEMY   2 // 16x16 sprites use 2 tiles index steps in 1D mapping if 4bpp? 
+                      // Actually, for 16x16 4bpp, we need 4 tiles (32x8 bytes). 
+                      // Let's keep it simple: 16x16 sprites.
+#define TID_BULLET  4 
+#define TID_CLOUD   1 // Background tile
 
-#define MAX_ENEMIES       24
-#define MAX_PBULLETS      40
-#define MAX_EBULLETS      40
-#define MAX_POWERUPS      10
-
-// OBJ tile indices (1D mapping, 4bpp):
-// 16x16 sprites take 4 consecutive 8x8 tiles.
-enum
-{
-	TID_PLAYER  = 0,   // 0..3
-	TID_ENEMY   = 4,   // 4..7
-	TID_PBULLET = 8,   // 8
-	TID_EBULLET = 9,   // 9
-	TID_BELL    = 10,  // 10
-};
-
-// Pal indices (OBJ palbank 0, BG palbank 0)
-enum
-{
-	BG_PAL = 0,
-	OBJ_PAL = 0
-};
-
-// ----------------------------- Small utils ----------------------------
-
-static inline int clampi(int v, int lo, int hi)
-{
-	if(v < lo) return lo;
-	if(v > hi) return hi;
-	return v;
-}
-
-static inline bool aabb(int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh)
-{
-	return (ax < bx+bw) && (ax+aw > bx) && (ay < by+bh) && (ay+ah > by);
-}
-
-// LCG rng (deterministic)
-static u32 g_rng = 0x1234ABCD;
-static inline u32 rng_u32(void)
-{
-	g_rng = 1664525u*g_rng + 1013904223u;
-	return g_rng;
-}
-static inline int rng_range(int lo, int hi_inclusive)
-{
-	u32 r = rng_u32() >> 16;
-	int span = (hi_inclusive - lo) + 1;
-	return lo + (int)(r % (u32)span);
-}
-
-// ----------------------------- Tile plotting ---------------------------
-// 4bpp TILE in tonc is 8 u32 words; each u32 = one 8px row, 4bpp packed.
-static inline void tile4_clear(TILE *t)
-{
-	for(int i=0;i<8;i++) t->data[i]=0;
-}
-static inline void tile4_pset(TILE *t, int x, int y, u8 c)
-{
-	// x:0..7 y:0..7, c:0..15
-	u32 *row = &t->data[y];
-	u32 shift = (u32)(x*4);
-	u32 mask = 0xFu << shift;
-	*row = (*row & ~mask) | ((u32)(c & 0xF) << shift);
-}
-
-// Plot on a 16x16 sprite stored as 4 consecutive tiles in 1D (2x2 tiles).
-static inline void spr16_pset(int base_tid, int x, int y, u8 c)
-{
-	if((unsigned)x >= 16u || (unsigned)y >= 16u) return;
-
-	int tx = x >> 3;             // 0..1
-	int ty = y >> 3;             // 0..1
-	int tid = base_tid + tx + (ty<<1);
-
-	TILE *t = &tile_mem[4][tid];
-	tile4_pset(t, x & 7, y & 7, c);
-}
-
-// ----------------------------- Game state ------------------------------
-
-typedef struct
-{
-	int x, y;           // px
-	int shot_cd;        // frames
-	int power;          // 0..3
-	int lives;          // >=0
-	int invuln;         // frames
-	bool alive;
-} Player;
-
-typedef struct
-{
-	int x, y;
-	int vx, vy;
-	int hp;
-	int fire_t;         // timer for enemy shooting
-	bool active;
-} Enemy;
-
-typedef struct
-{
-	int x, y;
-	int vx, vy;
-	int ttl;
-	bool active;
-	bool friendly;
+// Entity Structures
+typedef struct {
+    int x, y;
+    int w, h;
+    int active;
 } Bullet;
 
-typedef struct
-{
-	int x, y;
-	int vy;
-	int color;          // 0..2
-	int cycle_t;
-	bool active;
-} Powerup;
+typedef struct {
+    int x, y;
+    int active;
+    int type; // 0 = standard
+} Enemy;
 
-static Player  g_plr;
-static Enemy   g_enemies[MAX_ENEMIES];
-static Bullet  g_bullets[MAX_PBULLETS + MAX_EBULLETS];
-static Powerup g_pows[MAX_POWERUPS];
+typedef struct {
+    int x, y;
+    int cooldown;
+} Player;
 
-static int g_scroll_y = 0;
-static int g_spawn_t = 0;
-static int g_frame = 0;
+// Global State
+OBJ_ATTR obj_buffer[128];
+Bullet bullets[MAX_BULLETS];
+Enemy enemies[MAX_ENEMIES];
+Player player;
+int frame_count = 0;
+int bg_scroll_y = 0;
 
-// Sprite staging buffer
-static OBJ_ATTR obj_buf[128];
+// ==================================================================================
+// GRAPHICS GENERATION
+// Since we have no external assets, we paint tiles directly into VRAM.
+// ==================================================================================
 
-// ----------------------------- Spawning --------------------------------
-
-static Bullet* bullet_alloc(bool friendly)
-{
-	int max = MAX_PBULLETS + MAX_EBULLETS;
-	for(int i=0;i<max;i++)
-	{
-		if(!g_bullets[i].active)
-		{
-			g_bullets[i].active = true;
-			g_bullets[i].friendly = friendly;
-			g_bullets[i].ttl = 90;
-			return &g_bullets[i];
-		}
-	}
-	return NULL;
+void plot_pixel_4bpp(TILE *tile_base, int x, int y, u8 clr_index) {
+    // 4bpp = 2 pixels per byte.
+    // Calculate tile index and offset within tile
+    int tile_idx = (y / 8) * (2) + (x / 8); // simplified for single linear alloc
+    // Note: This logic below is specifically for writing into a single 8x8 TILE struct
+    // We will pass the specific address of the tile we want to edit.
+    
+    u32 *row = (u32*)&tile_base->data[(y%8) * 4]; // Get the row (4 bytes per row in 4bpp? No, 4 bytes = 8 pixels)
+    // Actually, TILE struct in tonc is u32 data[8]. Each u32 is a row of 8 pixels (4 bits each).
+    
+    // Tonc TILE definition: typedef struct { u32 data[8]; } TILE;
+    // 1 pixel = 4 bits.
+    
+    u32 shift = (x % 8) * 4;
+    u32 mask = 0xF << shift;
+    tile_base->data[y%8] = (tile_base->data[y%8] & ~mask) | ((clr_index & 0xF) << shift);
 }
 
-static Enemy* enemy_alloc(void)
-{
-	for(int i=0;i<MAX_ENEMIES;i++)
-	{
-		if(!g_enemies[i].active)
-		{
-			g_enemies[i].active = true;
-			return &g_enemies[i];
-		}
-	}
-	return NULL;
+// Helper to fill a tile with a color
+void fill_tile(TILE *t, u8 color) {
+    u32 packed = (color << 28) | (color << 24) | (color << 20) | (color << 16) |
+                 (color << 12) | (color << 8)  | (color << 4)  | color;
+    for(int i=0; i<8; i++) t->data[i] = packed;
 }
 
-static Powerup* pow_alloc(void)
-{
-	for(int i=0;i<MAX_POWERUPS;i++)
-	{
-		if(!g_pows[i].active)
-		{
-			g_pows[i].active = true;
-			return &g_pows[i];
-		}
-	}
-	return NULL;
+void init_graphics() {
+    // 1. Setup Palettes
+    // Background Palette (Banks 0-15)
+    pal_bg_mem[0] = CLR_SKYBLUE; // Background color
+    pal_bg_mem[1] = CLR_WHITE;   // Cloud color
+
+    // Sprite Palette (Banks 0-15)
+    pal_obj_mem[0] = CLR_MAGENTA; // Transparent key
+    pal_obj_mem[1] = CLR_BLUE;    // Player
+    pal_obj_mem[2] = CLR_CYAN;    // Player Highlight
+    pal_obj_mem[3] = CLR_RED;     // Enemy
+    pal_obj_mem[4] = CLR_YELLOW;  // Bullet
+    
+    // 2. Generate Sprites (in tile_mem[4])
+    // We are using 16x16 sprites, so we need blocks of 4 tiles per sprite.
+    
+    // --- PLAYER (Blue Ship) --- 
+    // IDs 0, 1, 2, 3 (allocated sequentially in VRAM)
+    TILE *pTile = &tile_mem_obj[0][TID_PLAYER]; 
+    for(int y=0; y<16; y++) {
+        for(int x=0; x<16; x++) {
+            // Determine which of the 4 tiles we are in
+            int tile_offset = (y/8)*2 + (x/8);
+            // Draw a triangle shape
+            if (x >= 8 - y/2 && x <= 7 + y/2 && y < 14) {
+                plot_pixel_4bpp(&pTile[tile_offset], x%8, y%8, 1);
+            }
+            // Cockpit
+            if (y >= 8 && y <= 11 && x >= 6 && x <= 9) {
+                plot_pixel_4bpp(&pTile[tile_offset], x%8, y%8, 2);
+            }
+        }
+    }
+
+    // --- ENEMY (Red Bell/Bee) ---
+    // IDs 4, 5, 6, 7 (But we defined TID_ENEMY as 4 because 16x16 uses 2 strides in 1D mapping? 
+    // Let's rely on standard 32-byte tiles. 4 tiles = 128 bytes.
+    // Index 4 in tile_mem_obj is the start.
+    TILE *eTile = &tile_mem_obj[0][TID_ENEMY];
+    for(int y=0; y<16; y++) {
+        for(int x=0; x<16; x++) {
+            int tile_offset = (y/8)*2 + (x/8);
+            int dx = x - 7;
+            int dy = y - 7;
+            if (dx*dx + dy*dy < 40) { // Circle
+                plot_pixel_4bpp(&eTile[tile_offset], x%8, y%8, 3);
+            }
+        }
+    }
+
+    // --- BULLET (Yellow Dot) ---
+    // 8x8 sprite, so just 1 tile.
+    TILE *bTile = &tile_mem_obj[0][TID_BULLET];
+    fill_tile(bTile, 0); // Clear
+    for(int y=2; y<6; y++) {
+        for(int x=2; x<6; x++) {
+             plot_pixel_4bpp(bTile, x, y, 4);
+        }
+    }
+
+    // 3. Generate Background (in tile_mem[0])
+    // Create a "Cloud" tile at index 1
+    TILE *cloudTile = &tile_mem[0][TID_CLOUD];
+    fill_tile(cloudTile, 0); // Fill with skyblue (index 0)
+    // Draw a dithery blob
+    for(int i=0; i<8; i++) cloudTile->data[i] = 0x11111111; // Simple pattern
+
+    // 4. Fill Map
+    // Screen Block 30 (for BG0)
+    u16 *map = se_mem[30];
+    for(int i=0; i<32*32; i++) {
+        // Randomly place clouds
+        if ((rand() % 20) == 0) map[i] = TID_CLOUD;
+        else map[i] = 0; // Sky
+    }
 }
 
-static void spawn_enemy(void)
-{
-	Enemy *e = enemy_alloc();
-	if(!e) return;
+// ==================================================================================
+// GAME LOGIC
+// ==================================================================================
 
-	e->x = rng_range(8, SCR_W-24);
-	e->y = -16;
-	e->vy = rng_range(1, 2);
-	e->vx = rng_range(0, 1) ? 1 : -1;
-	if(rng_range(0, 3) == 0) e->vx = 0;          // some go straight
-	e->hp = (rng_range(0, 5)==0) ? 3 : 1;        // occasional tougher enemy
-	e->fire_t = rng_range(20, 80);
+void init_game() {
+    player.x = (SCREEN_WIDTH / 2) - 8;
+    player.y = SCREEN_HEIGHT - 32;
+    player.cooldown = 0;
+
+    for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = 0;
+    for(int i=0; i<MAX_ENEMIES; i++) enemies[i].active = 0;
 }
 
-static void spawn_bell(int x, int y)
-{
-	Powerup *p = pow_alloc();
-	if(!p) return;
-	p->x = x;
-	p->y = y;
-	p->vy = 1;
-	p->color = rng_range(0, 2);
-	p->cycle_t = 0;
+void spawn_enemy() {
+    for(int i=0; i<MAX_ENEMIES; i++) {
+        if(!enemies[i].active) {
+            enemies[i].active = 1;
+            enemies[i].x = (rand() % (SCREEN_WIDTH - 16));
+            enemies[i].y = -16;
+            enemies[i].type = 0;
+            break;
+        }
+    }
 }
 
-static void player_shoot(void)
-{
-	if(g_plr.shot_cd > 0) return;
+void update() {
+    // 1. Player Movement
+    key_poll();
+    if(key_is_down(KEY_LEFT)) player.x -= PLAYER_SPEED;
+    if(key_is_down(KEY_RIGHT)) player.x += PLAYER_SPEED;
+    if(key_is_down(KEY_UP)) player.y -= PLAYER_SPEED;
+    if(key_is_down(KEY_DOWN)) player.y += PLAYER_SPEED;
 
-	// Base origin (ship "nose")
-	int ox = g_plr.x + 8;
-	int oy = g_plr.y + 2;
+    // Clamp to screen
+    if(player.x < 0) player.x = 0;
+    if(player.x > SCREEN_WIDTH - 16) player.x = SCREEN_WIDTH - 16;
+    if(player.y < 0) player.y = 0;
+    if(player.y > SCREEN_HEIGHT - 16) player.y = SCREEN_HEIGHT - 16;
 
-	// Fire patterns by power level
-	if(g_plr.power == 0)
-	{
-		Bullet *b = bullet_alloc(true);
-		if(b){ b->x=ox-4; b->y=oy; b->vx=0; b->vy=-5; b->ttl=70; }
-		g_plr.shot_cd = 10;
-	}
-	else if(g_plr.power == 1)
-	{
-		for(int s=-1; s<=1; s+=2)
-		{
-			Bullet *b = bullet_alloc(true);
-			if(b){ b->x=ox-4 + s*4; b->y=oy; b->vx=0; b->vy=-5; b->ttl=70; }
-		}
-		g_plr.shot_cd = 10;
-	}
-	else if(g_plr.power == 2)
-	{
-		int vxs[3] = {-1, 0, 1};
-		int vys[3] = {-4, -6, -4};
-		for(int i=0;i<3;i++)
-		{
-			Bullet *b = bullet_alloc(true);
-			if(b){ b->x=ox-4; b->y=oy; b->vx=vxs[i]; b->vy=vys[i]; b->ttl=70; }
-		}
-		g_plr.shot_cd = 9;
-	}
-	else // power 3
-	{
-		// faster "laser-ish" stream
-		Bullet *b = bullet_alloc(true);
-		if(b){ b->x=ox-4; b->y=oy; b->vx=0; b->vy=-7; b->ttl=55; }
-		g_plr.shot_cd = 5;
-	}
+    // 2. Shooting
+    if(player.cooldown > 0) player.cooldown--;
+    if(key_is_down(KEY_A) && player.cooldown == 0) {
+        for(int i=0; i<MAX_BULLETS; i++) {
+            if(!bullets[i].active) {
+                bullets[i].active = 1;
+                bullets[i].x = player.x + 4; // Center of 16px ship
+                bullets[i].y = player.y;
+                bullets[i].w = 8;
+                bullets[i].h = 8;
+                player.cooldown = 10;
+                break;
+            }
+        }
+    }
+
+    // 3. Update Bullets
+    for(int i=0; i<MAX_BULLETS; i++) {
+        if(bullets[i].active) {
+            bullets[i].y -= BULLET_SPEED;
+            if(bullets[i].y < -8) bullets[i].active = 0;
+        }
+    }
+
+    // 4. Update Enemies
+    if(frame_count % SPAWN_RATE == 0) spawn_enemy();
+    
+    for(int i=0; i<MAX_ENEMIES; i++) {
+        if(enemies[i].active) {
+            enemies[i].y += ENEMY_SPEED;
+            // Simple wavy movement
+            enemies[i].x += (frame_count % 40 < 20) ? 1 : -1;
+
+            if(enemies[i].y > SCREEN_HEIGHT) enemies[i].active = 0;
+
+            // Collision with Player
+            if(abs(player.x - enemies[i].x) < 12 && abs(player.y - enemies[i].y) < 12) {
+                // Reset game on hit (very basic)
+                init_game();
+            }
+
+            // Collision with Bullets
+            for(int b=0; b<MAX_BULLETS; b++) {
+                if(bullets[b].active) {
+                    if(bullets[b].x < enemies[i].x + 16 &&
+                       bullets[b].x + 8 > enemies[i].x &&
+                       bullets[b].y < enemies[i].y + 16 &&
+                       bullets[b].y + 8 > enemies[i].y) {
+                        
+                        enemies[i].active = 0;
+                        bullets[b].active = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Scroll Background
+    bg_scroll_y--;
+    REG_BG0VOFS = bg_scroll_y >> 1; // Slower scroll
+
+    frame_count++;
 }
 
-// ----------------------------- Init graphics ---------------------------
+void draw() {
+    // Initialize OAM buffer
+    oam_init(obj_buffer, 128);
 
-static void init_palettes(void)
-{
-	// BG palette
-	pal_bg_mem[0] = RGB15(0,0,0);
-	pal_bg_mem[1] = RGB15(31,31,31);  // bright star
-	pal_bg_mem[2] = RGB15(16,16,16);  // dim star
+    int id = 0;
 
-	// OBJ palette (16 colors)
-	pal_obj_mem[0]  = RGB15(0,0,0);        // transparent (index 0)
-	pal_obj_mem[1]  = RGB15(31,31,31);     // white
-	pal_obj_mem[2]  = RGB15(10,18,31);     // light blue (player body)
-	pal_obj_mem[3]  = RGB15(4,8,20);       // dark blue (cockpit)
-	pal_obj_mem[4]  = RGB15(31,8,8);       // red
-	pal_obj_mem[5]  = RGB15(31,18,0);      // orange
-	pal_obj_mem[6]  = RGB15(31,31,0);      // yellow
-	pal_obj_mem[7]  = RGB15(8,31,8);       // green
-	pal_obj_mem[8]  = RGB15(10,10,10);     // dark gray
-	pal_obj_mem[9]  = RGB15(20,20,20);     // gray
-	// rest unused
+    // Draw Player
+    obj_set_attr(&obj_buffer[id++], 
+        ATTR0_SQUARE | ATTR0_Y(player.y), 
+        ATTR1_SIZE_16 | ATTR1_X(player.x), 
+        ATTR2_PALBANK(0) | TID_PLAYER);
+
+    // Draw Enemies
+    for(int i=0; i<MAX_ENEMIES; i++) {
+        if(enemies[i].active) {
+            obj_set_attr(&obj_buffer[id++], 
+                ATTR0_SQUARE | ATTR0_Y(enemies[i].y), 
+                ATTR1_SIZE_16 | ATTR1_X(enemies[i].x), 
+                ATTR2_PALBANK(0) | TID_ENEMY);
+        }
+    }
+
+    // Draw Bullets
+    for(int i=0; i<MAX_BULLETS; i++) {
+        if(bullets[i].active) {
+            obj_set_attr(&obj_buffer[id++], 
+                ATTR0_SQUARE | ATTR0_Y(bullets[i].y), 
+                ATTR1_SIZE_8 | ATTR1_X(bullets[i].x), 
+                ATTR2_PALBANK(0) | TID_BULLET);
+        }
+    }
+
+    // Copy buffer to real OAM during VBlank
+    oam_copy(oam_mem, obj_buffer, id);
 }
 
-static void make_bg_tiles_and_map(void)
-{
-	// BG0 tiles in charblock 0
-	// Tile 0: empty
-	tile4_clear(&tile_mem[0][0]);
-
-	// Tile 1: bright star
-	tile4_clear(&tile_mem[0][1]);
-	tile4_pset(&tile_mem[0][1], 3,3, 1);
-	tile4_pset(&tile_mem[0][1], 4,3, 1);
-	tile4_pset(&tile_mem[0][1], 3,4, 1);
-	tile4_pset(&tile_mem[0][1], 4,4, 1);
-
-	// Tile 2: dim star
-	tile4_clear(&tile_mem[0][2]);
-	tile4_pset(&tile_mem[0][2], 4,4, 2);
-
-	// Fill a 32x32 map in screenblock 31 with random stars
-	u16 *map = se_mem[31];
-	for(int i=0;i<32*32;i++)
-	{
-		int roll = rng_range(0, 99);
-		u16 tid = 0;
-		if(roll < 6) tid = 2;
-		if(roll < 2) tid = 1;
-		map[i] = tid | SE_PALBANK(BG_PAL);
-	}
-}
-
-static void make_obj_tiles(void)
-{
-	// Clear a small range of OBJ tiles we use
-	for(int i=0;i<16;i++)
-		tile4_clear(&tile_mem[4][i]);
-
-	// --- Player 16x16 (TID_PLAYER..TID_PLAYER+3) ---
-	// Procedural little "ship": white outline, light-blue body, dark-blue cockpit.
-	for(int y=0;y<16;y++)
-	{
-		int l, r;
-		if(y < 4)      { l = 7 - y; r = 8 + y; }
-		else if(y < 10){ l = 3;     r = 12; }
-		else           { l = 5;     r = 10; }
-
-		for(int x=l; x<=r; x++)
-		{
-			u8 col = 2; // body
-			// outline
-			if(x==l || x==r || y==0 || y==15) col = 1;
-			spr16_pset(TID_PLAYER, x, y, col);
-		}
-
-		// cockpit
-		if(y>=5 && y<=8)
-		{
-			for(int x=7; x<=8; x++)
-				spr16_pset(TID_PLAYER, x, y, 3);
-		}
-	}
-
-	// --- Enemy 16x16 (TID_ENEMY..TID_ENEMY+3) ---
-	// Simple "bee-ish" round blob with orange stripe.
-	for(int y=0;y<16;y++)
-	{
-		for(int x=0;x<16;x++)
-		{
-			int dx = x-7;
-			int dy = y-7;
-			int d2 = dx*dx + dy*dy;
-			if(d2 <= 7*7)
-			{
-				u8 col = 4; // red
-				if((y/3) & 1) col = 5; // orange stripes
-				// outline at edge-ish
-				if(d2 >= 6*6) col = 1;
-				spr16_pset(TID_ENEMY, x, y, col);
-			}
-		}
-	}
-	// tiny "eyes"
-	spr16_pset(TID_ENEMY, 5,6, 1);
-	spr16_pset(TID_ENEMY, 10,6, 1);
-
-	// --- Player bullet 8x8 (TID_PBULLET) ---
-	tile4_clear(&tile_mem[4][TID_PBULLET]);
-	for(int y=1;y<=6;y++)
-	{
-		tile4_pset(&tile_mem[4][TID_PBULLET], 3, y, 6);
-		tile4_pset(&tile_mem[4][TID_PBULLET], 4, y, 6);
-	}
-	tile4_pset(&tile_mem[4][TID_PBULLET], 3, 0, 1);
-	tile4_pset(&tile_mem[4][TID_PBULLET], 4, 0, 1);
-
-	// --- Enemy bullet 8x8 (TID_EBULLET) ---
-	tile4_clear(&tile_mem[4][TID_EBULLET]);
-	for(int y=2;y<=5;y++)
-	{
-		tile4_pset(&tile_mem[4][TID_EBULLET], 3, y, 4);
-		tile4_pset(&tile_mem[4][TID_EBULLET], 4, y, 4);
-	}
-	tile4_pset(&tile_mem[4][TID_EBULLET], 2, 4, 5);
-	tile4_pset(&tile_mem[4][TID_EBULLET], 5, 4, 5);
-
-	// --- Bell 8x8 (TID_BELL) ---
-	// Color-cycled by swapping OBJ palette indices in draw step (simple trick).
-	tile4_clear(&tile_mem[4][TID_BELL]);
-	for(int y=1;y<=6;y++)
-	{
-		for(int x=2;x<=5;x++)
-			tile4_pset(&tile_mem[4][TID_BELL], x, y, 7); // will recolor via pal trick? (we'll just pick colors by OAM palette swap not possible per sprite)
-	}
-	// outline
-	for(int x=2;x<=5;x++){ tile4_pset(&tile_mem[4][TID_BELL], x, 1, 1); tile4_pset(&tile_mem[4][TID_BELL], x, 6, 1); }
-	for(int y=1;y<=6;y++){ tile4_pset(&tile_mem[4][TID_BELL], 2, y, 1); tile4_pset(&tile_mem[4][TID_BELL], 5, y, 1); }
-	// clapper
-	tile4_pset(&tile_mem[4][TID_BELL], 3, 6, 6);
-	tile4_pset(&tile_mem[4][TID_BELL], 4, 6, 6);
-}
-
-static void init_video(void)
-{
-	REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-
-	// BG0: 4bpp, 32x32, CBB0, SBB31, low priority (behind sprites)
-	REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(3);
-
-	// IRQ for VBlankIntrWait
-	REG_IME = 0;
-	REG_IE = IRQ_VBLANK;
-	REG_DISPSTAT |= DSTAT_VBL_IRQ;
-	REG_IME = 1;
-}
-
-// ----------------------------- Game init -------------------------------
-
-static void reset_game(void)
-{
-	g_plr.x = (SCR_W/2) - 8;
-	g_plr.y = SCR_H - 24;
-	g_plr.shot_cd = 0;
-	g_plr.power = 0;
-	g_plr.lives = 3;
-	g_plr.invuln = 90;
-	g_plr.alive = true;
-
-	for(int i=0;i<MAX_ENEMIES;i++) g_enemies[i].active = false;
-	for(int i=0;i<MAX_PBULLETS + MAX_EBULLETS;i++) g_bullets[i].active = false;
-	for(int i=0;i<MAX_POWERUPS;i++) g_pows[i].active = false;
-
-	g_scroll_y = 0;
-	g_spawn_t = 0;
-	g_frame = 0;
-}
-
-// ----------------------------- Update ----------------------------------
-
-static void update_player(void)
-{
-	if(!g_plr.alive) return;
-
-	// movement
-	int spd = key_is_down(KEY_B) ? 1 : 2;
-	if(key_is_down(KEY_LEFT))  g_plr.x -= spd;
-	if(key_is_down(KEY_RIGHT)) g_plr.x += spd;
-	if(key_is_down(KEY_UP))    g_plr.y -= spd;
-	if(key_is_down(KEY_DOWN))  g_plr.y += spd;
-
-	g_plr.x = clampi(g_plr.x, 0, SCR_W-16);
-	g_plr.y = clampi(g_plr.y, 0, SCR_H-16);
-
-	// shooting
-	if(key_is_down(KEY_A))
-		player_shoot();
-
-	if(g_plr.shot_cd > 0) g_plr.shot_cd--;
-	if(g_plr.invuln > 0) g_plr.invuln--;
-}
-
-static void update_enemies(void)
-{
-	for(int i=0;i<MAX_ENEMIES;i++)
-	{
-		Enemy *e = &g_enemies[i];
-		if(!e->active) continue;
-
-		e->x += e->vx;
-		e->y += e->vy;
-
-		// gentle bounce horizontally
-		if(e->x < 4) { e->x = 4; e->vx = 1; }
-		if(e->x > SCR_W-20) { e->x = SCR_W-20; e->vx = -1; }
-
-		// enemy shooting
-		e->fire_t--;
-		if(e->fire_t <= 0 && e->y >= 0)
-		{
-			Bullet *b = bullet_alloc(false);
-			if(b)
-			{
-				b->x = e->x + 8 - 4;
-				b->y = e->y + 12;
-				b->vx = 0;
-				b->vy = 3;
-				b->ttl = 80;
-			}
-			e->fire_t = rng_range(40, 90);
-		}
-
-		// offscreen cleanup
-		if(e->y > SCR_H + 24)
-			e->active = false;
-	}
-}
-
-static void update_bullets(void)
-{
-	int max = MAX_PBULLETS + MAX_EBULLETS;
-	for(int i=0;i<max;i++)
-	{
-		Bullet *b = &g_bullets[i];
-		if(!b->active) continue;
-
-		b->x += b->vx;
-		b->y += b->vy;
-		b->ttl--;
-
-		if(b->ttl <= 0 || b->x < -8 || b->x > SCR_W || b->y < -12 || b->y > SCR_H+12)
-			b->active = false;
-	}
-}
-
-static void update_powerups(void)
-{
-	for(int i=0;i<MAX_POWERUPS;i++)
-	{
-		Powerup *p = &g_pows[i];
-		if(!p->active) continue;
-
-		p->y += p->vy;
-		p->cycle_t++;
-
-		// cycle color every ~15 frames
-		if((p->cycle_t % 15) == 0)
-			p->color = (p->color + 1) % 3;
-
-		if(p->y > SCR_H+8)
-			p->active = false;
-	}
-}
-
-static void do_collisions(void)
-{
-	// Player bullets vs enemies
-	int max = MAX_PBULLETS + MAX_EBULLETS;
-	for(int bi=0; bi<max; bi++)
-	{
-		Bullet *b = &g_bullets[bi];
-		if(!b->active || !b->friendly) continue;
-
-		for(int ei=0; ei<MAX_ENEMIES; ei++)
-		{
-			Enemy *e = &g_enemies[ei];
-			if(!e->active) continue;
-
-			if(aabb(b->x, b->y, 8, 8, e->x, e->y, 16, 16))
-			{
-				b->active = false;
-				e->hp -= 1;
-				if(e->hp <= 0)
-				{
-					// chance to drop a bell
-					if(rng_range(0, 4) == 0)
-						spawn_bell(e->x+4, e->y+4);
-					e->active = false;
-				}
-				break;
-			}
-		}
-	}
-
-	// Player vs enemies / enemy bullets
-	if(g_plr.alive && g_plr.invuln == 0)
-	{
-		// vs enemies
-		for(int ei=0; ei<MAX_ENEMIES; ei++)
-		{
-			Enemy *e = &g_enemies[ei];
-			if(!e->active) continue;
-
-			if(aabb(g_plr.x, g_plr.y, 16, 16, e->x, e->y, 16, 16))
-			{
-				e->active = false;
-				goto player_hit;
-			}
-		}
-
-		// vs enemy bullets
-		for(int bi=0; bi<max; bi++)
-		{
-			Bullet *b = &g_bullets[bi];
-			if(!b->active || b->friendly) continue;
-
-			if(aabb(g_plr.x, g_plr.y, 16, 16, b->x, b->y, 8, 8))
-			{
-				b->active = false;
-				goto player_hit;
-			}
-		}
-	}
-
-	// Player vs powerups
-	for(int pi=0; pi<MAX_POWERUPS; pi++)
-	{
-		Powerup *p = &g_pows[pi];
-		if(!p->active) continue;
-
-		if(aabb(g_plr.x, g_plr.y, 16, 16, p->x, p->y, 8, 8))
-		{
-			p->active = false;
-
-			// "TwinBee-ish": bell color affects reward (simplified)
-			// 0: yellow -> power up
-			// 1: blue-ish -> small power
-			// 2: green -> bigger power
-			if(p->color == 0) g_plr.power = clampi(g_plr.power + 1, 0, 3);
-			else if(p->color == 1) g_plr.power = clampi(g_plr.power + 1, 0, 3);
-			else g_plr.power = clampi(g_plr.power + 2, 0, 3);
-		}
-	}
-
-	return;
-
-player_hit:
-	g_plr.lives--;
-	g_plr.power = 0;
-	g_plr.invuln = 120;
-	g_plr.x = (SCR_W/2) - 8;
-	g_plr.y = SCR_H - 24;
-
-	if(g_plr.lives < 0)
-	{
-		// quick reset loop
-		reset_game();
-	}
-}
-
-static void update_game(void)
-{
-	g_frame++;
-
-	// Scroll starfield (BG hardware scroll; repeats every 256px)
-	g_scroll_y = (g_scroll_y + 1) & 255;
-	REG_BG0VOFS = (u16)g_scroll_y;
-	REG_BG0HOFS = 0;
-
-	// Spawn enemies over time
-	g_spawn_t--;
-	if(g_spawn_t <= 0)
-	{
-		spawn_enemy();
-		// faster over time, capped
-		int base = 40 - (g_frame/600);
-		if(base < 12) base = 12;
-		g_spawn_t = rng_range(base, base+20);
-	}
-
-	update_player();
-	update_enemies();
-	update_bullets();
-	update_powerups();
-	do_collisions();
-}
-
-// ----------------------------- Draw ------------------------------------
-
-static inline void obj_push_hide_rest(int start)
-{
-	for(int i=start; i<128; i++)
-		obj_hide(&obj_buf[i]);
-}
-
-static int draw_player(int oid)
-{
-	if(!g_plr.alive) return oid;
-
-	// Flicker during invuln
-	if(g_plr.invuln > 0 && ((g_frame>>2)&1))
-		return oid;
-
-	OBJ_ATTR *o = &obj_buf[oid++];
-	obj_set_attr(o,
-		ATTR0_SQUARE | ATTR0_4BPP,
-		ATTR1_SIZE_16,
-		ATTR2_BUILD(TID_PLAYER, OBJ_PAL, 0));
-	obj_set_pos(o, g_plr.x, g_plr.y);
-
-	return oid;
-}
-
-static int draw_enemies(int oid)
-{
-	for(int i=0;i<MAX_ENEMIES;i++)
-	{
-		Enemy *e = &g_enemies[i];
-		if(!e->active) continue;
-
-		if(e->y < -15 || e->y >= SCR_H) continue;
-
-		OBJ_ATTR *o = &obj_buf[oid++];
-		obj_set_attr(o,
-			ATTR0_SQUARE | ATTR0_4BPP,
-			ATTR1_SIZE_16,
-			ATTR2_BUILD(TID_ENEMY, OBJ_PAL, 1));
-		obj_set_pos(o, e->x, e->y);
-
-		if(oid >= 128) return oid;
-	}
-	return oid;
-}
-
-static int draw_bullets(int oid)
-{
-	int max = MAX_PBULLETS + MAX_EBULLETS;
-	for(int i=0;i<max;i++)
-	{
-		Bullet *b = &g_bullets[i];
-		if(!b->active) continue;
-
-		if(b->y < -7 || b->y >= SCR_H) continue;
-
-		int tid = b->friendly ? TID_PBULLET : TID_EBULLET;
-
-		OBJ_ATTR *o = &obj_buf[oid++];
-		obj_set_attr(o,
-			ATTR0_SQUARE | ATTR0_4BPP,
-			ATTR1_SIZE_8,
-			ATTR2_BUILD(tid, OBJ_PAL, 0));
-		obj_set_pos(o, b->x, b->y);
-
-		if(oid >= 128) return oid;
-	}
-	return oid;
-}
-
-static int draw_powerups(int oid)
-{
-	for(int i=0;i<MAX_POWERUPS;i++)
-	{
-		Powerup *p = &g_pows[i];
-		if(!p->active) continue;
-
-		if(p->y < -7 || p->y >= SCR_H) continue;
-
-		// Tint by swapping the fill color index in OBJ palette would require per-sprite palbank.
-		// We keep single palbank for simplicity, and just "hint" color by sprite priority:
-		// Instead, we do a cheap hack: change the sprite's priority (not color) based on p->color.
-		// If you want true per-bell color, use multiple palbanks and different tile colors.
-		int prio = 0;
-		if(p->color == 1) prio = 1;
-		if(p->color == 2) prio = 2;
-
-		OBJ_ATTR *o = &obj_buf[oid++];
-		obj_set_attr(o,
-			ATTR0_SQUARE | ATTR0_4BPP,
-			ATTR1_SIZE_8,
-			ATTR2_BUILD(TID_BELL, OBJ_PAL, prio));
-		obj_set_pos(o, p->x, p->y);
-
-		if(oid >= 128) return oid;
-	}
-	return oid;
-}
-
-static void draw_game(void)
-{
-	int oid = 0;
-
-	oid = draw_player(oid);
-	oid = draw_enemies(oid);
-	oid = draw_bullets(oid);
-	oid = draw_powerups(oid);
-
-	obj_push_hide_rest(oid);
-	oam_copy(oam_mem, obj_buf, 128);
-}
-
-// ----------------------------- Main ------------------------------------
-
-int main(void)
-{
-	irq_init(NULL);
-
-	init_video();
-	init_palettes();
-	make_bg_tiles_and_map();
-	make_obj_tiles();
-
-	// Hide all sprites initially
-	for(int i=0;i<128;i++)
-		obj_hide(&obj_buf[i]);
-	oam_copy(oam_mem, obj_buf, 128);
-
-	reset_game();
-
-	while(1)
-	{
-		VBlankIntrWait();
-		key_poll();
-
-		// quick restart
-		if(key_hit(KEY_START))
-			reset_game();
-
-		update_game();
-		draw_game();
-	}
-
-	// not reached
-	return 0;
+// ==================================================================================
+// MAIN
+// ==================================================================================
+
+int main() {
+    // 1. Enable VBlank Interrupts
+    irq_init(NULL);
+    irq_add(II_VBLANK, NULL);
+
+    // 2. Setup Graphics Hardware
+    // Mode 0, BG0 on, OBJ on, 1D mapping for sprites
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+    
+    // Setup BG0: CBB 0 (Character Base Block), SBB 30 (Screen Base Block), 4bpp, 256x256
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
+
+    init_graphics();
+    init_game();
+
+    while(1) {
+        VBlankIntrWait();
+        update();
+        draw();
+    }
+
+    return 0;
 }
