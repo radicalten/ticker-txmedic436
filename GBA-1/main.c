@@ -1,980 +1,596 @@
-/*
- * GBA Text Adventure - "The Forgotten Crypt"
- * A Zork-like game using tonc library
- * 
- * Build with: make (using devkitPro/devkitARM)
- * Or: arm-none-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs 
- *     adventure.c -I$DEVKITPRO/libtonc/include -L$DEVKITPRO/libtonc/lib -ltonc -o adventure.gba
- */
+// twinbee_like_shmup.c
+// Minimal vertical shmup for GBA using tonc (Mode 3, bitmap).
+// Single file, no external assets.
+//
+// Build (example):
+//   arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -std=c99 \
+//       -I/path/to/tonc/include twinbee_like_shmup.c \
+//       -L/path/to/tonc/lib -ltonc -o game.elf
+//   arm-none-eabi-objcopy -O binary game.elf game.gba
+//
+// Run in mGBA / hardware.
+//
+// Requires tonc: http://www.coranac.com/projects/#tonc
 
 #include <tonc.h>
-#include <string.h>
 
-// ============================================================================
-// CONSTANTS AND ENUMS
-// ============================================================================
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
 
-#define SCREEN_WIDTH    240
-#define SCREEN_HEIGHT   160
-#define TILE_SIZE       8
+#define SCREEN_W    240
+#define SCREEN_H    160
 
-#define MAX_INVENTORY   8
-#define MAX_TEXT_LINES  16
-#define LINE_WIDTH      29
-#define MAX_ROOM_ITEMS  4
+#define MAX_BULLETS 16
+#define MAX_ENEMIES 16
+#define MAX_STARS   32
 
-// Directions
-enum { DIR_NORTH, DIR_SOUTH, DIR_EAST, DIR_WEST, DIR_UP, DIR_DOWN, DIR_COUNT };
+// Colors (5-bit RGB)
+#define COL_BG       RGB15(0,0,4)
+#define COL_STAR1    RGB15(16,16,31)
+#define COL_STAR2    RGB15(8,8,24)
+#define COL_PLAYER   RGB15(31,20,24)
+#define COL_PLAYER_ACCENT RGB15(31,31,31)
+#define COL_BULLET   RGB15(31,31,0)
+#define COL_ENEMY    RGB15(31,10,10)
+#define COL_ENEMY_EDGE RGB15(31,0,0)
+#define COL_UI       RGB15(31,31,31)
+#define COL_UI_SHADOW RGB15(8,8,8)
 
-// Room IDs
-enum {
-    ROOM_NONE = -1,
-    ROOM_ENTRANCE,
-    ROOM_GREAT_HALL,
-    ROOM_LIBRARY,
-    ROOM_ARMORY,
-    ROOM_DUNGEON,
-    ROOM_CRYPT,
-    ROOM_TREASURY,
-    ROOM_ALTAR,
-    ROOM_SECRET_PASSAGE,
-    ROOM_THRONE,
-    ROOM_COUNT
-};
-
-// Item IDs
-enum {
-    ITEM_NONE = 0,
-    ITEM_RUSTY_KEY,
-    ITEM_TORCH,
-    ITEM_SWORD,
-    ITEM_ANCIENT_BOOK,
-    ITEM_SILVER_KEY,
-    ITEM_GOLD_CHALICE,
-    ITEM_RUBY,
-    ITEM_SHIELD,
-    ITEM_SKELETON_KEY,
-    ITEM_CROWN,
-    ITEM_COUNT
-};
-
-// Command types
-enum {
-    CMD_GO,
-    CMD_LOOK,
-    CMD_TAKE,
-    CMD_DROP,
-    CMD_USE,
-    CMD_EXAMINE,
-    CMD_INVENTORY,
-    CMD_HELP,
-    CMD_COUNT
-};
-
-// Game states
-enum {
-    STATE_COMMAND_SELECT,
-    STATE_DIRECTION_SELECT,
-    STATE_ITEM_SELECT,
-    STATE_ROOM_ITEM_SELECT,
-    STATE_GAME_OVER,
-    STATE_VICTORY
-};
-
-// ============================================================================
-// DATA STRUCTURES
-// ============================================================================
+// -----------------------------------------------------------------------------
+// Types
+// -----------------------------------------------------------------------------
 
 typedef struct {
-    const char* name;
-    const char* description;
-    int portable;
-    int key_type;  // What this item unlocks
-} Item;
+    int x, y;
+    int w, h;
+    int speed;
+    int cooldown;   // frames until next bullet can be fired
+    int lives;
+} Player;
 
 typedef struct {
-    const char* name;
-    const char* description;
-    const char* dark_desc;
-    int exits[DIR_COUNT];
-    int locked_exits[DIR_COUNT];  // Item needed to unlock
-    int items[MAX_ROOM_ITEMS];
-    int is_dark;
-    int visited;
-} Room;
+    int x, y;
+    int dy;
+    int active;
+} Bullet;
 
 typedef struct {
-    int current_room;
-    int inventory[MAX_INVENTORY];
-    int inv_count;
-    int state;
-    int menu_selection;
-    int has_light;
-    int moves;
-    int skeleton_defeated;
-    int game_won;
-} GameState;
+    int x, y;
+    int dy;
+    int active;
+} Enemy;
 
-// ============================================================================
-// GAME DATA
-// ============================================================================
+typedef struct {
+    int x, y;
+    int speed;
+} Star;
 
-static const Item items[ITEM_COUNT] = {
-    [ITEM_NONE]        = {"", "", 0, 0},
-    [ITEM_RUSTY_KEY]   = {"Rusty Key", "An old iron key covered in rust. Still might work.", 1, ROOM_DUNGEON},
-    [ITEM_TORCH]       = {"Torch", "A wooden torch. It burns with a steady flame.", 1, 0},
-    [ITEM_SWORD]       = {"Iron Sword", "A well-balanced sword. Good for fighting skeletons.", 1, 0},
-    [ITEM_ANCIENT_BOOK]= {"Ancient Book", "A tome of forbidden knowledge. Contains a map.", 1, 0},
-    [ITEM_SILVER_KEY]  = {"Silver Key", "An ornate silver key with strange symbols.", 1, ROOM_TREASURY},
-    [ITEM_GOLD_CHALICE]= {"Gold Chalice", "A magnificent golden cup encrusted with gems.", 1, 0},
-    [ITEM_RUBY]        = {"Glowing Ruby", "A fist-sized ruby that pulses with inner light.", 1, 0},
-    [ITEM_SHIELD]      = {"Bronze Shield", "A battered but sturdy shield.", 1, 0},
-    [ITEM_SKELETON_KEY]= {"Skeleton Key", "Taken from the skeleton guardian.", 1, ROOM_ALTAR},
-    [ITEM_CROWN]       = {"Crown of Kings", "The legendary crown! Your quest is complete!", 1, 0}
-};
+// -----------------------------------------------------------------------------
+// Globals
+// -----------------------------------------------------------------------------
 
-static Room rooms[ROOM_COUNT] = {
-    [ROOM_ENTRANCE] = {
-        "Crypt Entrance",
-        "You stand before an ancient stone\narchway. Cold air flows from the\ndarkness within. Stairs lead DOWN\ninto the depths.",
-        NULL,
-        {ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_GREAT_HALL},
-        {0,0,0,0,0,0},
-        {ITEM_TORCH, 0, 0, 0},
-        0, 0
-    },
-    [ROOM_GREAT_HALL] = {
-        "Great Hall",
-        "A vast underground hall with\ncrumbling pillars. Passages lead\nNORTH to a library, EAST to an\narmory, and stairs go UP and DOWN.",
-        NULL,
-        {ROOM_LIBRARY, ROOM_NONE, ROOM_ARMORY, ROOM_NONE, ROOM_ENTRANCE, ROOM_DUNGEON},
-        {0,0,0,0,0,ITEM_RUSTY_KEY},
-        {ITEM_RUSTY_KEY, 0, 0, 0},
-        0, 0
-    },
-    [ROOM_LIBRARY] = {
-        "Ancient Library",
-        "Dusty bookshelves line the walls.\nMost books have rotted away.\nThe exit is SOUTH.",
-        NULL,
-        {ROOM_NONE, ROOM_GREAT_HALL, ROOM_NONE, ROOM_SECRET_PASSAGE, ROOM_NONE, ROOM_NONE},
-        {0,0,0,ITEM_ANCIENT_BOOK,0,0},
-        {ITEM_ANCIENT_BOOK, 0, 0, 0},
-        0, 0
-    },
-    [ROOM_ARMORY] = {
-        "Old Armory",
-        "Rusted weapons hang on the walls.\nA few items remain usable.\nThe exit is WEST.",
-        NULL,
-        {ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_GREAT_HALL, ROOM_NONE, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {ITEM_SWORD, ITEM_SHIELD, 0, 0},
-        0, 0
-    },
-    [ROOM_DUNGEON] = {
-        "Dark Dungeon",
-        "A damp dungeon with chains on the\nwalls. A passage leads EAST to the\ncrypt. Stairs go UP.",
-        "It's pitch black! You need a light\nsource to see.",
-        {ROOM_NONE, ROOM_NONE, ROOM_CRYPT, ROOM_NONE, ROOM_GREAT_HALL, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {ITEM_SILVER_KEY, 0, 0, 0},
-        1, 0
-    },
-    [ROOM_CRYPT] = {
-        "The Crypt",
-        "Ancient sarcophagi line the walls.\nA SKELETON GUARDIAN blocks the\npath NORTH! Exit is WEST.",
-        "It's pitch black! You can hear\nbones rattling nearby...",
-        {ROOM_ALTAR, ROOM_NONE, ROOM_NONE, ROOM_DUNGEON, ROOM_NONE, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {0, 0, 0, 0},
-        1, 0
-    },
-    [ROOM_TREASURY] = {
-        "Treasury",
-        "Gold coins and jewels are\nscattered everywhere! A passage\nleads WEST.",
-        NULL,
-        {ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_SECRET_PASSAGE, ROOM_NONE, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {ITEM_GOLD_CHALICE, ITEM_RUBY, 0, 0},
-        0, 0
-    },
-    [ROOM_ALTAR] = {
-        "Dark Altar",
-        "A sinister altar stands in the\ncenter. Strange symbols glow on\nthe floor. Stairs go DOWN to throne.",
-        "Absolute darkness. Evil presence.",
-        {ROOM_NONE, ROOM_CRYPT, ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_THRONE},
-        {0,0,0,0,0,ITEM_SKELETON_KEY},
-        {0, 0, 0, 0},
-        1, 0
-    },
-    [ROOM_SECRET_PASSAGE] = {
-        "Secret Passage",
-        "A narrow hidden corridor.\nPassages lead EAST to library\nand EAST to treasury.",
-        NULL,
-        {ROOM_NONE, ROOM_NONE, ROOM_LIBRARY, ROOM_NONE, ROOM_NONE, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {0, 0, 0, 0},
-        0, 0
-    },
-    [ROOM_THRONE] = {
-        "Throne Room",
-        "A magnificent underground throne\nroom! The CROWN OF KINGS rests\non the ancient throne!",
-        "Total darkness hides something\nimportant here...",
-        {ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_NONE, ROOM_ALTAR, ROOM_NONE},
-        {0,0,0,0,0,0},
-        {ITEM_CROWN, 0, 0, 0},
-        1, 0
-    }
-};
+static Player player;
+static Bullet bullets[MAX_BULLETS];
+static Enemy  enemies[MAX_ENEMIES];
+static Star   stars[MAX_STARS];
 
-// Fix secret passage connections
-static void init_rooms(void) {
-    rooms[ROOM_SECRET_PASSAGE].exits[DIR_EAST] = ROOM_TREASURY;
-    rooms[ROOM_SECRET_PASSAGE].exits[DIR_WEST] = ROOM_NONE;
-    rooms[ROOM_LIBRARY].exits[DIR_WEST] = ROOM_SECRET_PASSAGE;
-    rooms[ROOM_TREASURY].exits[DIR_WEST] = ROOM_SECRET_PASSAGE;
-    rooms[ROOM_TREASURY].locked_exits[DIR_WEST] = ITEM_SILVER_KEY;
-    rooms[ROOM_SECRET_PASSAGE].locked_exits[DIR_EAST] = ITEM_SILVER_KEY;
+static int score = 0;
+static int gameOver = 0;
+static int invincibleTimer = 0;
+static int enemySpawnCounter = 0;
+
+// Simple fast RNG (LCG, like tonc's qran).
+static u32 rngSeed = 1;
+
+// -----------------------------------------------------------------------------
+// Utility / low-level
+// -----------------------------------------------------------------------------
+
+static inline void vsync(void)
+{
+    // Busy-wait for vertical blank (no interrupts required).
+    while (REG_VCOUNT >= 160);
+    while (REG_VCOUNT < 160);
 }
 
-static const char* cmd_names[CMD_COUNT] = {
-    "GO", "LOOK", "TAKE", "DROP", "USE", "EXAMINE", "INVENTORY", "HELP"
-};
-
-static const char* dir_names[DIR_COUNT] = {
-    "NORTH", "SOUTH", "EAST", "WEST", "UP", "DOWN"
-};
-
-// ============================================================================
-// GLOBAL STATE
-// ============================================================================
-
-static GameState game;
-static char text_buffer[MAX_TEXT_LINES][LINE_WIDTH + 1];
-static int text_line_count = 0;
-static int scroll_offset = 0;
-
-// ============================================================================
-// TEXT DISPLAY FUNCTIONS
-// ============================================================================
-
-static void clear_text(void) {
-    text_line_count = 0;
-    scroll_offset = 0;
-    for(int i = 0; i < MAX_TEXT_LINES; i++) {
-        text_buffer[i][0] = '\0';
-    }
+static inline int rand_fast(void)
+{
+    rngSeed = 1664525 * rngSeed + 1013904223;
+    return (rngSeed >> 16) & 0x7FFF;
 }
 
-static void add_line(const char* text) {
-    if(text_line_count < MAX_TEXT_LINES) {
-        int len = strlen(text);
-        if(len > LINE_WIDTH) len = LINE_WIDTH;
-        memcpy(text_buffer[text_line_count], text, len);
-        text_buffer[text_line_count][len] = '\0';
-        text_line_count++;
-    }
+static inline void clamp_int(int *v, int min, int max)
+{
+    if (*v < min) *v = min;
+    if (*v > max) *v = max;
 }
 
-static void add_text(const char* text) {
-    char line[LINE_WIDTH + 1];
-    int line_pos = 0;
-    
-    while(*text) {
-        if(*text == '\n' || line_pos >= LINE_WIDTH) {
-            line[line_pos] = '\0';
-            add_line(line);
-            line_pos = 0;
-            if(*text == '\n') text++;
+// -----------------------------------------------------------------------------
+// Drawing primitives
+// -----------------------------------------------------------------------------
+
+static inline void plotPixel(int x, int y, u16 color)
+{
+    if ((unsigned)x >= SCREEN_W || (unsigned)y >= SCREEN_H)
+        return;
+    vid_mem[y * SCREEN_W + x] = color;
+}
+
+static void clearScreen(u16 color)
+{
+    u16 *dst = vid_mem;
+    int i;
+    for (i = 0; i < SCREEN_W * SCREEN_H; i++)
+        dst[i] = color;
+}
+
+static void drawRect(int x, int y, int w, int h, u16 color)
+{
+    if (w <= 0 || h <= 0)
+        return;
+
+    int ix, iy;
+    for (iy = 0; iy < h; iy++)
+    {
+        int yy = y + iy;
+        if ((unsigned)yy >= SCREEN_H)
             continue;
+
+        u16 *row = &vid_mem[yy * SCREEN_W];
+        for (ix = 0; ix < w; ix++)
+        {
+            int xx = x + ix;
+            if ((unsigned)xx >= SCREEN_W)
+                continue;
+            row[xx] = color;
         }
-        line[line_pos++] = *text++;
-    }
-    if(line_pos > 0) {
-        line[line_pos] = '\0';
-        add_line(line);
     }
 }
 
-static void render_text(void) {
-    // Clear screen
-    tte_erase_screen();
-    
-    // Draw text lines
-    int display_lines = 12;
-    int start = 0;
-    if(text_line_count > display_lines) {
-        start = scroll_offset;
-        if(start > text_line_count - display_lines)
-            start = text_line_count - display_lines;
-    }
-    
-    for(int i = 0; i < display_lines && (start + i) < text_line_count; i++) {
-        tte_set_pos(4, 4 + i * 10);
-        tte_write(text_buffer[start + i]);
-    }
-    
-    // Draw separator
-    tte_set_pos(0, 124);
-    tte_write("------------------------------");
-    
-    // Draw command area based on state
-    tte_set_pos(4, 136);
-    
-    switch(game.state) {
-        case STATE_COMMAND_SELECT:
-            tte_write("Command: ");
-            tte_set_pos(4, 148);
-            for(int i = 0; i < CMD_COUNT; i++) {
-                if(i == game.menu_selection) {
-                    tte_write("[");
-                    tte_write(cmd_names[i]);
-                    tte_write("] ");
-                } else {
-                    tte_write(cmd_names[i]);
-                    tte_write(" ");
-                }
-                if(i == 3) {
-                    tte_set_pos(4, 148);
-                }
+// -----------------------------------------------------------------------------
+// Tiny 3x5 bitmap font for digits 0-9 (scaled up when drawn)
+// -----------------------------------------------------------------------------
+
+static const char digitFont[10][5][4] = {
+    { "###", "# #", "# #", "# #", "###" }, // 0
+    { "  #", "  #", "  #", "  #", "  #" }, // 1
+    { "###", "  #", "###", "#  ", "###" }, // 2
+    { "###", "  #", "###", "  #", "###" }, // 3
+    { "# #", "# #", "###", "  #", "  #" }, // 4
+    { "###", "#  ", "###", "  #", "###" }, // 5
+    { "###", "#  ", "###", "# #", "###" }, // 6
+    { "###", "  #", "  #", "  #", "  #" }, // 7
+    { "###", "# #", "###", "# #", "###" }, // 8
+    { "###", "# #", "###", "  #", "###" }  // 9
+};
+
+static void drawDigit(int digit, int x, int y, u16 color)
+{
+    if (digit < 0 || digit > 9)
+        return;
+
+    for (int row = 0; row < 5; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            if (digitFont[digit][row][col] == '#')
+            {
+                // Scale each font pixel to 2x2 screen pixels
+                drawRect(x + col * 2, y + row * 2, 2, 2, color);
             }
-            break;
-            
-        case STATE_DIRECTION_SELECT: {
-            tte_write("Direction (B=back): ");
-            tte_set_pos(4, 148);
-            int shown = 0;
-            for(int i = 0; i < DIR_COUNT; i++) {
-                int dest = rooms[game.current_room].exits[i];
-                if(dest != ROOM_NONE) {
-                    if(shown == game.menu_selection) {
-                        tte_write("[");
-                        tte_write(dir_names[i]);
-                        tte_write("] ");
-                    } else {
-                        tte_write(dir_names[i]);
-                        tte_write(" ");
-                    }
-                    shown++;
-                }
-            }
-            break;
         }
-        
-        case STATE_ITEM_SELECT: {
-            tte_write("Use item (B=back): ");
-            tte_set_pos(4, 148);
-            for(int i = 0; i < game.inv_count; i++) {
-                if(i == game.menu_selection) {
-                    tte_write("[");
-                    tte_write(items[game.inventory[i]].name);
-                    tte_write("] ");
-                } else {
-                    tte_write(items[game.inventory[i]].name);
-                    tte_write(" ");
-                }
-            }
-            break;
-        }
-        
-        case STATE_ROOM_ITEM_SELECT: {
-            tte_write("Take item (B=back): ");
-            tte_set_pos(4, 148);
-            int shown = 0;
-            Room* r = &rooms[game.current_room];
-            for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-                if(r->items[i] != ITEM_NONE) {
-                    if(shown == game.menu_selection) {
-                        tte_write("[");
-                        tte_write(items[r->items[i]].name);
-                        tte_write("]");
-                    } else {
-                        tte_write(items[r->items[i]].name);
-                    }
-                    shown++;
-                }
-            }
-            if(shown == 0) tte_write("Nothing here!");
-            break;
-        }
-        
-        case STATE_VICTORY:
-            tte_write("*** YOU WIN! *** Press START");
-            break;
-            
-        case STATE_GAME_OVER:
-            tte_write("*** GAME OVER *** Press START");
-            break;
     }
 }
 
-// ============================================================================
-// GAME LOGIC
-// ============================================================================
+static void drawNumber(int value, int x, int y, u16 color)
+{
+    if (value < 0) value = 0;
 
-static int has_item(int item_id) {
-    for(int i = 0; i < game.inv_count; i++) {
-        if(game.inventory[i] == item_id) return 1;
+    char buf[6];
+    int len = 0;
+
+    do {
+        int d = value % 10;
+        buf[len++] = (char)('0' + d);
+        value /= 10;
+    } while (value > 0 && len < (int)sizeof(buf));
+
+    for (int i = 0; i < len; i++)
+    {
+        int d = buf[len - 1 - i] - '0';
+        drawDigit(d, x + i * 8, y, color);
     }
-    return 0;
 }
 
-static void remove_item(int item_id) {
-    for(int i = 0; i < game.inv_count; i++) {
-        if(game.inventory[i] == item_id) {
-            for(int j = i; j < game.inv_count - 1; j++) {
-                game.inventory[j] = game.inventory[j + 1];
-            }
-            game.inv_count--;
+// -----------------------------------------------------------------------------
+// Simple heart icon for lives
+// -----------------------------------------------------------------------------
+
+static void drawHeart(int x, int y, u16 color)
+{
+    // Rough 7x7 heart
+    drawRect(x+1, y,   2, 2, color);  // top left bump
+    drawRect(x+4, y,   2, 2, color);  // top right bump
+    drawRect(x,   y+2, 7, 2, color);  // upper bar
+    drawRect(x+1, y+4, 5, 2, color);  // middle
+    drawRect(x+2, y+6, 3, 1, color);  // bottom tip
+}
+
+// -----------------------------------------------------------------------------
+// Entities: Player, Bullets, Enemies, Stars
+// -----------------------------------------------------------------------------
+
+static void initStars(void)
+{
+    for (int i = 0; i < MAX_STARS; i++)
+    {
+        stars[i].x = rand_fast() % SCREEN_W;
+        stars[i].y = rand_fast() % SCREEN_H;
+        stars[i].speed = 1 + (rand_fast() % 2); // 1 or 2
+    }
+}
+
+static void updateStars(void)
+{
+    for (int i = 0; i < MAX_STARS; i++)
+    {
+        stars[i].y += stars[i].speed;
+        if (stars[i].y >= SCREEN_H)
+        {
+            stars[i].y = 0;
+            stars[i].x = rand_fast() % SCREEN_W;
+        }
+    }
+}
+
+static void drawStars(void)
+{
+    for (int i = 0; i < MAX_STARS; i++)
+    {
+        u16 col = (stars[i].speed == 1) ? COL_STAR2 : COL_STAR1;
+        plotPixel(stars[i].x, stars[i].y, col);
+    }
+}
+
+static void resetBullets(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+        bullets[i].active = 0;
+}
+
+static void resetEnemies(void)
+{
+    for (int i = 0; i < MAX_ENEMIES; i++)
+        enemies[i].active = 0;
+}
+
+static void initPlayer(void)
+{
+    player.w = 14;
+    player.h = 12;
+    player.x = SCREEN_W / 2 - player.w / 2;
+    player.y = SCREEN_H - player.h - 8;
+    player.speed = 2;
+    player.cooldown = 0;
+    player.lives = 3;
+}
+
+static void resetGame(void)
+{
+    score = 0;
+    gameOver = 0;
+    invincibleTimer = 0;
+    enemySpawnCounter = 0;
+    rngSeed = 1;   // deterministic; change if you want
+
+    initPlayer();
+    resetBullets();
+    resetEnemies();
+    initStars();
+}
+
+static void spawnEnemy(void)
+{
+    for (int i = 0; i < MAX_ENEMIES; i++)
+    {
+        if (!enemies[i].active)
+        {
+            enemies[i].active = 1;
+            enemies[i].x = 8 + (rand_fast() % (SCREEN_W - 16));
+            enemies[i].y = -12;
+            enemies[i].dy = 1 + (rand_fast() % 2);
             return;
         }
     }
 }
 
-static void add_item(int item_id) {
-    if(game.inv_count < MAX_INVENTORY) {
-        game.inventory[game.inv_count++] = item_id;
-    }
-}
-
-static void update_light(void) {
-    game.has_light = has_item(ITEM_TORCH);
-}
-
-static void describe_room(void) {
-    Room* r = &rooms[game.current_room];
-    
-    clear_text();
-    add_text("=== ");
-    add_text(r->name);
-    add_text(" ===");
-    add_line("");
-    
-    if(r->is_dark && !game.has_light) {
-        add_text(r->dark_desc ? r->dark_desc : "It's too dark to see!");
-    } else {
-        add_text(r->description);
-        
-        // List items
-        int has_items = 0;
-        for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-            if(r->items[i] != ITEM_NONE) {
-                if(!has_items) {
-                    add_line("");
-                    add_text("You see:");
-                }
-                add_text("  - ");
-                add_text(items[r->items[i]].name);
-                has_items = 1;
-            }
-        }
-        
-        // Special: skeleton in crypt
-        if(game.current_room == ROOM_CRYPT && !game.skeleton_defeated) {
-            add_line("");
-            add_text("A SKELETON WARRIOR guards the");
-            add_text("northern passage!");
-        }
-    }
-    
-    add_line("");
-    
-    // Show exits
-    char exits_str[LINE_WIDTH + 1] = "Exits: ";
-    int first = 1;
-    for(int i = 0; i < DIR_COUNT; i++) {
-        if(r->exits[i] != ROOM_NONE) {
-            if(!first) strcat(exits_str, ", ");
-            strcat(exits_str, dir_names[i]);
-            first = 0;
-        }
-    }
-    add_text(exits_str);
-    
-    r->visited = 1;
-}
-
-static void do_go(void) {
-    // Count available exits and find selected one
-    int exit_count = 0;
-    int selected_dir = -1;
-    
-    for(int i = 0; i < DIR_COUNT; i++) {
-        if(rooms[game.current_room].exits[i] != ROOM_NONE) {
-            if(exit_count == game.menu_selection) {
-                selected_dir = i;
-            }
-            exit_count++;
-        }
-    }
-    
-    if(selected_dir < 0) return;
-    
-    Room* r = &rooms[game.current_room];
-    int dest = r->exits[selected_dir];
-    int required = r->locked_exits[selected_dir];
-    
-    // Check if locked
-    if(required != 0 && !has_item(required)) {
-        clear_text();
-        add_text("The way is locked! You need");
-        add_text("something to open it.");
-        game.state = STATE_COMMAND_SELECT;
-        game.menu_selection = 0;
-        return;
-    }
-    
-    // Check skeleton
-    if(game.current_room == ROOM_CRYPT && selected_dir == DIR_NORTH && !game.skeleton_defeated) {
-        clear_text();
-        add_text("The skeleton warrior blocks your");
-        add_text("path! You must defeat it first!");
-        game.state = STATE_COMMAND_SELECT;
-        game.menu_selection = 0;
-        return;
-    }
-    
-    // Move to new room
-    game.current_room = dest;
-    game.moves++;
-    describe_room();
-    
-    // Check win condition
-    if(has_item(ITEM_CROWN)) {
-        if(game.current_room == ROOM_ENTRANCE) {
-            game.state = STATE_VICTORY;
-            game.game_won = 1;
-            clear_text();
-            add_text("**** VICTORY! ****");
-            add_line("");
-            add_text("You escape the crypt with the");
-            add_text("legendary Crown of Kings!");
-            add_line("");
-            add_text("Moves: ");
-            char num[8];
-            int m = game.moves;
-            int pos = 0;
-            if(m == 0) num[pos++] = '0';
-            else {
-                char tmp[8];
-                int tp = 0;
-                while(m > 0) { tmp[tp++] = '0' + (m % 10); m /= 10; }
-                while(tp > 0) num[pos++] = tmp[--tp];
-            }
-            num[pos] = 0;
-            add_text(num);
-            add_line("");
-            add_text("Thanks for playing!");
+static void fireBullet(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+        {
+            bullets[i].active = 1;
+            bullets[i].x = player.x + player.w / 2 - 1;
+            bullets[i].y = player.y - 2;
+            bullets[i].dy = -4;
+            player.cooldown = 8;   // firing rate
             return;
         }
     }
-    
-    game.state = STATE_COMMAND_SELECT;
-    game.menu_selection = 0;
 }
 
-static void do_take(void) {
-    Room* r = &rooms[game.current_room];
-    
-    // Check if dark
-    if(r->is_dark && !game.has_light) {
-        clear_text();
-        add_text("It's too dark to find anything!");
-        game.state = STATE_COMMAND_SELECT;
-        return;
+static int aabb_overlap(int x1,int y1,int w1,int h1, int x2,int y2,int w2,int h2)
+{
+    return (x1 < x2 + w2) && (x1 + w1 > x2) &&
+           (y1 < y2 + h2) && (y1 + h1 > y2);
+}
+
+// -----------------------------------------------------------------------------
+// Update & draw
+// -----------------------------------------------------------------------------
+
+static void handleInput(void)
+{
+    // movement
+    int dx = 0, dy = 0;
+
+    if (key_is_down(KEY_LEFT))  dx -= player.speed;
+    if (key_is_down(KEY_RIGHT)) dx += player.speed;
+    if (key_is_down(KEY_UP))    dy -= player.speed;
+    if (key_is_down(KEY_DOWN))  dy += player.speed;
+
+    player.x += dx;
+    player.y += dy;
+
+    clamp_int(&player.x, 0, SCREEN_W - player.w);
+    clamp_int(&player.y, 16, SCREEN_H - player.h); // keep off UI bar
+
+    // shooting
+    if (player.cooldown > 0)
+        player.cooldown--;
+
+    if (key_is_down(KEY_A) && player.cooldown == 0)
+        fireBullet();
+}
+
+static void updateBullets(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+            continue;
+        bullets[i].y += bullets[i].dy;
+        if (bullets[i].y < -8 || bullets[i].y >= SCREEN_H)
+            bullets[i].active = 0;
     }
-    
-    // Find selected item
-    int item_count = 0;
-    int selected_slot = -1;
-    
-    for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-        if(r->items[i] != ITEM_NONE) {
-            if(item_count == game.menu_selection) {
-                selected_slot = i;
+}
+
+static void updateEnemies(void)
+{
+    enemySpawnCounter++;
+    // spawn roughly once per ~40 frames, a bit randomised
+    if (enemySpawnCounter > 30 + (rand_fast() & 15))
+    {
+        enemySpawnCounter = 0;
+        spawnEnemy();
+    }
+
+    for (int i = 0; i < MAX_ENEMIES; i++)
+    {
+        if (!enemies[i].active)
+            continue;
+
+        enemies[i].y += enemies[i].dy;
+
+        if (enemies[i].y > SCREEN_H)
+            enemies[i].active = 0;
+    }
+}
+
+static void handleCollisions(void)
+{
+    // bullets vs enemies
+    for (int b = 0; b < MAX_BULLETS; b++)
+    {
+        if (!bullets[b].active)
+            continue;
+
+        int bx = bullets[b].x;
+        int by = bullets[b].y;
+        int bw = 2;
+        int bh = 4;
+
+        for (int e = 0; e < MAX_ENEMIES; e++)
+        {
+            if (!enemies[e].active)
+                continue;
+
+            int ex = enemies[e].x;
+            int ey = enemies[e].y;
+            int ew = 14;
+            int eh = 12;
+
+            if (aabb_overlap(bx, by, bw, bh, ex, ey, ew, eh))
+            {
+                bullets[b].active = 0;
+                enemies[e].active = 0;
+                score += 10;
+                break;
             }
-            item_count++;
         }
     }
-    
-    if(selected_slot < 0) {
-        game.state = STATE_COMMAND_SELECT;
-        return;
-    }
-    
-    int item_id = r->items[selected_slot];
-    
-    if(game.inv_count >= MAX_INVENTORY) {
-        clear_text();
-        add_text("Your inventory is full!");
-    } else {
-        add_item(item_id);
-        r->items[selected_slot] = ITEM_NONE;
-        update_light();
-        
-        clear_text();
-        add_text("You take the ");
-        add_text(items[item_id].name);
-        add_text(".");
-        
-        if(item_id == ITEM_TORCH) {
-            add_line("");
-            add_text("The torch illuminates the area!");
-        }
-    }
-    
-    game.state = STATE_COMMAND_SELECT;
-    game.menu_selection = 0;
-}
 
-static void do_use(void) {
-    if(game.inv_count == 0) {
-        clear_text();
-        add_text("You have nothing to use!");
-        game.state = STATE_COMMAND_SELECT;
-        return;
-    }
-    
-    int item_id = game.inventory[game.menu_selection];
-    Room* r = &rooms[game.current_room];
-    
-    clear_text();
-    
-    // Special uses
-    if(item_id == ITEM_SWORD && game.current_room == ROOM_CRYPT && !game.skeleton_defeated) {
-        if(has_item(ITEM_SHIELD)) {
-            add_text("With sword and shield, you fight");
-            add_text("the skeleton warrior!");
-            add_line("");
-            add_text("After a fierce battle, the");
-            add_text("skeleton crumbles to dust!");
-            add_text("It drops a SKELETON KEY!");
-            game.skeleton_defeated = 1;
-            // Add skeleton key to room
-            for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-                if(r->items[i] == ITEM_NONE) {
-                    r->items[i] = ITEM_SKELETON_KEY;
-                    break;
+    // enemies vs player
+    if (player.lives > 0 && invincibleTimer == 0)
+    {
+        int px = player.x;
+        int py = player.y;
+        int pw = player.w;
+        int ph = player.h;
+
+        for (int e = 0; e < MAX_ENEMIES; e++)
+        {
+            if (!enemies[e].active)
+                continue;
+
+            int ex = enemies[e].x;
+            int ey = enemies[e].y;
+            int ew = 14;
+            int eh = 12;
+
+            if (aabb_overlap(px, py, pw, ph, ex, ey, ew, eh))
+            {
+                enemies[e].active = 0;
+                player.lives--;
+                if (player.lives <= 0)
+                {
+                    gameOver = 1;
                 }
-            }
-        } else {
-            add_text("You attack the skeleton but");
-            add_text("without a shield, you're");
-            add_text("pushed back!");
-        }
-    }
-    else if(item_id == ITEM_ANCIENT_BOOK) {
-        add_text("The book reveals a map showing");
-        add_text("a secret passage in the library");
-        add_text("leading to a hidden treasury!");
-        add_line("");
-        add_text("(The WEST wall in the library");
-        add_text("can now be searched!)");
-        // Unlock secret passage
-        rooms[ROOM_LIBRARY].locked_exits[DIR_WEST] = 0;
-    }
-    else if(item_id == ITEM_TORCH) {
-        add_text("The torch burns brightly,");
-        add_text("illuminating dark areas.");
-    }
-    else {
-        add_text("You can't use that here.");
-    }
-    
-    game.state = STATE_COMMAND_SELECT;
-    game.menu_selection = 0;
-}
-
-static void do_look(void) {
-    describe_room();
-}
-
-static void do_examine(void) {
-    if(game.inv_count == 0) {
-        clear_text();
-        add_text("You have nothing to examine!");
-        game.state = STATE_COMMAND_SELECT;
-        return;
-    }
-    
-    int item_id = game.inventory[game.menu_selection];
-    
-    clear_text();
-    add_text(items[item_id].name);
-    add_line("");
-    add_text(items[item_id].description);
-    
-    game.state = STATE_COMMAND_SELECT;
-    game.menu_selection = 0;
-}
-
-static void do_inventory(void) {
-    clear_text();
-    add_text("=== INVENTORY ===");
-    add_line("");
-    
-    if(game.inv_count == 0) {
-        add_text("You are empty-handed.");
-    } else {
-        for(int i = 0; i < game.inv_count; i++) {
-            add_text("- ");
-            add_text(items[game.inventory[i]].name);
-        }
-    }
-}
-
-static void do_help(void) {
-    clear_text();
-    add_text("=== HELP ===");
-    add_line("");
-    add_text("Find the Crown of Kings and");
-    add_text("escape the crypt!");
-    add_line("");
-    add_text("D-Pad: Navigate menus");
-    add_text("A: Select");
-    add_text("B: Back/Cancel");
-    add_text("L/R: Scroll text");
-}
-
-static void do_drop(void) {
-    if(game.inv_count == 0) {
-        clear_text();
-        add_text("You have nothing to drop!");
-        game.state = STATE_COMMAND_SELECT;
-        return;
-    }
-    
-    int item_id = game.inventory[game.menu_selection];
-    Room* r = &rooms[game.current_room];
-    
-    // Find empty slot in room
-    int slot = -1;
-    for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-        if(r->items[i] == ITEM_NONE) {
-            slot = i;
-            break;
-        }
-    }
-    
-    if(slot < 0) {
-        clear_text();
-        add_text("No room to drop items here!");
-    } else {
-        r->items[slot] = item_id;
-        remove_item(item_id);
-        update_light();
-        
-        clear_text();
-        add_text("You drop the ");
-        add_text(items[item_id].name);
-        add_text(".");
-    }
-    
-    game.state = STATE_COMMAND_SELECT;
-    game.menu_selection = 0;
-}
-
-// ============================================================================
-// INPUT HANDLING
-// ============================================================================
-
-static void handle_input(void) {
-    key_poll();
-    u16 keys = key_hit(KEY_FULL);
-    u16 held = key_held(KEY_FULL);
-    
-    // Scroll with L/R
-    if(held & KEY_L) {
-        if(scroll_offset > 0) scroll_offset--;
-    }
-    if(held & KEY_R) {
-        if(scroll_offset < text_line_count - 10) scroll_offset++;
-    }
-    
-    // Victory/Game Over - restart
-    if(game.state == STATE_VICTORY || game.state == STATE_GAME_OVER) {
-        if(keys & KEY_START) {
-            // Reset game
-            memset(&game, 0, sizeof(game));
-            init_rooms();
-            for(int i = 0; i < ROOM_COUNT; i++) rooms[i].visited = 0;
-            describe_room();
-        }
-        return;
-    }
-    
-    int max_selection = 0;
-    
-    switch(game.state) {
-        case STATE_COMMAND_SELECT:
-            max_selection = CMD_COUNT;
-            break;
-        case STATE_DIRECTION_SELECT:
-            for(int i = 0; i < DIR_COUNT; i++) {
-                if(rooms[game.current_room].exits[i] != ROOM_NONE) 
-                    max_selection++;
-            }
-            break;
-        case STATE_ITEM_SELECT:
-            max_selection = game.inv_count;
-            break;
-        case STATE_ROOM_ITEM_SELECT:
-            for(int i = 0; i < MAX_ROOM_ITEMS; i++) {
-                if(rooms[game.current_room].items[i] != ITEM_NONE)
-                    max_selection++;
-            }
-            break;
-    }
-    
-    // Navigation
-    if(keys & KEY_RIGHT) {
-        game.menu_selection++;
-        if(game.menu_selection >= max_selection) game.menu_selection = 0;
-    }
-    if(keys & KEY_LEFT) {
-        game.menu_selection--;
-        if(game.menu_selection < 0) game.menu_selection = max_selection - 1;
-    }
-    if(keys & KEY_DOWN) {
-        game.menu_selection += 4;
-        if(game.menu_selection >= max_selection) 
-            game.menu_selection = game.menu_selection % max_selection;
-    }
-    if(keys & KEY_UP) {
-        game.menu_selection -= 4;
-        if(game.menu_selection < 0) 
-            game.menu_selection = max_selection + game.menu_selection;
-    }
-    
-    // Cancel
-    if(keys & KEY_B) {
-        if(game.state != STATE_COMMAND_SELECT) {
-            game.state = STATE_COMMAND_SELECT;
-            game.menu_selection = 0;
-        }
-    }
-    
-    // Select
-    if(keys & KEY_A) {
-        switch(game.state) {
-            case STATE_COMMAND_SELECT:
-                switch(game.menu_selection) {
-                    case CMD_GO:
-                        game.state = STATE_DIRECTION_SELECT;
-                        game.menu_selection = 0;
-                        break;
-                    case CMD_LOOK:
-                        do_look();
-                        break;
-                    case CMD_TAKE:
-                        game.state = STATE_ROOM_ITEM_SELECT;
-                        game.menu_selection = 0;
-                        break;
-                    case CMD_DROP:
-                        if(game.inv_count > 0) {
-                            game.state = STATE_ITEM_SELECT;
-                            game.menu_selection = 0;
-                        } else {
-                            clear_text();
-                            add_text("You have nothing to drop!");
-                        }
-                        break;
-                    case CMD_USE:
-                        if(game.inv_count > 0) {
-                            game.state = STATE_ITEM_SELECT;
-                            game.menu_selection = 0;
-                        } else {
-                            clear_text();
-                            add_text("You have nothing to use!");
-                        }
-                        break;
-                    case CMD_EXAMINE:
-                        if(game.inv_count > 0) {
-                            game.state = STATE_ITEM_SELECT;
-                            game.menu_selection = 0;
-                        } else {
-                            clear_text();
-                            add_text("You have nothing to examine!");
-                        }
-                        break;
-                    case CMD_INVENTORY:
-                        do_inventory();
-                        break;
-                    case CMD_HELP:
-                        do_help();
-                        break;
+                else
+                {
+                    invincibleTimer = 90; // ~1.5 seconds at 60 FPS
                 }
                 break;
-                
-            case STATE_DIRECTION_SELECT:
-                do_go();
-                break;
-                
-            case STATE_ITEM_SELECT:
-                // Check what command we're doing
-                // Simple approach: default to USE, check for DROP/EXAMINE context
-                do_use();
-                break;
-                
-            case STATE_ROOM_ITEM_SELECT:
-                do_take();
-                break;
+            }
         }
+    }
+
+    if (invincibleTimer > 0)
+        invincibleTimer--;
+}
+
+static void drawPlayer(void)
+{
+    if (player.lives <= 0)
+        return;
+
+    // Flicker while invincible
+    if (invincibleTimer > 0 && (invincibleTimer & 4))
+        return;
+
+    int x = player.x;
+    int y = player.y;
+    int w = player.w;
+    int h = player.h;
+
+    // Simple "cute ship": body + cockpit
+    drawRect(x+2, y+2, w-4, h-2, COL_PLAYER);
+    drawRect(x+4, y+1, w-8, 3, COL_PLAYER_ACCENT);
+    drawRect(x,   y+4, 3, 4, COL_PLAYER);          // left wing
+    drawRect(x+w-3, y+4, 3, 4, COL_PLAYER);        // right wing
+}
+
+static void drawBullets(void)
+{
+    for (int i = 0; i < MAX_BULLETS; i++)
+    {
+        if (!bullets[i].active)
+            continue;
+        drawRect(bullets[i].x, bullets[i].y, 2, 4, COL_BULLET);
     }
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
+static void drawEnemies(void)
+{
+    for (int i = 0; i < MAX_ENEMIES; i++)
+    {
+        if (!enemies[i].active)
+            continue;
 
-int main(void) {
-    // Initialize graphics - Mode 0 with text
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0;
-    
-    // Initialize tonc text engine
-    tte_init_se_default(0, BG_CBB(0) | BG_SBB(31));
-    
-    // Set up palette (white text on dark blue background)
-    pal_bg_mem[0] = RGB15(2, 2, 8);    // Background: dark blue
-    pal_bg_mem[1] = RGB15(31, 31, 31); // Text: white
-    
-    // Initialize game state
-    memset(&game, 0, sizeof(game));
-    init_rooms();
-    
-    // Show intro
-    clear_text();
-    add_text("=== THE FORGOTTEN CRYPT ===");
-    add_line("");
-    add_text("A Zork-like Adventure");
-    add_line("");
-    add_text("Legend speaks of the Crown of");
-    add_text("Kings, hidden deep within an");
-    add_text("ancient crypt. Many have entered.");
-    add_text("None have returned.");
-    add_line("");
-    add_text("Your quest: Find the Crown and");
-    add_text("escape alive!");
-    add_line("");
-    add_text("Press A to begin...");
-    
-    render_text();
-    
-    // Wait for A button
-    while(1) {
+        int x = enemies[i].x;
+        int y = enemies[i].y;
+
+        // Rounded blob enemy
+        drawRect(x+2, y,   10, 2, COL_ENEMY_EDGE);
+        drawRect(x+1, y+2, 12, 8, COL_ENEMY);
+        drawRect(x,   y+4, 14, 6, COL_ENEMY);
+        drawRect(x+4, y+3, 2, 2, COL_UI_SHADOW); // one "eye"
+        drawRect(x+8, y+3, 2, 2, COL_UI_SHADOW); // other "eye"
+    }
+}
+
+static void drawUI(void)
+{
+    // Top bar background
+    drawRect(0, 0, SCREEN_W, 16, RGB15(0,0,0));
+
+    // Score number at left
+    drawNumber(score, 4, 3, COL_UI);
+
+    // Lives at right
+    for (int i = 0; i < player.lives; i++)
+    {
+        int hx = SCREEN_W - 10 - i * 12;
+        int hy = 4;
+        drawHeart(hx+1, hy+1, COL_UI_SHADOW);
+        drawHeart(hx,   hy,   COL_UI);
+    }
+
+    // If game over, overlay a big block message area
+    if (gameOver)
+    {
+        // Dark box in middle
+        int bx = 40, by = 50, bw = SCREEN_W - 80, bh = 60;
+        drawRect(bx,   by,   bw,   bh,   RGB15(0,0,0));
+        drawRect(bx+2, by+2, bw-4, bh-4, RGB15(8,0,0));
+
+        // Show score big in the box center ("SCORE" not written, just the value)
+        drawNumber(score, bx + 12, by + 12, COL_UI);
+
+        // Display "0" lives as implicit game over indicator (already 0)
+        // Restart hint: press START (not written on screen to keep font tiny).
+    }
+}
+
+static void drawFrame(void)
+{
+    clearScreen(COL_BG);
+    drawStars();
+    drawPlayer();
+    drawBullets();
+    drawEnemies();
+    drawUI();
+}
+
+// -----------------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------------
+
+int main(void)
+{
+    // Video: Mode 3, BG2 on
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+
+    resetGame();
+
+    while (1)
+    {
+        vsync();
         key_poll();
-        if(key_hit(KEY_A)) break;
-        VBlankIntrWait();
+
+        if (!gameOver)
+        {
+            handleInput();
+            updateStars();
+            updateBullets();
+            updateEnemies();
+            handleCollisions();
+        }
+        else
+        {
+            // Allow restart with START
+            if (key_hit(KEY_START))
+                resetGame();
+
+            // Still animate stars even when game over
+            updateStars();
+        }
+
+        drawFrame();
     }
-    
-    // Start game
-    describe_room();
-    
-    // Main loop
-    while(1) {
-        VBlankIntrWait();
-        handle_input();
-        render_text();
-    }
-    
+
+    // Not reached
     return 0;
 }
