@@ -34,11 +34,9 @@
 #define MAX_ENEMIES     64
 
 #define FIX_SHIFT       8
-#define FIX_ONE         (1<<FIX_SHIFT)
 #define FIX(n)          ((n)<<FIX_SHIFT)
 #define TO_INT(x)       ((x)>>FIX_SHIFT)
 
-#define CLAMP(v,lo,hi)  ((v)<(lo)?(lo):((v)>(hi)?(hi):(v)))
 #define ABSI(x)         ((x)<0?-(x):(x))
 
 // Colors
@@ -865,7 +863,7 @@ static void draw_win()
 
 int main(void)
 {
-    irq_init(NULL);
+    irq_hit(NULL);
     irq_add(II_VBLANK, NULL);
 
     REG_DISPCNT= DCNT_MODE3 | DCNT_BG2;
