@@ -20,6 +20,7 @@
 #include <tonc.h>
 #include <stdio.h>
 #include <string.h>
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
 
 // -------------------- Config --------------------
 
@@ -49,19 +50,19 @@ enum
 	C_MAX
 };
 
-static const u16 g_bg_col      = RGB15(3, 3, 5);
-static const u16 g_border_col  = RGB15(0, 0, 0);
-static const u16 g_text_col    = RGB15(31, 31, 31);
+static const u16 g_bg_col      = RGB15_C(3, 3, 5);
+static const u16 g_border_col  = RGB15_C(0, 0, 0);
+static const u16 g_text_col    = RGB15_C(31, 31, 31);
 
 static u16 puyo_col(int c)
 {
 	switch(c)
 	{
-	case C_RED: return RGB15(31, 6, 6);
-	case C_GRN: return RGB15(6, 31, 10);
-	case C_BLU: return RGB15(8, 12, 31);
-	case C_YEL: return RGB15(31, 28, 6);
-	case C_PUR: return RGB15(22, 8, 28);
+	case C_RED: return RGB15_C(31, 6, 6);
+	case C_GRN: return RGB15_C(6, 31, 10);
+	case C_BLU: return RGB15_C(8, 12, 31);
+	case C_YEL: return RGB15_C(31, 28, 6);
+	case C_PUR: return RGB15_C(22, 8, 28);
 	default:    return g_bg_col;
 	}
 }
@@ -70,12 +71,12 @@ static u16 puyo_col_dark(int c)
 {
 	switch(c)
 	{
-	case C_RED: return RGB15(18, 2, 2);
-	case C_GRN: return RGB15(2, 18, 6);
-	case C_BLU: return RGB15(3, 5, 18);
-	case C_YEL: return RGB15(18, 16, 2);
-	case C_PUR: return RGB15(12, 3, 16);
-	default:    return RGB15(1,1,2);
+	case C_RED: return RGB15_C(18, 2, 2);
+	case C_GRN: return RGB15_C(2, 18, 6);
+	case C_BLU: return RGB15_C(3, 5, 18);
+	case C_YEL: return RGB15_C(18, 16, 2);
+	case C_PUR: return RGB15_C(12, 3, 16);
+	default:    return RGB15_C(1,1,2);
 	}
 }
 
@@ -83,12 +84,12 @@ static u16 puyo_col_light(int c)
 {
 	switch(c)
 	{
-	case C_RED: return RGB15(31, 20, 20);
-	case C_GRN: return RGB15(20, 31, 22);
-	case C_BLU: return RGB15(20, 22, 31);
-	case C_YEL: return RGB15(31, 31, 18);
-	case C_PUR: return RGB15(28, 20, 31);
-	default:    return RGB15(10,10,12);
+	case C_RED: return RGB15_C(31, 20, 20);
+	case C_GRN: return RGB15_C(20, 31, 22);
+	case C_BLU: return RGB15_C(20, 22, 31);
+	case C_YEL: return RGB15_C(31, 31, 18);
+	case C_PUR: return RGB15_C(28, 20, 31);
+	default:    return RGB15_C(10,10,12);
 	}
 }
 
@@ -139,17 +140,6 @@ static int base_fall_interval = 28; // frames per step at normal speed
 
 // -------------------- Drawing Helpers (Mode 3) --------------------
 
-static inline void m3_hline(int x, int y, int w, u16 c)
-{
-	u16 *dst = vid_mem + y*240 + x;
-	memset16(dst, c, w);
-}
-
-static void m3_rect(int x, int y, int w, int h, u16 c)
-{
-	for(int iy=0; iy<h; iy++)
-		m3_hline(x, y+iy, w, c);
-}
 
 static void draw_puyo_px(int px, int py, int col_id)
 {
@@ -194,7 +184,7 @@ static void draw_board_frame(void)
 	m3_rect(BOARD_X+w,  BOARD_Y-2, 2, h+4, g_border_col);
 
 	// Sidebar area
-	m3_rect(PREVIEW_X-8, 8, 240-(PREVIEW_X-8), 144, RGB15(2,2,4));
+	m3_rect(PREVIEW_X-8, 8, 240-(PREVIEW_X-8), 144, RGB15_C(2,2,4));
 }
 
 // -------------------- Piece Logic --------------------
@@ -484,8 +474,8 @@ static void draw_game(void)
 	if(state == ST_GAMEOVER)
 	{
 		// Overlay message
-		m3_rect(20, 58, 200, 44, RGB15(0,0,0));
-		m3_rect(22, 60, 196, 40, RGB15(6,6,10));
+		m3_rect(20, 58, 200, 44, RGB15_C(0,0,0));
+		m3_rect(22, 60, 196, 40, RGB15_C(6,6,10));
 		tte_set_pos(62, 72);
 		tte_write("GAME OVER");
 		tte_set_pos(34, 86);
