@@ -12,6 +12,8 @@
 // CONSTANTS AND DEFINES
 // ============================================================================
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 #define SCREEN_WIDTH    240
 #define SCREEN_HEIGHT   160
 #define TILE_SIZE       16
@@ -185,14 +187,14 @@ const u8 world_map[MAP_HEIGHT][MAP_WIDTH] = {
 
 // Tile colors
 const u16 tile_colors[8] = {
-    RGB15(8, 24, 8),    // Grass - green
-    RGB15(4, 8, 28),    // Water - blue
-    RGB15(0, 16, 0),    // Forest - dark green
-    RGB15(16, 12, 8),   // Mountain - brown
-    RGB15(28, 20, 8),   // Town - tan
-    RGB15(24, 24, 24),  // Castle - white
-    RGB15(20, 16, 8),   // Path - light brown
-    RGB15(16, 12, 4),   // Bridge - wood
+    RGB15_C(8, 24, 8),    // Grass - green
+    RGB15_C(4, 8, 28),    // Water - blue
+    RGB15_C(0, 16, 0),    // Forest - dark green
+    RGB15_C(16, 12, 8),   // Mountain - brown
+    RGB15_C(28, 20, 8),   // Town - tan
+    RGB15_C(24, 24, 24),  // Castle - white
+    RGB15_C(20, 16, 8),   // Path - light brown
+    RGB15_C(16, 12, 4),   // Bridge - wood
 };
 
 // Enemy templates
@@ -639,13 +641,13 @@ void draw_hp_bar(int x, int y, int current, int max, u16 color) {
     if (filled > bar_width) filled = bar_width;
     
     // Draw background
-    draw_rect(x, y, bar_width, 4, RGB15(4, 4, 4));
+    draw_rect(x, y, bar_width, 4, RGB15_C(4, 4, 4));
     // Draw filled portion
     draw_rect(x, y, filled, 4, color);
     // Draw border
     for (int i = 0; i < bar_width; i++) {
-        plot_pixel(x + i, y, RGB15(16, 16, 16));
-        plot_pixel(x + i, y + 3, RGB15(8, 8, 8));
+        plot_pixel(x + i, y, RGB15_C(16, 16, 16));
+        plot_pixel(x + i, y + 3, RGB15_C(8, 8, 8));
     }
 }
 
@@ -655,42 +657,42 @@ void draw_hp_bar(int x, int y, int current, int max, u16 color) {
 
 void draw_title(void) {
     // Clear screen
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15(0, 0, 8));
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15_C(0, 0, 8));
     
     // Draw stars
     for (int i = 0; i < 50; i++) {
         int sx = (i * 47) % SCREEN_WIDTH;
         int sy = (i * 31) % SCREEN_HEIGHT;
-        plot_pixel(sx, sy, RGB15(31, 31, 31));
+        plot_pixel(sx, sy, RGB15_C(31, 31, 31));
     }
     
     // Title
-    draw_text(60, 40, "FINAL FANTASY", RGB15(31, 31, 0));
-    draw_text(80, 55, "GBA DEMO", RGB15(31, 31, 0));
+    draw_text(60, 40, "FINAL FANTASY", RGB15_C(31, 31, 0));
+    draw_text(80, 55, "GBA DEMO", RGB15_C(31, 31, 0));
     
     // Crystal (simple diamond shape)
     for (int i = 0; i < 10; i++) {
         for (int j = -i; j <= i; j++) {
-            plot_pixel(120 + j, 80 + i, RGB15(16, 16, 31));
+            plot_pixel(120 + j, 80 + i, RGB15_C(16, 16, 31));
         }
     }
     for (int i = 9; i >= 0; i--) {
         for (int j = -i; j <= i; j++) {
-            plot_pixel(120 + j, 100 - i, RGB15(16, 16, 31));
+            plot_pixel(120 + j, 100 - i, RGB15_C(16, 16, 31));
         }
     }
     
     // Menu options
-    u16 color1 = (game.menu_selection == 0) ? RGB15(31, 31, 31) : RGB15(16, 16, 16);
-    u16 color2 = (game.menu_selection == 1) ? RGB15(31, 31, 31) : RGB15(16, 16, 16);
+    u16 color1 = (game.menu_selection == 0) ? RGB15_C(31, 31, 31) : RGB15_C(16, 16, 16);
+    u16 color2 = (game.menu_selection == 1) ? RGB15_C(31, 31, 31) : RGB15_C(16, 16, 16);
     
     draw_text(88, 115, "NEW GAME", color1);
     draw_text(88, 130, "CONTINUE", color2);
     
     // Selection cursor
-    draw_text(76, 115 + game.menu_selection * 15, ">", RGB15(31, 31, 31));
+    draw_text(76, 115 + game.menu_selection * 15, ">", RGB15_C(31, 31, 31));
     
-    draw_text(60, 150, "Press START", RGB15(20, 20, 20));
+    draw_text(60, 150, "Press START", RGB15_C(20, 20, 20));
 }
 
 void update_title(void) {
@@ -744,39 +746,39 @@ void draw_field(void) {
                 // Add some texture/detail
                 if (tile == TILE_GRASS) {
                     // Grass tufts
-                    plot_pixel(screen_x + 3, screen_y + 5, RGB15(4, 20, 4));
-                    plot_pixel(screen_x + 11, screen_y + 9, RGB15(4, 20, 4));
+                    plot_pixel(screen_x + 3, screen_y + 5, RGB15_C(4, 20, 4));
+                    plot_pixel(screen_x + 11, screen_y + 9, RGB15_C(4, 20, 4));
                 } else if (tile == TILE_WATER) {
                     // Wave effect (simple)
                     int wave = ((tx + ty + (game.encounter_counter >> 4)) & 3);
                     if (wave == 0) {
-                        plot_pixel(screen_x + 8, screen_y + 4, RGB15(8, 12, 31));
-                        plot_pixel(screen_x + 4, screen_y + 10, RGB15(8, 12, 31));
+                        plot_pixel(screen_x + 8, screen_y + 4, RGB15_C(8, 12, 31));
+                        plot_pixel(screen_x + 4, screen_y + 10, RGB15_C(8, 12, 31));
                     }
                 } else if (tile == TILE_FOREST) {
                     // Tree top
-                    draw_rect(screen_x + 4, screen_y + 2, 8, 6, RGB15(0, 20, 0));
-                    draw_rect(screen_x + 6, screen_y + 8, 4, 6, RGB15(12, 8, 4));
+                    draw_rect(screen_x + 4, screen_y + 2, 8, 6, RGB15_C(0, 20, 0));
+                    draw_rect(screen_x + 6, screen_y + 8, 4, 6, RGB15_C(12, 8, 4));
                 } else if (tile == TILE_MOUNTAIN) {
                     // Snow cap
-                    plot_pixel(screen_x + 7, screen_y + 2, RGB15(31, 31, 31));
-                    plot_pixel(screen_x + 8, screen_y + 2, RGB15(31, 31, 31));
-                    plot_pixel(screen_x + 7, screen_y + 3, RGB15(31, 31, 31));
-                    plot_pixel(screen_x + 8, screen_y + 3, RGB15(31, 31, 31));
+                    plot_pixel(screen_x + 7, screen_y + 2, RGB15_C(31, 31, 31));
+                    plot_pixel(screen_x + 8, screen_y + 2, RGB15_C(31, 31, 31));
+                    plot_pixel(screen_x + 7, screen_y + 3, RGB15_C(31, 31, 31));
+                    plot_pixel(screen_x + 8, screen_y + 3, RGB15_C(31, 31, 31));
                 } else if (tile == TILE_TOWN) {
                     // House shape
-                    draw_rect(screen_x + 4, screen_y + 6, 8, 8, RGB15(20, 16, 8));
+                    draw_rect(screen_x + 4, screen_y + 6, 8, 8, RGB15_C(20, 16, 8));
                     // Roof
                     for (int r = 0; r < 4; r++) {
-                        draw_rect(screen_x + 4 - r/2, screen_y + 5 - r, 8 + r, 1, RGB15(24, 8, 4));
+                        draw_rect(screen_x + 4 - r/2, screen_y + 5 - r, 8 + r, 1, RGB15_C(24, 8, 4));
                     }
                 } else if (tile == TILE_CASTLE) {
                     // Castle towers
-                    draw_rect(screen_x + 2, screen_y + 4, 4, 10, RGB15(20, 20, 24));
-                    draw_rect(screen_x + 10, screen_y + 4, 4, 10, RGB15(20, 20, 24));
-                    draw_rect(screen_x + 5, screen_y + 6, 6, 8, RGB15(20, 20, 24));
+                    draw_rect(screen_x + 2, screen_y + 4, 4, 10, RGB15_C(20, 20, 24));
+                    draw_rect(screen_x + 10, screen_y + 4, 4, 10, RGB15_C(20, 20, 24));
+                    draw_rect(screen_x + 5, screen_y + 6, 6, 8, RGB15_C(20, 20, 24));
                     // Flag
-                    draw_rect(screen_x + 7, screen_y + 2, 3, 2, RGB15(31, 0, 0));
+                    draw_rect(screen_x + 7, screen_y + 2, 3, 2, RGB15_C(31, 0, 0));
                 }
             }
         }
@@ -787,27 +789,27 @@ void draw_field(void) {
     int player_screen_y = (player.y - cam_y) * 16;
     
     // Body
-    draw_rect(player_screen_x + 4, player_screen_y + 4, 8, 12, RGB15(8, 8, 24));
+    draw_rect(player_screen_x + 4, player_screen_y + 4, 8, 12, RGB15_C(8, 8, 24));
     // Head
-    draw_rect(player_screen_x + 5, player_screen_y, 6, 6, RGB15(28, 24, 16));
+    draw_rect(player_screen_x + 5, player_screen_y, 6, 6, RGB15_C(28, 24, 16));
     // Hair
-    draw_rect(player_screen_x + 5, player_screen_y, 6, 2, RGB15(31, 31, 0));
+    draw_rect(player_screen_x + 5, player_screen_y, 6, 2, RGB15_C(31, 31, 0));
     
     // Draw HUD
-    draw_box(0, 144, 240, 16, RGB15(0, 0, 8), RGB15(16, 16, 16));
-    draw_text(4, 148, "HP:", RGB15(31, 31, 31));
-    draw_number(20, 148, party[0].hp, RGB15(0, 31, 0));
-    draw_text(50, 148, "/", RGB15(31, 31, 31));
-    draw_number(55, 148, party[0].max_hp, RGB15(31, 31, 31));
+    draw_box(0, 144, 240, 16, RGB15_C(0, 0, 8), RGB15_C(16, 16, 16));
+    draw_text(4, 148, "HP:", RGB15_C(31, 31, 31));
+    draw_number(20, 148, party[0].hp, RGB15_C(0, 31, 0));
+    draw_text(50, 148, "/", RGB15_C(31, 31, 31));
+    draw_number(55, 148, party[0].max_hp, RGB15_C(31, 31, 31));
     
-    draw_text(90, 148, "MP:", RGB15(31, 31, 31));
-    draw_number(106, 148, party[0].mp, RGB15(0, 16, 31));
+    draw_text(90, 148, "MP:", RGB15_C(31, 31, 31));
+    draw_number(106, 148, party[0].mp, RGB15_C(0, 16, 31));
     
-    draw_text(140, 148, "G:", RGB15(31, 31, 0));
-    draw_number(152, 148, inventory.gold, RGB15(31, 31, 0));
+    draw_text(140, 148, "G:", RGB15_C(31, 31, 0));
+    draw_number(152, 148, inventory.gold, RGB15_C(31, 31, 0));
     
-    draw_text(200, 148, "Lv", RGB15(31, 31, 31));
-    draw_number(212, 148, party[0].level, RGB15(31, 31, 31));
+    draw_text(200, 148, "Lv", RGB15_C(31, 31, 31));
+    draw_number(212, 148, party[0].level, RGB15_C(31, 31, 31));
 }
 
 void move_player(int dx, int dy) {
@@ -940,10 +942,10 @@ void start_battle(void) {
 
 void draw_battle(void) {
     // Background
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15(4, 4, 8));
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15_C(4, 4, 8));
     
     // Ground
-    draw_rect(0, 80, SCREEN_WIDTH, 40, RGB15(8, 12, 4));
+    draw_rect(0, 80, SCREEN_WIDTH, 40, RGB15_C(8, 12, 4));
     
     // Draw enemies
     int enemy_spacing = SCREEN_WIDTH / (enemy_count + 1);
@@ -955,93 +957,93 @@ void draw_battle(void) {
             // Simple enemy sprite
             u16 e_color;
             switch (enemies[i].sprite_id) {
-                case 0: e_color = RGB15(0, 24, 0); break;    // Goblin - green
-                case 1: e_color = RGB15(20, 20, 20); break;  // Wolf - gray
-                case 2: e_color = RGB15(28, 28, 24); break;  // Skeleton - bone
-                case 3: e_color = RGB15(16, 24, 0); break;   // Orc - olive
-                case 4: e_color = RGB15(16, 0, 24); break;   // Dark Mage - purple
-                case 5: e_color = RGB15(24, 16, 8); break;   // Ogre - brown
-                case 6: e_color = RGB15(31, 0, 0); break;    // Dragon - red
-                default: e_color = RGB15(8, 0, 16); break;   // Demon - dark purple
+                case 0: e_color = RGB15_C(0, 24, 0); break;    // Goblin - green
+                case 1: e_color = RGB15_C(20, 20, 20); break;  // Wolf - gray
+                case 2: e_color = RGB15_C(28, 28, 24); break;  // Skeleton - bone
+                case 3: e_color = RGB15_C(16, 24, 0); break;   // Orc - olive
+                case 4: e_color = RGB15_C(16, 0, 24); break;   // Dark Mage - purple
+                case 5: e_color = RGB15_C(24, 16, 8); break;   // Ogre - brown
+                case 6: e_color = RGB15_C(31, 0, 0); break;    // Dragon - red
+                default: e_color = RGB15_C(8, 0, 16); break;   // Demon - dark purple
             }
             
             // Body
             draw_rect(ex, ey, 32, 40, e_color);
             // Eyes
-            draw_rect(ex + 6, ey + 8, 6, 6, RGB15(31, 31, 31));
-            draw_rect(ex + 20, ey + 8, 6, 6, RGB15(31, 31, 31));
-            plot_pixel(ex + 8, ey + 10, RGB15(0, 0, 0));
-            plot_pixel(ex + 22, ey + 10, RGB15(0, 0, 0));
+            draw_rect(ex + 6, ey + 8, 6, 6, RGB15_C(31, 31, 31));
+            draw_rect(ex + 20, ey + 8, 6, 6, RGB15_C(31, 31, 31));
+            plot_pixel(ex + 8, ey + 10, RGB15_C(0, 0, 0));
+            plot_pixel(ex + 22, ey + 10, RGB15_C(0, 0, 0));
             
             // HP bar
-            draw_hp_bar(ex, ey + 44, enemies[i].hp, enemies[i].max_hp, RGB15(31, 8, 8));
+            draw_hp_bar(ex, ey + 44, enemies[i].hp, enemies[i].max_hp, RGB15_C(31, 8, 8));
             
             // Selection highlight
             if (game.in_submenu && game.target_selection == i) {
-                draw_rect(ex - 2, ey - 2, 36, 4, RGB15(31, 31, 0));
+                draw_rect(ex - 2, ey - 2, 36, 4, RGB15_C(31, 31, 0));
             }
             
             // Name
-            draw_text(ex, ey + 52, enemies[i].name, RGB15(31, 31, 31));
+            draw_text(ex, ey + 52, enemies[i].name, RGB15_C(31, 31, 31));
         }
     }
     
     // Command menu box
-    draw_box(0, 100, 80, 60, RGB15(0, 0, 16), RGB15(20, 20, 20));
+    draw_box(0, 100, 80, 60, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
     
     const char* commands[] = {"Attack", "Magic", "Item", "Defend", "Run"};
     for (int i = 0; i < CMD_COUNT; i++) {
-        u16 color = (game.menu_selection == i && !game.in_submenu) ? RGB15(31, 31, 31) : RGB15(16, 16, 16);
+        u16 color = (game.menu_selection == i && !game.in_submenu) ? RGB15_C(31, 31, 31) : RGB15_C(16, 16, 16);
         draw_text(12, 105 + i * 10, commands[i], color);
     }
     if (!game.in_submenu) {
-        draw_text(4, 105 + game.menu_selection * 10, ">", RGB15(31, 31, 0));
+        draw_text(4, 105 + game.menu_selection * 10, ">", RGB15_C(31, 31, 0));
     }
     
     // Party status
-    draw_box(80, 100, 160, 60, RGB15(0, 0, 16), RGB15(20, 20, 20));
+    draw_box(80, 100, 160, 60, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
     
     for (int i = 0; i < party_size; i++) {
         int py = 103 + i * 14;
-        u16 name_color = party[i].alive ? RGB15(31, 31, 31) : RGB15(16, 8, 8);
+        u16 name_color = party[i].alive ? RGB15_C(31, 31, 31) : RGB15_C(16, 8, 8);
         
         // Highlight current character
         if (i == game.current_char && game.battle_state == BATTLE_PLAYER_SELECT) {
-            draw_rect(82, py - 1, 155, 12, RGB15(4, 4, 12));
+            draw_rect(82, py - 1, 155, 12, RGB15_C(4, 4, 12));
         }
         
         draw_text(84, py, party[i].name, name_color);
         
         // HP
-        draw_text(130, py, "HP", RGB15(20, 20, 20));
-        u16 hp_color = party[i].hp < party[i].max_hp / 4 ? RGB15(31, 8, 8) : RGB15(0, 31, 0);
+        draw_text(130, py, "HP", RGB15_C(20, 20, 20));
+        u16 hp_color = party[i].hp < party[i].max_hp / 4 ? RGB15_C(31, 8, 8) : RGB15_C(0, 31, 0);
         draw_number(145, py, party[i].hp, hp_color);
         
         // MP
-        draw_text(175, py, "MP", RGB15(20, 20, 20));
-        draw_number(190, py, party[i].mp, RGB15(0, 16, 31));
+        draw_text(175, py, "MP", RGB15_C(20, 20, 20));
+        draw_number(190, py, party[i].mp, RGB15_C(0, 16, 31));
         
         // Defending indicator
         if (party[i].defending) {
-            draw_text(215, py, "D", RGB15(31, 31, 0));
+            draw_text(215, py, "D", RGB15_C(31, 31, 0));
         }
     }
     
     // Message display
     if (game.message_timer > 0) {
-        draw_box(20, 40, 200, 20, RGB15(0, 0, 0), RGB15(31, 31, 31));
-        draw_text(28, 46, game.message, RGB15(31, 31, 31));
+        draw_box(20, 40, 200, 20, RGB15_C(0, 0, 0), RGB15_C(31, 31, 31));
+        draw_text(28, 46, game.message, RGB15_C(31, 31, 31));
     }
     
     // Sub-menu for magic/item selection
     if (game.in_submenu && game.menu_selection == CMD_MAGIC) {
-        draw_box(80, 30, 80, 50, RGB15(0, 0, 20), RGB15(24, 24, 24));
+        draw_box(80, 30, 80, 50, RGB15_C(0, 0, 20), RGB15_C(24, 24, 24));
         for (int i = 0; i < 4; i++) {
-            u16 color = (game.target_selection == i) ? RGB15(31, 31, 31) : RGB15(16, 16, 16);
+            u16 color = (game.target_selection == i) ? RGB15_C(31, 31, 31) : RGB15_C(16, 16, 16);
             draw_text(88, 35 + i * 10, spells[i].name, color);
-            draw_number(140, 35 + i * 10, spells[i].mp_cost, RGB15(0, 16, 31));
+            draw_number(140, 35 + i * 10, spells[i].mp_cost, RGB15_C(0, 16, 31));
         }
-        draw_text(82, 35 + game.target_selection * 10, ">", RGB15(31, 31, 0));
+        draw_text(82, 35 + game.target_selection * 10, ">", RGB15_C(31, 31, 0));
     }
 }
 
@@ -1442,53 +1444,53 @@ void update_battle(void) {
 
 void draw_menu(void) {
     // Background
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15(0, 0, 12));
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15_C(0, 0, 12));
     
     // Menu box
-    draw_box(10, 10, 100, 80, RGB15(0, 0, 16), RGB15(20, 20, 20));
+    draw_box(10, 10, 100, 80, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
     
     const char* menu_items[] = {"Items", "Magic", "Equip", "Status", "Save", "Exit"};
     for (int i = 0; i < MENU_COUNT; i++) {
-        u16 color = (game.menu_selection == i) ? RGB15(31, 31, 31) : RGB15(16, 16, 16);
+        u16 color = (game.menu_selection == i) ? RGB15_C(31, 31, 31) : RGB15_C(16, 16, 16);
         draw_text(24, 18 + i * 11, menu_items[i], color);
     }
-    draw_text(14, 18 + game.menu_selection * 11, ">", RGB15(31, 31, 0));
+    draw_text(14, 18 + game.menu_selection * 11, ">", RGB15_C(31, 31, 0));
     
     // Party status
-    draw_box(120, 10, 110, 100, RGB15(0, 0, 16), RGB15(20, 20, 20));
+    draw_box(120, 10, 110, 100, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
     
     for (int i = 0; i < party_size; i++) {
         int y = 16 + i * 24;
-        draw_text(125, y, party[i].name, RGB15(31, 31, 31));
+        draw_text(125, y, party[i].name, RGB15_C(31, 31, 31));
         
-        draw_text(125, y + 8, "HP", RGB15(20, 20, 20));
-        draw_number(140, y + 8, party[i].hp, RGB15(0, 31, 0));
-        draw_text(165, y + 8, "/", RGB15(16, 16, 16));
-        draw_number(172, y + 8, party[i].max_hp, RGB15(31, 31, 31));
+        draw_text(125, y + 8, "HP", RGB15_C(20, 20, 20));
+        draw_number(140, y + 8, party[i].hp, RGB15_C(0, 31, 0));
+        draw_text(165, y + 8, "/", RGB15_C(16, 16, 16));
+        draw_number(172, y + 8, party[i].max_hp, RGB15_C(31, 31, 31));
         
-        draw_text(125, y + 15, "MP", RGB15(20, 20, 20));
-        draw_number(140, y + 15, party[i].mp, RGB15(0, 16, 31));
-        draw_text(165, y + 15, "/", RGB15(16, 16, 16));
-        draw_number(172, y + 15, party[i].max_mp, RGB15(31, 31, 31));
+        draw_text(125, y + 15, "MP", RGB15_C(20, 20, 20));
+        draw_number(140, y + 15, party[i].mp, RGB15_C(0, 16, 31));
+        draw_text(165, y + 15, "/", RGB15_C(16, 16, 16));
+        draw_number(172, y + 15, party[i].max_mp, RGB15_C(31, 31, 31));
     }
     
     // Inventory info
-    draw_box(10, 95, 100, 55, RGB15(0, 0, 16), RGB15(20, 20, 20));
-    draw_text(16, 102, "Gold:", RGB15(31, 31, 0));
-    draw_number(50, 102, inventory.gold, RGB15(31, 31, 0));
-    draw_text(16, 114, "Potions:", RGB15(31, 31, 31));
-    draw_number(60, 114, inventory.potions, RGB15(31, 31, 31));
-    draw_text(16, 126, "Ethers:", RGB15(31, 31, 31));
-    draw_number(55, 126, inventory.ethers, RGB15(31, 31, 31));
-    draw_text(16, 138, "P.Down:", RGB15(31, 31, 31));
-    draw_number(55, 138, inventory.phoenix_downs, RGB15(31, 31, 31));
+    draw_box(10, 95, 100, 55, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
+    draw_text(16, 102, "Gold:", RGB15_C(31, 31, 0));
+    draw_number(50, 102, inventory.gold, RGB15_C(31, 31, 0));
+    draw_text(16, 114, "Potions:", RGB15_C(31, 31, 31));
+    draw_number(60, 114, inventory.potions, RGB15_C(31, 31, 31));
+    draw_text(16, 126, "Ethers:", RGB15_C(31, 31, 31));
+    draw_number(55, 126, inventory.ethers, RGB15_C(31, 31, 31));
+    draw_text(16, 138, "P.Down:", RGB15_C(31, 31, 31));
+    draw_number(55, 138, inventory.phoenix_downs, RGB15_C(31, 31, 31));
     
     // Location info
-    draw_box(120, 115, 110, 35, RGB15(0, 0, 16), RGB15(20, 20, 20));
-    draw_text(125, 122, "Location:", RGB15(20, 20, 20));
+    draw_box(120, 115, 110, 35, RGB15_C(0, 0, 16), RGB15_C(20, 20, 20));
+    draw_text(125, 122, "Location:", RGB15_C(20, 20, 20));
     u8 tile = world_map[player.y][player.x];
     const char* loc_names[] = {"Plains", "Shore", "Forest", "Mountains", "Town", "Castle", "Road", "Bridge"};
-    draw_text(125, 134, loc_names[tile], RGB15(31, 31, 31));
+    draw_text(125, 134, loc_names[tile], RGB15_C(31, 31, 31));
 }
 
 void update_menu(void) {
@@ -1530,9 +1532,9 @@ void update_menu(void) {
 // ============================================================================
 
 void draw_game_over(void) {
-    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15(4, 0, 0));
-    draw_text(80, 70, "GAME OVER", RGB15(31, 8, 8));
-    draw_text(60, 100, "Press START", RGB15(16, 16, 16));
+    draw_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, RGB15_C(4, 0, 0));
+    draw_text(80, 70, "GAME OVER", RGB15_C(31, 8, 8));
+    draw_text(60, 100, "Press START", RGB15_C(16, 16, 16));
 }
 
 void update_game_over(void) {
