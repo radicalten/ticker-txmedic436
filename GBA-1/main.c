@@ -8,6 +8,8 @@
 
 #include <tonc.h>
 #include <string.h>
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 
 // ============================================================================
 // Constants
@@ -69,33 +71,33 @@ static u32 rng_seed = 0x12345678;
 
 // Block colors (5 colors + empty + flash)
 static const u16 colors[] = {
-    RGB15(2, 2, 4),     // 0: Empty/BG
-    RGB15(31, 8, 8),    // 1: Red
-    RGB15(8, 31, 8),    // 2: Green
-    RGB15(8, 16, 31),   // 3: Blue
-    RGB15(31, 31, 8),   // 4: Yellow
-    RGB15(31, 8, 31),   // 5: Purple/Magenta
-    RGB15(31, 31, 31),  // 6: Flash white
+    RGB15_C(2, 2, 4),     // 0: Empty/BG
+    RGB15_C(31, 8, 8),    // 1: Red
+    RGB15_C(8, 31, 8),    // 2: Green
+    RGB15_C(8, 16, 31),   // 3: Blue
+    RGB15_C(31, 31, 8),   // 4: Yellow
+    RGB15_C(31, 8, 31),   // 5: Purple/Magenta
+    RGB15_C(31, 31, 31),  // 6: Flash white
 };
 
 static const u16 colors_dark[] = {
-    RGB15(1, 1, 2),
-    RGB15(20, 4, 4),
-    RGB15(4, 20, 4),
-    RGB15(4, 10, 20),
-    RGB15(20, 20, 4),
-    RGB15(20, 4, 20),
-    RGB15(20, 20, 20),
+    RGB15_C(1, 1, 2),
+    RGB15_C(20, 4, 4),
+    RGB15_C(4, 20, 4),
+    RGB15_C(4, 10, 20),
+    RGB15_C(20, 20, 4),
+    RGB15_C(20, 4, 20),
+    RGB15_C(20, 20, 20),
 };
 
 static const u16 colors_light[] = {
-    RGB15(4, 4, 6),
-    RGB15(31, 16, 16),
-    RGB15(16, 31, 16),
-    RGB15(16, 24, 31),
-    RGB15(31, 31, 16),
-    RGB15(31, 16, 31),
-    RGB15(31, 31, 31),
+    RGB15_C(4, 4, 6),
+    RGB15_C(31, 16, 16),
+    RGB15_C(16, 31, 16),
+    RGB15_C(16, 24, 31),
+    RGB15_C(31, 31, 16),
+    RGB15_C(31, 16, 31),
+    RGB15_C(31, 31, 31),
 };
 
 // ============================================================================
@@ -226,7 +228,7 @@ static void draw_cursor(void) {
     int h = BLOCK_SIZE + 3;
     
     // Animated cursor color
-    u16 cursor_color = (game.frame_count / 8) % 2 ? RGB15(31, 31, 31) : RGB15(20, 20, 31);
+    u16 cursor_color = (game.frame_count / 8) % 2 ? RGB15_C(31, 31, 31) : RGB15_C(20, 20, 31);
     
     // Draw thick cursor border
     for (int t = 0; t < 2; t++) {
@@ -242,13 +244,13 @@ static void draw_grid_frame(void) {
     
     // Frame
     for (int t = 0; t < 3; t++) {
-        draw_rect(x + t, y + t, w - t * 2, h - t * 2, RGB15(10, 10, 15));
+        draw_rect(x + t, y + t, w - t * 2, h - t * 2, RGB15_C(10, 10, 15));
     }
     
     // Danger line (top)
     for (int i = 0; i < GRID_COLS * BLOCK_SIZE; i++) {
         if ((i / 4) % 2) {
-            plot_pixel(GRID_X + i, GRID_Y, RGB15(31, 0, 0));
+            plot_pixel(GRID_X + i, GRID_Y, RGB15_C(31, 0, 0));
         }
     }
 }
@@ -257,7 +259,7 @@ static void draw_game(void) {
     // Clear screen
     for (int y = 0; y < 160; y++) {
         for (int x = 0; x < 240; x++) {
-            m3_mem[y][x] = RGB15(1, 1, 3);
+            m3_mem[y][x] = RGB15_C(1, 1, 3);
         }
     }
     
@@ -306,41 +308,41 @@ static void draw_game(void) {
     }
     
     // Draw UI
-    u16 text_color = RGB15(31, 31, 31);
+    u16 text_color = RGB15_C(31, 31, 31);
     
     // Score label area
-    fill_rect(4, 10, 60, 30, RGB15(3, 3, 6));
-    draw_rect(4, 10, 60, 30, RGB15(10, 10, 15));
+    fill_rect(4, 10, 60, 30, RGB15_C(3, 3, 6));
+    draw_rect(4, 10, 60, 30, RGB15_C(10, 10, 15));
     draw_number(10, 20, game.score, text_color);
     
     // Chain display
     if (game.chain > 1) {
-        fill_rect(4, 50, 60, 20, RGB15(6, 3, 3));
-        draw_rect(4, 50, 60, 20, RGB15(15, 10, 10));
-        draw_number(10, 56, game.chain, RGB15(31, 31, 0));
+        fill_rect(4, 50, 60, 20, RGB15_C(6, 3, 3));
+        draw_rect(4, 50, 60, 20, RGB15_C(15, 10, 10));
+        draw_number(10, 56, game.chain, RGB15_C(31, 31, 0));
     }
     
     // Speed indicator
-    fill_rect(180, 10, 55, 20, RGB15(3, 3, 6));
-    draw_rect(180, 10, 55, 20, RGB15(10, 10, 15));
+    fill_rect(180, 10, 55, 20, RGB15_C(3, 3, 6));
+    draw_rect(180, 10, 55, 20, RGB15_C(10, 10, 15));
     draw_number(186, 16, game.rise_speed, text_color);
     
     // Game over overlay
     if (game.game_over) {
-        fill_rect(60, 60, 120, 40, RGB15(20, 0, 0));
-        draw_rect(60, 60, 120, 40, RGB15(31, 31, 31));
-        draw_rect(61, 61, 118, 38, RGB15(31, 31, 31));
+        fill_rect(60, 60, 120, 40, RGB15_C(20, 0, 0));
+        draw_rect(60, 60, 120, 40, RGB15_C(31, 31, 31));
+        draw_rect(61, 61, 118, 38, RGB15_C(31, 31, 31));
         
         // "GAME OVER" - simplified
         for (int i = 0; i < 80; i++) {
-            plot_pixel(80 + i, 80, RGB15(31, 31, 31));
+            plot_pixel(80 + i, 80, RGB15_C(31, 31, 31));
         }
     }
     
     // Paused overlay
     if (game.paused && !game.game_over) {
-        fill_rect(80, 70, 80, 20, RGB15(0, 0, 15));
-        draw_rect(80, 70, 80, 20, RGB15(31, 31, 31));
+        fill_rect(80, 70, 80, 20, RGB15_C(0, 0, 15));
+        draw_rect(80, 70, 80, 20, RGB15_C(31, 31, 31));
     }
 }
 
