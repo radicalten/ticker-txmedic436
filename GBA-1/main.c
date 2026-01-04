@@ -863,12 +863,10 @@ static void draw_win()
 
 int main(void)
 {
-    irq_set(NULL);
     irq_add(II_VBLANK, NULL);
 
     REG_DISPCNT= DCNT_MODE3 | DCNT_BG2;
 
-    key_hit();
     game_reset();
     gstate= GS_TITLE;
 
