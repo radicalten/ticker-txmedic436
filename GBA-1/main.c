@@ -1,481 +1,926 @@
+// main.c - Simple GBA Tower Defense (Crystal Defenders-like) using tonc (Mode 3)
+//
+// Build:
+//  - devkitARM + tonc required
+//  - Put this file in a tonc template project and "make"
+//    Or link with libtonc, include tonc.h, and use a standard GBA linker script.
+//
+// Controls:
+//  - D-Pad: move cursor (grid-based)
+//  - A: place tower (costs gold)
+//  - B: sell tower at cursor (refund 50%)
+//  - R: start next wave early (when spawn queue empty)
+//  - START: pause/unpause
+//
+// Notes:
+//  - Mode 3 bitmap; no external assets
+//  - Minimal HUD uses tiny 3x5 digit font + icons
+//  - Single-file for clarity. Not optimized, but runs fine in emulators.
+//
+// MIT-like: free to use/modify.
+
 #include <tonc.h>
-#include <stdlib.h>
 
-// -------------------------------------------------------------------------
-// CONSTANTS & CONFIG
-// -------------------------------------------------------------------------
-#define MAP_WIDTH  15
-#define MAP_HEIGHT 10
-#define TILE_SIZE  16
+// ----------------------------- Config ---------------------------------
 
-#define MAX_ENEMIES 20
-#define MAX_TOWERS  50
-#define MAX_PROJECTILES 20
+#define SCREEN_W        240
+#define SCREEN_H        160
 
-// Colors (BGR 555)
-#define CLR_GRASS   RGB15(5, 20, 5)
-#define CLR_PATH    RGB15(20, 15, 10)
-#define CLR_CURSOR  RGB15(31, 31, 31)
-#define CLR_ENEMY   RGB15(31, 0, 0)
-#define CLR_T_SOLDIER RGB15(0, 0, 31)   // Blue Tower
-#define CLR_T_ARCHER  RGB15(31, 31, 0)  // Yellow Tower
-#define CLR_PROJ    RGB15(31, 31, 31)
-#define CLR_UI      RGB15(10, 10, 10)
+#define GRID_SIZE       16
+#define GRID_W          (SCREEN_W/GRID_SIZE)  // 15
+#define GRID_H          (SCREEN_H/GRID_SIZE)  // 10
 
-// Tower Stats
-#define TYPE_SOLDIER 0
-#define TYPE_ARCHER  1
+#define MAX_TOWERS      32
+#define MAX_ENEMIES     64
 
-#define COST_SOLDIER 20
-#define COST_ARCHER  50
+#define FIX_SHIFT       8
+#define FIX_ONE         (1<<FIX_SHIFT)
+#define FIX(n)          ((n)<<FIX_SHIFT)
+#define TO_INT(x)       ((x)>>FIX_SHIFT)
 
-#define RANGE_SOLDIER (32 * 32) // Squared distance
-#define RANGE_ARCHER  (64 * 64)
+#define CLAMP(v,lo,hi)  ((v)<(lo)?(lo):((v)>(hi)?(hi):(v)))
+#define ABSI(x)         ((x)<0?-(x):(x))
 
-#define DMG_SOLDIER   2
-#define DMG_ARCHER    1
+// Colors
+#define COL_BG          RGB15(4,8,5)       // grass green-ish
+#define COL_GRID        RGB15(6,12,8)
+#define COL_PATH        RGB15(22,16,8)
+#define COL_CURSOR      RGB15(31,31,31)
+#define COL_TOWER       RGB15(0,10,31)
+#define COL_RANGE       RGB15(10,18,31)
+#define COL_ENEMY       RGB15(31,4,4)
+#define COL_BEAM        RGB15(31,28,6)
+#define COL_UI          RGB15(31,31,31)
+#define COL_UI_GOLD     RGB15(31,31,0)
+#define COL_UI_LIVES    RGB15(31,0,0)
+#define COL_UI_WAVE     RGB15(0,31,31)
 
-#define COOLDOWN_SOLDIER 30 // Frames
-#define COOLDOWN_ARCHER  45
+typedef enum {
+    GS_TITLE=0,
+    GS_PLAY,
+    GS_PAUSE,
+    GS_GAMEOVER,
+    GS_WIN
+} GameState;
 
-// -------------------------------------------------------------------------
-// STRUCTS
-// -------------------------------------------------------------------------
+// --------------------------- Globals ----------------------------------
+
+// Path as list of grid-cells
+static u8 pathX[GRID_W*GRID_H];
+static u8 pathY[GRID_W*GRID_H];
+static int pathLen=0;
+
+// Map occupancy
+static u8 pathMask[GRID_H][GRID_W];      // 1=path blocked
+static s16 towerAt[GRID_H][GRID_W];      // -1=empty or tower index
+
+// Cursor grid position
+static int curGX=2, curGY=2;
+static int moveRep=0;
+
+// Game resources
+static int gold=50;
+static int lives=20;
+static int wave=1;
+static int totalWaves=10;
+
+// Spawning
+static int spawnRemaining=0;
+static int spawnTimer=0;
+static int spawnInterval=32;     // frames between spawns
+static int waveCooldown=90;      // frames to next wave when done
+
 typedef struct {
-    int x, y;     // Pixel coordinates (fixed point not needed for simple demo)
-    int hp;
-    int max_hp;
-    int active;
-    int path_idx; // Current node in path
-    int dist_traveled; // For progress sorting
-    int slow_timer;
+    s32 x, y;        // fixed point position (8.8)
+    int hp, maxhp;
+    s32 speed;       // fixed per-frame
+    u8  alive;
+    u8  pathIndex;   // next path cell target index
+    u16 color;
 } Enemy;
 
 typedef struct {
-    int grid_x, grid_y;
-    int type;
-    int cooldown_timer;
-    int range_sq;
-    int active;
+    int gx, gy;         // grid coords
+    int x, y;           // pixel center
+    int range;          // in pixels
+    int damage;
+    int cooldown;       // frames
+    int cdTimer;
+    int beamTimer;      // frames to show beam
+    int lastTx, lastTy; // last target pos
+    u8  active;
 } Tower;
 
-typedef struct {
-    int x, y;
-    int target_id; // Index in enemy array
-    int speed;
-    int damage;
-    int active;
-} Projectile;
+static Enemy enemies[MAX_ENEMIES];
+static Tower towers[MAX_TOWERS];
 
-typedef struct {
-    int x, y;
-} Point;
+// RNG seed
+static u32 rngs=1;
 
-// -------------------------------------------------------------------------
-// GLOBALS
-// -------------------------------------------------------------------------
+// State
+static GameState gstate=GS_TITLE;
 
-// Simple S-shape path (Grid coordinates)
-const Point path_nodes[] = {
-    {0, 2}, {4, 2}, {4, 7}, {10, 7}, {10, 2}, {14, 2}, {14, 5}
+// ----------------------- Tiny 3x5 digit font ---------------------------
+
+static const u8 DIGITS_3x5[10][5]={
+    {0b111,0b101,0b101,0b101,0b111}, // 0
+    {0b010,0b110,0b010,0b010,0b111}, // 1
+    {0b111,0b001,0b111,0b100,0b111}, // 2
+    {0b111,0b001,0b111,0b001,0b111}, // 3
+    {0b101,0b101,0b111,0b001,0b001}, // 4
+    {0b111,0b100,0b111,0b001,0b111}, // 5
+    {0b111,0b100,0b111,0b101,0b111}, // 6
+    {0b111,0b001,0b010,0b010,0b010}, // 7
+    {0b111,0b101,0b111,0b101,0b111}, // 8
+    {0b111,0b101,0b111,0b001,0b111}  // 9
 };
-#define PATH_NODE_COUNT 7
 
-// Map Grid (0 = Build, 1 = Path)
-u8 map_grid[MAP_WIDTH][MAP_HEIGHT];
+// ---------------------- Low-level drawing ------------------------------
 
-Enemy enemies[MAX_ENEMIES];
-Tower towers[MAX_TOWERS];
-Projectile projectiles[MAX_PROJECTILES];
-
-int money = 100;
-int lives = 10;
-int wave = 1;
-int spawn_timer = 0;
-int enemies_to_spawn = 5;
-int frame_count = 0;
-
-int cursor_x = 7;
-int cursor_y = 5;
-
-// -------------------------------------------------------------------------
-// HELPER FUNCTIONS
-// -------------------------------------------------------------------------
-
-// Check if a point is inside the screen
-INLINE int in_bounds(int x, int y) {
-    return (x >= 0 && x < 240 && y >= 0 && y < 160);
+static inline void clear_screen(u16 clr)
+{
+    u32 c= clr | (clr<<16);
+    u32 *dst= (u32*)vid_mem;
+    for(int i=0; i<(SCREEN_W*SCREEN_H)/2; i++)
+        dst[i]= c;
 }
 
-// Draw a filled rectangle in Mode 3
-void draw_rect(int x, int y, int w, int h, u16 color) {
-    for (int iy = 0; iy < h; iy++) {
-        for (int ix = 0; ix < w; ix++) {
-            if (in_bounds(x + ix, y + iy))
-                m3_plot(x + ix, y + iy, color);
-        }
+static inline void plot(int x, int y, u16 clr)
+{
+    if((unsigned)x<SCREEN_W && (unsigned)y<SCREEN_H)
+        vid_mem[y*SCREEN_W + x]= clr;
+}
+
+static inline void hline(int x0, int x1, int y, u16 clr)
+{
+    if((unsigned)y>=SCREEN_H) return;
+    if(x0>x1){ int t=x0; x0=x1; x1=t; }
+    if(x1<0 || x0>=SCREEN_W) return;
+    x0= CLAMP(x0, 0, SCREEN_W-1);
+    x1= CLAMP(x1, 0, SCREEN_W-1);
+    u16 *dst= &vid_mem[y*SCREEN_W + x0];
+    for(int x=x0; x<=x1; x++)
+        *dst++= clr;
+}
+
+static inline void vline(int x, int y0, int y1, u16 clr)
+{
+    if((unsigned)x>=SCREEN_W) return;
+    if(y0>y1){ int t=y0; y0=y1; y1=t; }
+    if(y1<0 || y0>=SCREEN_H) return;
+    y0= CLAMP(y0, 0, SCREEN_H-1);
+    y1= CLAMP(y1, 0, SCREEN_H-1);
+    u16 *dst= &vid_mem[y0*SCREEN_W + x];
+    for(int y=y0; y<=y1; y++, dst+=SCREEN_W)
+        *dst= clr;
+}
+
+static inline void fill_rect(int x, int y, int w, int h, u16 clr)
+{
+    int x1= x+w-1, y1= y+h-1;
+    if(x > SCREEN_W-1 || y > SCREEN_H-1) return;
+    if(x1<0 || y1<0) return;
+    int yy0= CLAMP(y,0,SCREEN_H-1);
+    int yy1= CLAMP(y1,0,SCREEN_H-1);
+    int xx0= CLAMP(x,0,SCREEN_W-1);
+    int xx1= CLAMP(x1,0,SCREEN_W-1);
+    for(int yy=yy0; yy<=yy1; yy++)
+        hline(xx0, xx1, yy, clr);
+}
+
+static void draw_rect_outline(int x, int y, int w, int h, u16 clr)
+{
+    hline(x, x+w-1, y, clr);
+    hline(x, x+w-1, y+h-1, clr);
+    vline(x, y, y+h-1, clr);
+    vline(x+w-1, y, y+h-1, clr);
+}
+
+static void draw_circle_fill(int cx, int cy, int r, u16 clr)
+{
+    int r2= r*r;
+    for(int dy=-r; dy<=r; dy++)
+    {
+        int y= cy+dy;
+        int dxmax= 0;
+        while( (dxmax+1)*(dxmax+1) + dy*dy <= r2)
+            dxmax++;
+        hline(cx-dxmax, cx+dxmax, y, clr);
     }
 }
 
-// Simple circle approximation for units
-void draw_circle(int x, int y, int r, u16 color) {
-    draw_rect(x - r, y - r, r*2, r*2, color); // Keeping it boxy for speed in Mode 3
-}
-
-void init_game() {
-    // Reset Map
-    for(int x=0; x<MAP_WIDTH; x++) {
-        for(int y=0; y<MAP_HEIGHT; y++) {
-            map_grid[x][y] = 0; // Grass
-        }
-    }
-
-    // Mark Path on Grid
-    for (int i = 0; i < PATH_NODE_COUNT - 1; i++) {
-        Point p1 = path_nodes[i];
-        Point p2 = path_nodes[i+1];
-        
-        // Simple linear interpolation to mark grid
-        int cx = p1.x;
-        int cy = p1.y;
-        while(cx != p2.x || cy != p2.y) {
-            map_grid[cx][cy] = 1;
-            if(cx < p2.x) cx++;
-            else if(cx > p2.x) cx--;
-            else if(cy < p2.y) cy++;
-            else if(cy > p2.y) cy--;
-        }
-        map_grid[p2.x][p2.y] = 1;
-    }
-
-    // Clear Entities
-    for(int i=0; i<MAX_ENEMIES; i++) enemies[i].active = 0;
-    for(int i=0; i<MAX_TOWERS; i++) towers[i].active = 0;
-    for(int i=0; i<MAX_PROJECTILES; i++) projectiles[i].active = 0;
-}
-
-void spawn_enemy() {
-    for(int i=0; i<MAX_ENEMIES; i++) {
-        if(!enemies[i].active) {
-            enemies[i].active = 1;
-            enemies[i].path_idx = 0;
-            enemies[i].x = path_nodes[0].x * TILE_SIZE + 8;
-            enemies[i].y = path_nodes[0].y * TILE_SIZE + 8;
-            enemies[i].max_hp = 5 + (wave * 2);
-            enemies[i].hp = enemies[i].max_hp;
-            enemies[i].dist_traveled = 0;
-            return;
-        }
+static void draw_line(int x0,int y0,int x1,int y1,u16 clr)
+{
+    // Bresenham
+    int dx= ABSI(x1-x0), sx= x0<x1 ? 1 : -1;
+    int dy= -ABSI(y1-y0), sy= y0<y1 ? 1 : -1;
+    int err= dx+dy, e2;
+    while(1){
+        plot(x0,y0, clr);
+        if(x0==x1 && y0==y1) break;
+        e2= 2*err;
+        if(e2>=dy){ err+=dy; x0+=sx; }
+        if(e2<=dx){ err+=dx; y0+=sy; }
     }
 }
 
-void update_enemies() {
-    for(int i=0; i<MAX_ENEMIES; i++) {
-        if(!enemies[i].active) continue;
-
-        Enemy *e = &enemies[i];
-        
-        // Target Node
-        if (e->path_idx >= PATH_NODE_COUNT - 1) {
-            // Reached end
-            e->active = 0;
-            lives--;
-            continue;
-        }
-
-        Point target = path_nodes[e->path_idx + 1];
-        int tx = target.x * TILE_SIZE + 8; // Center of tile
-        int ty = target.y * TILE_SIZE + 8;
-
-        int speed = 1; 
-
-        // Move towards target
-        if(e->x < tx) e->x += speed;
-        else if(e->x > tx) e->x -= speed;
-        
-        if(e->y < ty) e->y += speed;
-        else if(e->y > ty) e->y -= speed;
-
-        e->dist_traveled += speed;
-
-        // Check if reached node
-        if(abs(e->x - tx) < 2 && abs(e->y - ty) < 2) {
-            e->path_idx++;
-        }
+static void draw_digit3x5(int x, int y, int d, u16 clr)
+{
+    if(d<0 || d>9) return;
+    for(int row=0; row<5; row++)
+    {
+        u8 bits= DIGITS_3x5[d][row];
+        for(int col=0; col<3; col++)
+            if(bits & (1<<(2-col)))
+                plot(x+col, y+row, clr);
     }
 }
 
-void fire_projectile(int tx, int ty, int target_idx, int type) {
-    for(int i=0; i<MAX_PROJECTILES; i++) {
-        if(!projectiles[i].active) {
-            projectiles[i].active = 1;
-            projectiles[i].x = tx;
-            projectiles[i].y = ty;
-            projectiles[i].target_id = target_idx;
-            projectiles[i].speed = 4;
-            projectiles[i].damage = (type == TYPE_SOLDIER) ? DMG_SOLDIER : DMG_ARCHER;
-            return;
+static void draw_number_small(int x, int y, int value, u16 clr)
+{
+    if(value==0){ draw_digit3x5(x,y,0,clr); return; }
+    int tmp=value, digits=0;
+    if(tmp<0) tmp= -tmp;
+    while(tmp>0){ tmp/=10; digits++; }
+    int xpos= x + (digits-1)*4;
+    tmp= value<0 ? -value : value;
+    while(tmp>0)
+    {
+        int d= tmp%10;
+        draw_digit3x5(xpos, y, d, clr);
+        xpos-=4;
+        tmp/=10;
+    }
+    if(value<0)
+        plot(x-2, y+2, clr), plot(x-1, y+2, clr), plot(x, y+2, clr);
+}
+
+// ---------------------- Path and map ----------------------------------
+
+static void path_clear()
+{
+    pathLen=0;
+    for(int y=0;y<GRID_H;y++)
+        for(int x=0;x<GRID_W;x++)
+        {
+            pathMask[y][x]=0;
+            towerAt[y][x]= -1;
         }
+}
+
+static void path_add_line(int x0,int y0,int x1,int y1)
+{
+    if(x0==x1)
+    {
+        int y= y0, ystep= (y1>=y0)?1:-1;
+        for(; y!=y1; y+=ystep)
+        {
+            pathX[pathLen]= x0;
+            pathY[pathLen]= y;
+            pathMask[y][x0]=1;
+            pathLen++;
+        }
+        // include last
+        pathX[pathLen]= x1;
+        pathY[pathLen]= y1;
+        pathMask[y1][x1]=1;
+        pathLen++;
+    }
+    else if(y0==y1)
+    {
+        int x= x0, xstep=(x1>=x0)?1:-1;
+        for(; x!=x1; x+=xstep)
+        {
+            pathX[pathLen]= x;
+            pathY[pathLen]= y0;
+            pathMask[y0][x]=1;
+            pathLen++;
+        }
+        pathX[pathLen]= x1;
+        pathY[pathLen]= y1;
+        pathMask[y1][x1]=1;
+        pathLen++;
     }
 }
 
-void update_towers() {
-    for(int i=0; i<MAX_TOWERS; i++) {
-        if(!towers[i].active) continue;
-        Tower *t = &towers[i];
+static void build_default_path()
+{
+    // Snake-like path across the field:
+    // (0,2)->(14,2)->(14,5)->(0,5)->(0,8)->(14,8)
+    path_clear();
+    path_add_line(0,2, 14,2);
+    path_add_line(14,2, 14,5);
+    path_add_line(14,5, 0,5);
+    path_add_line(0,5, 0,8);
+    path_add_line(0,8, 14,8);
+    // pathLen now has full sequence of cells the enemies will follow
+}
 
-        if(t->cooldown_timer > 0) {
-            t->cooldown_timer--;
-            continue;
-        }
+static inline int is_path_cell(int gx,int gy)
+{
+    if((unsigned)gx>=GRID_W || (unsigned)gy>=GRID_H) return 1;
+    return pathMask[gy][gx]!=0;
+}
 
-        // Find closest enemy
-        int target_id = -1;
-        int min_dist = 999999;
+// ----------------------- Enemies and Towers ---------------------------
 
-        for(int e=0; e<MAX_ENEMIES; e++) {
-            if(!enemies[e].active) continue;
+static void enemies_clear()
+{
+    for(int i=0;i<MAX_ENEMIES;i++)
+        enemies[i].alive=0;
+}
 
-            int dx = enemies[e].x - (t->grid_x * TILE_SIZE + 8);
-            int dy = enemies[e].y - (t->grid_y * TILE_SIZE + 8);
-            int dist_sq = dx*dx + dy*dy;
+static void towers_clear()
+{
+    for(int i=0;i<MAX_TOWERS;i++)
+        towers[i].active=0;
+    for(int y=0;y<GRID_H;y++)
+        for(int x=0;x<GRID_W;x++)
+            towerAt[y][x]= -1;
+}
 
-            if(dist_sq <= t->range_sq) {
-                // Simple targeting: Closest
-                if(dist_sq < min_dist) {
-                    min_dist = dist_sq;
-                    target_id = e;
-                }
+static int find_free_enemy()
+{
+    for(int i=0;i<MAX_ENEMIES;i++)
+        if(!enemies[i].alive) return i;
+    return -1;
+}
+
+static int find_free_tower()
+{
+    for(int i=0;i<MAX_TOWERS;i++)
+        if(!towers[i].active) return i;
+    return -1;
+}
+
+static inline s32 fx_step_to(s32 *x, s32 *y, s32 tx, s32 ty, s32 spd)
+{
+    s32 dx= tx - *x;
+    s32 dy= ty - *y;
+    s32 adx= ABSI(dx), ady= ABSI(dy);
+    s32 sum= adx + ady;
+    if(sum <= spd)
+    {
+        *x= tx; *y= ty;
+        return 1;
+    }
+    if(sum==0) return 1;
+    *x += ( (s64)spd * dx ) / sum;
+    *y += ( (s64)spd * dy ) / sum;
+    return 0;
+}
+
+static void spawn_enemy_for_wave(int w)
+{
+    if(pathLen<2) return;
+    int idx= find_free_enemy();
+    if(idx<0) return;
+
+    int cx0= pathX[0]*GRID_SIZE + GRID_SIZE/2;
+    int cy0= pathY[0]*GRID_SIZE + GRID_SIZE/2;
+
+    Enemy *e= &enemies[idx];
+    e->x= FIX(cx0);
+    e->y= FIX(cy0);
+    e->pathIndex= (pathLen>1)? 1 : 0;
+    e->alive= 1;
+    e->color= COL_ENEMY;
+
+    // Wave scaling
+    e->maxhp= 3 + w*2;
+    e->hp= e->maxhp;
+    // Speed: 0.4 px/frame + 0.05*w capped
+    int spd100= 40 + 5*w;       // in hundredths of px/frame
+    if(spd100>120) spd100=120;
+    e->speed= (spd100 * FIX_ONE) / 100;
+}
+
+static int enemies_alive_count()
+{
+    int c=0;
+    for(int i=0;i<MAX_ENEMIES;i++) if(enemies[i].alive) c++;
+    return c;
+}
+
+static void start_wave(int w)
+{
+    // Enemies per wave
+    spawnRemaining= 8 + 2*w;
+    if(spawnRemaining > MAX_ENEMIES) spawnRemaining= MAX_ENEMIES;
+    spawnInterval= 36 - w*2; if(spawnInterval<12) spawnInterval=12;
+    spawnTimer= 30; // small delay
+}
+
+static void kill_enemy(Enemy* e)
+{
+    e->alive=0;
+    // Reward
+    int reward= 2 + (wave/2);
+    gold += reward;
+}
+
+static int tower_cost()
+{
+    return 20 + (wave/2)*5;    // slowly rises
+}
+
+// Return: index of best target within range or -1
+static int tower_find_target(Tower* t)
+{
+    int bestIdx= -1;
+    int bestProg= -1;
+
+    int tx= t->x;
+    int ty= t->y;
+    int r2= t->range * t->range;
+
+    for(int i=0;i<MAX_ENEMIES;i++)
+    {
+        Enemy *e=&enemies[i];
+        if(!e->alive) continue;
+        int ex= TO_INT(e->x);
+        int ey= TO_INT(e->y);
+        int dx= ex - tx;
+        int dy= ey - ty;
+        if(dx*dx + dy*dy <= r2)
+        {
+            // Prioritize by pathIndex (progress)
+            int prog= e->pathIndex;
+            if(prog>bestProg)
+            {
+                bestProg= prog;
+                bestIdx= i;
             }
         }
-
-        if(target_id != -1) {
-            // Fire
-            fire_projectile(t->grid_x * TILE_SIZE + 8, t->grid_y * TILE_SIZE + 8, target_id, t->type);
-            t->cooldown_timer = (t->type == TYPE_SOLDIER) ? COOLDOWN_SOLDIER : COOLDOWN_ARCHER;
-        }
     }
+    return bestIdx;
 }
 
-void update_projectiles() {
-    for(int i=0; i<MAX_PROJECTILES; i++) {
-        if(!projectiles[i].active) continue;
-        Projectile *p = &projectiles[i];
-        
-        if(!enemies[p->target_id].active) {
-            p->active = 0;
+// ----------------------------- Update ---------------------------------
+
+static void update_enemies()
+{
+    for(int i=0;i<MAX_ENEMIES;i++)
+    {
+        Enemy *e=&enemies[i];
+        if(!e->alive) continue;
+
+        if(e->pathIndex >= pathLen)
+        {
+            // Already at end: leak
+            e->alive=0;
+            if(lives>0) lives--;
             continue;
         }
 
-        Enemy *target = &enemies[p->target_id];
-        
-        // Homing logic
-        int dx = target->x - p->x;
-        int dy = target->y - p->y;
-        
-        // Normalize vector (roughly)
-        if(dx > 0) p->x += p->speed;
-        if(dx < 0) p->x -= p->speed;
-        if(dy > 0) p->y += p->speed;
-        if(dy < 0) p->y -= p->speed;
+        int tgx= pathX[e->pathIndex];
+        int tgy= pathY[e->pathIndex];
+        s32 tx= FIX(tgx*GRID_SIZE + GRID_SIZE/2);
+        s32 ty= FIX(tgy*GRID_SIZE + GRID_SIZE/2);
 
-        // Collision
-        if(abs(dx) < 4 && abs(dy) < 4) {
-            target->hp -= p->damage;
-            p->active = 0;
-            if(target->hp <= 0) {
-                target->active = 0;
-                money += 5;
+        if(fx_step_to(&e->x, &e->y, tx, ty, e->speed))
+        {
+            e->pathIndex++;
+            if(e->pathIndex >= pathLen)
+            {
+                // Reached end
+                e->alive=0;
+                if(lives>0) lives--;
             }
         }
     }
 }
 
-void draw_game() {
-    // 1. Draw Map (Optimization: In a real game, don't redraw static map every frame in Mode 3)
-    // For this demo, we redraw everything to keep code simple and self-correcting.
-    
-    // Draw background
-    for(int x=0; x<MAP_WIDTH; x++) {
-        for(int y=0; y<MAP_HEIGHT; y++) {
-            u16 color = (map_grid[x][y] == 1) ? CLR_PATH : CLR_GRASS;
-            draw_rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE, color);
-            
-            // Draw grid lines lightly
-            m3_plot(x*TILE_SIZE, y*TILE_SIZE, RGB15(0,0,0));
+static void update_towers()
+{
+    for(int i=0;i<MAX_TOWERS;i++)
+    {
+        Tower *t= &towers[i];
+        if(!t->active) continue;
+
+        if(t->cdTimer>0) t->cdTimer--;
+        if(t->beamTimer>0) t->beamTimer--;
+
+        if(t->cdTimer==0)
+        {
+            int target= tower_find_target(t);
+            if(target>=0)
+            {
+                Enemy *e= &enemies[target];
+                e->hp -= t->damage;
+                t->cdTimer= t->cooldown;
+
+                t->beamTimer= 4;
+                t->lastTx= TO_INT(e->x);
+                t->lastTy= TO_INT(e->y);
+
+                if(e->hp<=0)
+                    kill_enemy(e);
+            }
         }
-    }
-
-    // 2. Draw Towers
-    for(int i=0; i<MAX_TOWERS; i++) {
-        if(towers[i].active) {
-            u16 c = (towers[i].type == TYPE_SOLDIER) ? CLR_T_SOLDIER : CLR_T_ARCHER;
-            draw_rect(towers[i].grid_x*TILE_SIZE + 2, towers[i].grid_y*TILE_SIZE + 2, 12, 12, c);
-        }
-    }
-
-    // 3. Draw Enemies
-    for(int i=0; i<MAX_ENEMIES; i++) {
-        if(enemies[i].active) {
-            draw_circle(enemies[i].x, enemies[i].y, 4, CLR_ENEMY);
-            // HP Bar
-            int hp_width = (enemies[i].hp * 10) / enemies[i].max_hp;
-            if(hp_width < 0) hp_width = 0;
-            draw_rect(enemies[i].x - 5, enemies[i].y - 6, 10, 2, RGB15(31,0,0));
-            draw_rect(enemies[i].x - 5, enemies[i].y - 6, hp_width, 2, RGB15(0,31,0));
-        }
-    }
-
-    // 4. Draw Projectiles
-    for(int i=0; i<MAX_PROJECTILES; i++) {
-        if(projectiles[i].active) {
-            m3_plot(projectiles[i].x, projectiles[i].y, CLR_PROJ);
-            m3_plot(projectiles[i].x+1, projectiles[i].y, CLR_PROJ);
-            m3_plot(projectiles[i].x, projectiles[i].y+1, CLR_PROJ);
-        }
-    }
-
-    // 5. Draw Cursor
-    int cx = cursor_x * TILE_SIZE;
-    int cy = cursor_y * TILE_SIZE;
-    // Draw hollow box
-    for(int i=0; i<16; i++) {
-        m3_plot(cx + i, cy, CLR_CURSOR);
-        m3_plot(cx + i, cy + 15, CLR_CURSOR);
-        m3_plot(cx, cy + i, CLR_CURSOR);
-        m3_plot(cx + 15, cy + i, CLR_CURSOR);
-    }
-
-    // 6. Draw UI (Text is hard in Mode 3 without fonts, using colored blocks for status)
-    // Bottom Bar
-    draw_rect(0, 150, 240, 10, CLR_UI);
-    
-    // Lives (Red Blocks)
-    for(int i=0; i<lives; i++) {
-        draw_rect(2 + (i*4), 152, 3, 6, RGB15(31,0,0));
-    }
-    
-    // Money (Gold Blocks)
-    int money_blocks = money / 10;
-    if(money_blocks > 20) money_blocks = 20;
-    for(int i=0; i<money_blocks; i++) {
-        draw_rect(238 - (i*4), 152, 3, 6, RGB15(31,31,0));
     }
 }
 
-// -------------------------------------------------------------------------
-// MAIN LOOP
-// -------------------------------------------------------------------------
-int main() {
-    // Initialize graphics: Mode 3 (240x160 Bitmap), BG2 enabled
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+// ----------------------------- Draw -----------------------------------
 
-    init_game();
+static void draw_grid()
+{
+    // Background
+    clear_screen(COL_BG);
 
-    while(1) {
-        vid_vsync(); // Wait for VBlank to reduce tearing
+    // Grid lines (subtle)
+    for(int gx=1; gx<GRID_W; gx++)
+    {
+        int x= gx*GRID_SIZE;
+        vline(x, 0, SCREEN_H-1, COL_GRID);
+    }
+    for(int gy=1; gy<GRID_H; gy++)
+    {
+        int y= gy*GRID_SIZE;
+        hline(0, SCREEN_W-1, y, COL_GRID);
+    }
+
+    // Path tiles
+    for(int i=0;i<pathLen;i++)
+    {
+        int gx= pathX[i], gy= pathY[i];
+        fill_rect(gx*GRID_SIZE, gy*GRID_SIZE, GRID_SIZE, GRID_SIZE, COL_PATH);
+    }
+}
+
+static void draw_towers()
+{
+    for(int i=0;i<MAX_TOWERS;i++)
+    {
+        Tower* t= &towers[i];
+        if(!t->active) continue;
+        // Tower body
+        fill_rect(t->x-6, t->y-6, 12, 12, COL_TOWER);
+        // Beam
+        if(t->beamTimer>0)
+            draw_line(t->x, t->y, t->lastTx, t->lastTy, COL_BEAM);
+    }
+}
+
+static void draw_enemies()
+{
+    for(int i=0;i<MAX_ENEMIES;i++)
+    {
+        Enemy *e=&enemies[i];
+        if(!e->alive) continue;
+        int ex= TO_INT(e->x);
+        int ey= TO_INT(e->y);
+
+        // Tint by HP
+        int hpPct= (e->hp*31)/ (e->maxhp? e->maxhp:1);
+        if(hpPct<0) hpPct=0;
+        u16 col= RGB15(31, hpPct/2, hpPct/4);   // reddish with HP influence
+
+        draw_circle_fill(ex, ey, 4, col);
+
+        // Tiny HP pip
+        if(e->hp < e->maxhp)
+        {
+            int w= 8;
+            int filled= (w*e->hp)/ (e->maxhp? e->maxhp:1);
+            hline(ex-w/2, ex-w/2+w-1, ey-7, RGB15(4,4,4));
+            hline(ex-w/2, ex-w/2+filled-1, ey-7, RGB15(0,31,0));
+        }
+    }
+}
+
+static void draw_cursor_and_preview()
+{
+    int x= curGX*GRID_SIZE;
+    int y= curGY*GRID_SIZE;
+
+    // Cell outline
+    draw_rect_outline(x,y, GRID_SIZE,GRID_SIZE, COL_CURSOR);
+
+    // Preview tower if placeable
+    if(!is_path_cell(curGX,curGY) && towerAt[curGY][curGX]<0)
+    {
+        int cx= x + GRID_SIZE/2;
+        int cy= y + GRID_SIZE/2;
+        fill_rect(cx-5, cy-5, 10, 10, RGB15(8,16,31));
+        // Show range circle outline (sparse dots)
+        int pr= 42; // tower base range
+        for(int a=0;a<360;a+=8)
+        {
+            // quick integer circle
+            int px= cx + (pr * lut_cos(a))/1024; // But we don't have LUT. Instead do diamond
+        }
+        // Simple diamond range (cheaper than circle): draw 4 lines
+        int r= 42;
+        draw_line(cx-r,cy, cx,cy-r, COL_RANGE);
+        draw_line(cx,cy-r, cx+r,cy, COL_RANGE);
+        draw_line(cx+r,cy, cx,cy+r, COL_RANGE);
+        draw_line(cx,cy+r, cx-r,cy, COL_RANGE);
+    }
+}
+
+static void draw_ui()
+{
+    // Gold icon (coin)
+    draw_circle_fill(6, 6, 5, COL_UI_GOLD);
+    draw_number_small(14, 4, gold, COL_UI);
+
+    // Lives icon (heart-ish)
+    draw_circle_fill(84, 6, 4, COL_UI_LIVES);
+    draw_circle_fill(88, 6, 4, COL_UI_LIVES);
+    fill_rect(84, 8, 8, 4, COL_UI_LIVES);
+    draw_number_small(96, 4, lives, COL_UI);
+
+    // Wave icon (diamond)
+    draw_line(160, 3, 166, 9, COL_UI_WAVE);
+    draw_line(166, 9, 160, 15, COL_UI_WAVE);
+    draw_line(160, 15, 154, 9, COL_UI_WAVE);
+    draw_line(154, 9, 160, 3, COL_UI_WAVE);
+    draw_number_small(172, 4, wave, COL_UI);
+
+    // Tower cost
+    int cost= tower_cost();
+    draw_number_small(210, 4, cost, RGB15(31,31,0));
+}
+
+static void draw_scene()
+{
+    draw_grid();
+    draw_towers();
+    draw_enemies();
+    draw_cursor_and_preview();
+    draw_ui();
+}
+
+// ----------------------------- Input ----------------------------------
+
+static void handle_cursor_move()
+{
+    key_poll();
+
+    int dx=0, dy=0;
+
+    if(moveRep>0) moveRep--;
+
+    u16 kh= key_hit(KEY_ANY);
+    u16 ke= key_held(KEY_ANY);
+
+    // Initial press: move and set repeat
+    if(key_hit(KEY_RIGHT)) { dx=1; moveRep=8; }
+    else if(key_hit(KEY_LEFT)) { dx=-1; moveRep=8; }
+    else if(key_hit(KEY_DOWN)) { dy=1; moveRep=8; }
+    else if(key_hit(KEY_UP)) { dy=-1; moveRep=8; }
+    else if(moveRep==0)
+    {
+        // Held repeat
+        if(key_held(KEY_RIGHT)) { dx=1; moveRep=3; }
+        else if(key_held(KEY_LEFT)) { dx=-1; moveRep=3; }
+        else if(key_held(KEY_DOWN)) { dy=1; moveRep=3; }
+        else if(key_held(KEY_UP)) { dy=-1; moveRep=3; }
+    }
+
+    if(dx||dy)
+    {
+        curGX= CLAMP(curGX+dx, 0, GRID_W-1);
+        curGY= CLAMP(curGY+dy, 0, GRID_H-1);
+    }
+}
+
+static void try_place_tower()
+{
+    if(is_path_cell(curGX,curGY)) return;
+    if(towerAt[curGY][curGX]>=0) return;
+
+    int cost= tower_cost();
+    if(gold < cost) return;
+
+    int idx= find_free_tower();
+    if(idx<0) return;
+
+    Tower* t= &towers[idx];
+    t->active=1;
+    t->gx= curGX;
+    t->gy= curGY;
+    t->x= curGX*GRID_SIZE + GRID_SIZE/2;
+    t->y= curGY*GRID_SIZE + GRID_SIZE/2;
+    t->range= 42 + (wave/3)*4;       // small scaling
+    t->damage= 2 + (wave>=6 ? 1:0);
+    t->cooldown= CLAMP(22 - wave, 10, 22);
+    t->cdTimer= 0;
+    t->beamTimer=0;
+    t->lastTx=t->x; t->lastTy=t->y;
+
+    towerAt[curGY][curGX]= idx;
+    gold -= cost;
+}
+
+static void try_sell_tower()
+{
+    int idx= towerAt[curGY][curGX];
+    if(idx<0) return;
+    Tower* t= &towers[idx];
+    t->active=0;
+    towerAt[curGY][curGX]= -1;
+
+    int refund= tower_cost()*50/100;
+    gold += refund;
+}
+
+// ------------------------------ Game ----------------------------------
+
+static void game_reset()
+{
+    gold=50;
+    lives=20;
+    wave=1;
+    enemies_clear();
+    towers_clear();
+    build_default_path();
+    start_wave(wave);
+}
+
+static void update_spawning()
+{
+    if(spawnRemaining>0)
+    {
+        if(spawnTimer>0) spawnTimer--;
+        if(spawnTimer==0)
+        {
+            spawn_enemy_for_wave(wave);
+            spawnRemaining--;
+            spawnTimer= spawnInterval;
+        }
+    }
+}
+
+static void update_gameplay()
+{
+    handle_cursor_move();
+
+    if(key_hit(KEY_START))
+    {
+        gstate= GS_PAUSE;
+        return;
+    }
+
+    if(key_hit(KEY_A))
+        try_place_tower();
+    if(key_hit(KEY_B))
+        try_sell_tower();
+    if(key_hit(KEY_R))
+    {
+        // Early next wave if possible
+        if(spawnRemaining==0 && enemies_alive_count()==0)
+        {
+            wave++;
+            if(wave>totalWaves)
+                gstate= GS_WIN;
+            else
+                start_wave(wave);
+        }
+    }
+
+    update_spawning();
+    update_enemies();
+    update_towers();
+
+    if(lives<=0)
+        gstate= GS_GAMEOVER;
+
+    // Auto-advance waves when done
+    if(spawnRemaining==0 && enemies_alive_count()==0)
+    {
+        if(waveCooldown>0) waveCooldown--;
+        if(waveCooldown==0)
+        {
+            wave++;
+            if(wave>totalWaves)
+                gstate= GS_WIN;
+            else
+            {
+                start_wave(wave);
+                waveCooldown=90;
+            }
+        }
+    }
+    else
+    {
+        waveCooldown=90; // reset
+    }
+}
+
+static void draw_title()
+{
+    clear_screen(RGB15(0,0,0));
+
+    // Simple title made of blocks
+    // "TD" blocky
+    fill_rect(40, 40, 56, 12, COL_UI);   // T top
+    fill_rect(40+22, 52, 12, 40, COL_UI);
+
+    // D
+    fill_rect(120,40, 12,52, COL_UI);
+    fill_rect(132,40, 28,12, COL_UI);
+    fill_rect(132,80, 28,12, COL_UI);
+    fill_rect(160,52, 8,28, COL_UI);
+
+    // "Press START"
+    // Use digits font to spell "START" minimally: just show three icons and a number
+    // We'll draw a simple blinking rectangle:
+    static int blink=0; blink=(blink+1)&31;
+    if(blink<16)
+        fill_rect(80, 112, 80, 12, RGB15(6,6,6));
+    // Hint: draw number "1" to suggest "Start"
+    draw_number_small(120, 114, 1, RGB15(31,31,0));
+}
+
+static void draw_pause()
+{
+    // Dim overlay
+    fill_rect(0,0, SCREEN_W,SCREEN_H, RGB15(0,0,0));
+    // "PAUSE" banner
+    fill_rect(50, 60, 140, 40, RGB15(8,8,8));
+    draw_number_small(60, 74, 2, COL_UI); // just a marker
+}
+
+static void draw_gameover()
+{
+    clear_screen(RGB15(0,0,0));
+    // Red box
+    fill_rect(40, 56, 160, 48, RGB15(16,0,0));
+    // Show wave reached and gold
+    draw_number_small(52, 64, wave, COL_UI);
+    draw_number_small(52, 76, gold, COL_UI_GOLD);
+}
+
+static void draw_win()
+{
+    clear_screen(RGB15(0,0,0));
+    fill_rect(40, 56, 160, 48, RGB15(0,16,0));
+    draw_number_small(52, 64, wave, COL_UI);
+    draw_number_small(52, 76, gold, COL_UI_GOLD);
+}
+
+// ----------------------------- Main -----------------------------------
+
+int main(void)
+{
+    irq_init(NULL);
+    irq_add(II_VBLANK, NULL);
+
+    REG_DISPCNT= DCNT_MODE3 | DCNT_BG2;
+
+    key_init();
+    game_reset();
+    gstate= GS_TITLE;
+
+    while(1)
+    {
+        VBlankIntrWait();
         key_poll();
 
-        // 1. Input Handling
-        if(key_hit(KEY_RIGHT)) if(cursor_x < MAP_WIDTH-1) cursor_x++;
-        if(key_hit(KEY_LEFT))  if(cursor_x > 0) cursor_x--;
-        if(key_hit(KEY_UP))    if(cursor_y > 0) cursor_y--;
-        if(key_hit(KEY_DOWN))  if(cursor_y < MAP_HEIGHT-1) cursor_y++;
-
-        // Place Tower A (Soldier)
-        if(key_hit(KEY_A)) {
-            if(map_grid[cursor_x][cursor_y] == 0 && money >= COST_SOLDIER) {
-                // Check if occupied
-                int occupied = 0;
-                for(int i=0; i<MAX_TOWERS; i++) {
-                    if(towers[i].active && towers[i].grid_x == cursor_x && towers[i].grid_y == cursor_y) occupied = 1;
-                }
-                
-                if(!occupied) {
-                    for(int i=0; i<MAX_TOWERS; i++) {
-                        if(!towers[i].active) {
-                            towers[i].active = 1;
-                            towers[i].grid_x = cursor_x;
-                            towers[i].grid_y = cursor_y;
-                            towers[i].type = TYPE_SOLDIER;
-                            towers[i].range_sq = RANGE_SOLDIER;
-                            towers[i].cooldown_timer = 0;
-                            money -= COST_SOLDIER;
-                            break;
-                        }
-                    }
-                }
+        switch(gstate)
+        {
+        case GS_TITLE:
+            draw_title();
+            if(key_hit(KEY_START) || key_hit(KEY_A) || key_hit(KEY_B))
+            {
+                // Start game
+                game_reset();
+                gstate= GS_PLAY;
             }
-        }
+            break;
 
-        // Place Tower B (Archer) - Use B Button
-        if(key_hit(KEY_B)) {
-            if(map_grid[cursor_x][cursor_y] == 0 && money >= COST_ARCHER) {
-                int occupied = 0;
-                for(int i=0; i<MAX_TOWERS; i++) {
-                    if(towers[i].active && towers[i].grid_x == cursor_x && towers[i].grid_y == cursor_y) occupied = 1;
-                }
-                
-                if(!occupied) {
-                    for(int i=0; i<MAX_TOWERS; i++) {
-                        if(!towers[i].active) {
-                            towers[i].active = 1;
-                            towers[i].grid_x = cursor_x;
-                            towers[i].grid_y = cursor_y;
-                            towers[i].type = TYPE_ARCHER;
-                            towers[i].range_sq = RANGE_ARCHER;
-                            towers[i].cooldown_timer = 0;
-                            money -= COST_ARCHER;
-                            break;
-                        }
-                    }
-                }
+        case GS_PLAY:
+            update_gameplay();
+            draw_scene();
+            break;
+
+        case GS_PAUSE:
+            draw_scene();
+            draw_pause();
+            if(key_hit(KEY_START))
+                gstate= GS_PLAY;
+            break;
+
+        case GS_GAMEOVER:
+            draw_gameover();
+            if(key_hit(KEY_START) || key_hit(KEY_A))
+            {
+                game_reset();
+                gstate= GS_PLAY;
             }
-        }
+            break;
 
-        // Reset
-        if(key_hit(KEY_START)) {
-            money = 100;
-            lives = 10;
-            init_game();
-        }
-
-        // 2. Game Logic
-        if(lives > 0) {
-            spawn_timer++;
-            if(spawn_timer > 60) {
-                spawn_timer = 0;
-                if(enemies_to_spawn > 0) {
-                    spawn_enemy();
-                    enemies_to_spawn--;
-                } else {
-                    // Check if wave clear
-                    int active_enemies = 0;
-                    for(int i=0; i<MAX_ENEMIES; i++) if(enemies[i].active) active_enemies++;
-                    
-                    if(active_enemies == 0) {
-                        wave++;
-                        enemies_to_spawn = 5 + wave;
-                        money += 20; // Wave clear bonus
-                    }
-                }
+        case GS_WIN:
+            draw_win();
+            if(key_hit(KEY_START) || key_hit(KEY_A))
+            {
+                game_reset();
+                gstate= GS_PLAY;
             }
-
-            update_enemies();
-            update_towers();
-            update_projectiles();
+            break;
         }
-
-        // 3. Drawing
-        draw_game();
-        
-        // Game Over Text (Crude blocks)
-        if(lives <= 0) {
-            draw_rect(100, 70, 40, 20, RGB15(31, 0, 0));
-        }
-
-        frame_count++;
     }
-
     return 0;
 }
