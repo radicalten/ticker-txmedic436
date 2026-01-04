@@ -12,11 +12,11 @@
 // Colors
 #define CLR_EMPTY    CL_BLACK
 #define CLR_WALL     CL_GRAY
-#define C_RED        1
-#define C_GREEN      2
-#define C_BLUE       3
-#define C_YELLOW     4
-#define C_PURPLE     5
+#define CLR_RED        1
+#define CLR_GREEN      2
+#define CLR_BLUE       3
+#define CLR_YELLOW     4
+#define CLR_PURPLE     5
 
 // --- Global State ---
 u8 grid[GRID_H][GRID_W];
@@ -37,7 +37,7 @@ bool isResolving = false; // True if chains/gravity are animating
 
 // Puyo Colors Mapped to Tonc Colors
 const u16 puyo_colors[] = { 
-    CL_BLACK, CL_RED, CL_LIME, CL_BLUE, CL_YELLOW, CL_MAGENTA 
+    CLR_BLACK, CLR_RED, CLR_LIME, CLR_BLUE, CLR_YELLOW, CLR_MAG 
 };
 
 // --- Helper Functions ---
