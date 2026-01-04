@@ -52,29 +52,6 @@ int resolve_timer = 0;
 
 /* --- DRAWING FUNCTIONS --- */
 
-// Draw a filled rectangle in Mode 3
-void draw_rect(int x, int y, int w, int h, u16 color) {
-    for (int iy = 0; iy < h; iy++) {
-        for (int ix = 0; ix < w; ix++) {
-            m3_mem[((y + iy) * 240) + (x + ix)] = color;
-        }
-    }
-}
-
-// Draw a hollow rectangle (for the cursor)
-void draw_frame(int x, int y, int w, int h, u16 color) {
-    // Top & Bottom
-    for(int ix=0; ix<w; ix++) {
-        m3_mem[(y * 240) + (x + ix)] = color;
-        m3_mem[((y + h - 1) * 240) + (x + ix)] = color;
-    }
-    // Left & Right
-    for(int iy=0; iy<h; iy++) {
-        m3_mem[((y + iy) * 240) + x] = color;
-        m3_mem[((y + iy) * 240) + (x + w - 1)] = color;
-    }
-}
-
 void draw_game() {
     // 1. Draw the board blocks
     for (int y = 0; y < GRID_H; y++) {
