@@ -103,13 +103,6 @@ static int rand_int(int max)
 // Drawing helpers (Mode 3)
 // -----------------------------------------------------------------------------
 
-static void clear_screen(u16 color)
-{
-    u16 *dst = (u16*)VRAM;
-    for (int i = 0; i < SCREEN_WIDTH*SCREEN_HEIGHT; i++)
-        dst[i] = color;
-}
-
 static void draw_rect_filled(int x, int y, int w, int h, u16 color)
 {
     if (w <= 0 || h <= 0) return;
