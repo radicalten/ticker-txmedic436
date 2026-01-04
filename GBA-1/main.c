@@ -2,10 +2,11 @@
 // Simple single-file Panel de Pon / Puzzle League–style game for GBA using tonc.
 //
 // Mode 3 bitmap, no sprites or sound.
-// Uses tonc for REGs, RGB15, input, etc.
+// Uses tonc for REGs, RGB15_C, input, etc.
 
 #include <tonc.h>
 #include <stdbool.h>
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
 
 // -----------------------------------------------------------------------------
 // Config
@@ -26,10 +27,10 @@
 #define RAISE_DELAY    90        // frames per automatic raise (~1.5s at 60fps)
 
 // Colors
-#define COLOR_BG       RGB15(0, 0, 2)
-#define COLOR_CELL_BG  RGB15(3, 3, 5)
-#define COLOR_CURSOR   RGB15(31, 31, 31)
-#define COLOR_GAME_OVER_BORDER RGB15(31, 0, 0)
+#define COLOR_BG       RGB15_C(0, 0, 2)
+#define COLOR_CELL_BG  RGB15_C(3, 3, 5)
+#define COLOR_CURSOR   RGB15_C(31, 31, 31)
+#define COLOR_GAME_OVER_BORDER RGB15_C(31, 0, 0)
 
 // -----------------------------------------------------------------------------
 // Globals
@@ -45,12 +46,12 @@ static u32 rng_state = 1;
 // Block color table (index 0 unused/empty)
 static const u16 block_colors[NUM_COLORS+1] =
 {
-    RGB15(0, 0, 0),        // 0: empty (not actually used for drawing)
-    RGB15(31, 0, 0),       // 1: red
-    RGB15(0, 31, 0),       // 2: green
-    RGB15(0, 0, 31),       // 3: blue
-    RGB15(31, 31, 0),      // 4: yellow
-    RGB15(31, 0, 31)       // 5: magenta
+    RGB15_C(0, 0, 0),        // 0: empty (not actually used for drawing)
+    RGB15_C(31, 0, 0),       // 1: red
+    RGB15_C(0, 31, 0),       // 2: green
+    RGB15_C(0, 0, 31),       // 3: blue
+    RGB15_C(31, 31, 0),      // 4: yellow
+    RGB15_C(31, 0, 31)       // 5: magenta
 };
 
 // -----------------------------------------------------------------------------
