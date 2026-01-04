@@ -10,13 +10,8 @@
 #define DROP_SPEED   30    // Frames per gravity tick (lower = faster)
 
 // Colors
-#define CLR_EMPTY    CL_BLACK
-#define CLR_WALL     CL_GRAY
-#define CLR_RED        1
-#define CLR_GREEN      2
-#define CLR_BLUE       3
-#define CLR_YELLOW     4
-#define CLR_PURPLE     5
+#define CLR_EMPTY    CLR_BLACK
+#define CLR_WALL     CLR_GRAY
 
 // --- Global State ---
 u8 grid[GRID_H][GRID_W];
@@ -259,12 +254,12 @@ void update() {
 
 void draw() {
     // Clear Field area
-    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CL_BLACK);
+    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CLR_BLACK);
     
     // Draw Border
-    draw_rect(FIELD_X-1, FIELD_Y-1, (GRID_W*BLOCK_SIZE)+2, (GRID_H*BLOCK_SIZE)+2, CL_WHITE);
+    draw_rect(FIELD_X-1, FIELD_Y-1, (GRID_W*BLOCK_SIZE)+2, (GRID_H*BLOCK_SIZE)+2, CLR_WHITE);
     // Redraw inner black to clear previous frame mess (lazy clearing)
-    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CL_BLACK);
+    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CLR_BLACK);
 
     // Draw Static Grid
     for(int y=0; y<GRID_H; y++) {
@@ -287,10 +282,10 @@ void draw() {
     // Draw a bar at the bottom representing score
     int barLen = (score / 10);
     if(barLen > 240) barLen = 240;
-    draw_rect(0, 150, barLen, 5, CL_LIME);
+    draw_rect(0, 150, barLen, 5, CLR_LIME);
 
     if(gameOver) {
-        draw_rect(FIELD_X + 10, FIELD_Y + 50, 50, 20, CL_RED); // "Game Over" box
+        draw_rect(FIELD_X + 10, FIELD_Y + 50, 50, 20, CLR_RED); // "Game Over" box
     }
 }
 
