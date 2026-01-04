@@ -1,512 +1,316 @@
-//======================================================================
-// Puyo Puyo GBA - Single File Implementation using TONC
-// Build with: make (using a standard GBA Makefile with TONC)
-//======================================================================
-
 #include <tonc.h>
-#include <string.h>
+#include <stdlib.h>
 
-//----------------------------------------------------------------------
-// Constants
-//----------------------------------------------------------------------
-#define BOARD_W     6
-#define BOARD_H     12
-#define CELL_SIZE   8
-#define BOARD_X     11      // Screen tile offset X
-#define BOARD_Y     2       // Screen tile offset Y
+// --- Constants & Config ---
+#define FIELD_X      80    // Screen X offset
+#define FIELD_Y      8     // Screen Y offset
+#define GRID_W       6     // Columns
+#define GRID_H       12    // Rows
+#define BLOCK_SIZE   12    // Pixel size of one block
+#define DROP_SPEED   30    // Frames per gravity tick (lower = faster)
 
-#define EMPTY       0
-#define NUM_COLORS  4
+// Colors
+#define CLR_EMPTY    CL_BLACK
+#define CLR_WALL     CL_GRAY
+#define C_RED        1
+#define C_GREEN      2
+#define C_BLUE       3
+#define C_YELLOW     4
+#define C_PURPLE     5
 
-// Game states
-enum {
-    ST_FALLING,
-    ST_LOCK_DELAY,
-    ST_DROPPING,
-    ST_CHECKING,
-    ST_POPPING,
-    ST_GAMEOVER
+// --- Global State ---
+u8 grid[GRID_H][GRID_W];
+u8 visited[GRID_H][GRID_W]; // For flood fill logic
+
+typedef struct {
+    int x, y;       // Grid coordinates of the MAIN puyo
+    int rot;        // 0=Up, 1=Right, 2=Down, 3=Left (Sub puyo relative to Main)
+    u8 cMain;       // Color of main puyo
+    u8 cSub;        // Color of sub puyo
+    int timer;      // Gravity timer
+} Player;
+
+Player p;
+int score = 0;
+bool gameOver = false;
+bool isResolving = false; // True if chains/gravity are animating
+
+// Puyo Colors Mapped to Tonc Colors
+const u16 puyo_colors[] = { 
+    CL_BLACK, CL_RED, CL_LIME, CL_BLUE, CL_YELLOW, CL_MAGENTA 
 };
 
-//----------------------------------------------------------------------
-// Structures
-//----------------------------------------------------------------------
-typedef struct {
-    int x1, y1;     // Main puyo position
-    int x2, y2;     // Sub puyo position
-    int c1, c2;     // Colors
-    int rot;        // Rotation state (0-3)
-} FallingPair;
+// --- Helper Functions ---
 
-//----------------------------------------------------------------------
-// Globals
-//----------------------------------------------------------------------
-static u8 board[BOARD_H][BOARD_W];
-static u8 mark[BOARD_H][BOARD_W];
-static FallingPair fall;
-static int nextC1, nextC2;
-
-static int state;
-static int fallTimer;
-static int fallSpeed;
-static int lockTimer;
-static int popTimer;
-static int chain;
-static u32 score;
-static u32 randState;
-
-//----------------------------------------------------------------------
-// Random number generator
-//----------------------------------------------------------------------
-static u32 randNext(void) {
-    randState = randState * 1664525u + 1013904223u;
-    return randState;
-}
-
-static int randColor(void) {
-    return (randNext() % NUM_COLORS) + 1;
-}
-
-//----------------------------------------------------------------------
-// Board helpers
-//----------------------------------------------------------------------
-static int inBounds(int x, int y) {
-    return x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
-}
-
-static int isEmpty(int x, int y) {
-    if (y < 0) return 1;  // Above board is empty
-    if (x < 0 || x >= BOARD_W || y >= BOARD_H) return 0;
-    return board[y][x] == EMPTY;
-}
-
-//----------------------------------------------------------------------
-// Spawn and rotation
-//----------------------------------------------------------------------
-static void calcSubPos(int x1, int y1, int rot, int *x2, int *y2) {
-    // rot: 0=up, 1=right, 2=down, 3=left
-    const int dx[] = { 0, 1, 0, -1 };
-    const int dy[] = { -1, 0, 1, 0 };
-    *x2 = x1 + dx[rot];
-    *y2 = y1 + dy[rot];
-}
-
-static int canPlace(int x1, int y1, int x2, int y2) {
-    return isEmpty(x1, y1) && isEmpty(x2, y2);
-}
-
-static void spawnPair(void) {
-    fall.x1 = 2;
-    fall.y1 = 0;
-    fall.rot = 0;
-    fall.c1 = nextC1;
-    fall.c2 = nextC2;
-    calcSubPos(fall.x1, fall.y1, fall.rot, &fall.x2, &fall.y2);
-    
-    nextC1 = randColor();
-    nextC2 = randColor();
-    
-    // Check game over
-    if (!isEmpty(fall.x1, fall.y1)) {
-        state = ST_GAMEOVER;
-    }
-}
-
-static void tryRotate(int dir) {
-    int newRot = (fall.rot + dir + 4) % 4;
-    int nx2, ny2;
-    calcSubPos(fall.x1, fall.y1, newRot, &nx2, &ny2);
-    
-    // Try normal rotation
-    if (canPlace(fall.x1, fall.y1, nx2, ny2)) {
-        fall.rot = newRot;
-        fall.x2 = nx2;
-        fall.y2 = ny2;
-        return;
-    }
-    
-    // Wall kick: try shifting
-    int kicks[] = { -1, 1, 0 };
-    for (int i = 0; i < 2; i++) {
-        int kx = fall.x1 + kicks[i];
-        int kx2, ky2;
-        calcSubPos(kx, fall.y1, newRot, &kx2, &ky2);
-        if (canPlace(kx, fall.y1, kx2, ky2)) {
-            fall.x1 = kx;
-            fall.rot = newRot;
-            fall.x2 = kx2;
-            fall.y2 = ky2;
-            return;
-        }
-    }
-    
-    // Floor kick for upward rotation
-    if (newRot == 0) {
-        int ny1 = fall.y1 - 1;
-        calcSubPos(fall.x1, ny1, newRot, &nx2, &ny2);
-        if (canPlace(fall.x1, ny1, nx2, ny2)) {
-            fall.y1 = ny1;
-            fall.rot = newRot;
-            fall.x2 = nx2;
-            fall.y2 = ny2;
+// Draw a simple filled rectangle in Mode 3
+void draw_rect(int x, int y, int w, int h, u16 color) {
+    for(int iy=0; iy<h; iy++) {
+        for(int ix=0; ix<w; ix++) {
+            m3_plot(x+ix, y+iy, color);
         }
     }
 }
 
-static void tryMove(int dx) {
-    int nx1 = fall.x1 + dx;
-    int nx2 = fall.x2 + dx;
-    if (canPlace(nx1, fall.y1, nx2, fall.y2)) {
-        fall.x1 = nx1;
-        fall.x2 = nx2;
-    }
+void draw_block(int gx, int gy, u8 colorIdx) {
+    int x = FIELD_X + (gx * BLOCK_SIZE);
+    int y = FIELD_Y + (gy * BLOCK_SIZE);
+    // Draw slightly smaller to show grid lines
+    draw_rect(x, y, BLOCK_SIZE-1, BLOCK_SIZE-1, puyo_colors[colorIdx]);
 }
 
-static int canFall(void) {
-    return isEmpty(fall.x1, fall.y1 + 1) && isEmpty(fall.x2, fall.y2 + 1);
-}
-
-//----------------------------------------------------------------------
-// Lock and gravity
-//----------------------------------------------------------------------
-static void lockPair(void) {
-    // Drop main puyo
-    int y = fall.y1;
-    while (y + 1 < BOARD_H && board[y + 1][fall.x1] == EMPTY) y++;
-    if (y >= 0 && y < BOARD_H) board[y][fall.x1] = fall.c1;
-    
-    // Drop sub puyo
-    y = fall.y2;
-    while (y + 1 < BOARD_H && board[y + 1][fall.x2] == EMPTY) y++;
-    if (y >= 0 && y < BOARD_H) board[y][fall.x2] = fall.c2;
-    
-    chain = 0;
-    state = ST_DROPPING;
-}
-
-static int applyGravity(void) {
-    int moved = 0;
-    for (int x = 0; x < BOARD_W; x++) {
-        for (int y = BOARD_H - 2; y >= 0; y--) {
-            if (board[y][x] != EMPTY && board[y + 1][x] == EMPTY) {
-                int ny = y;
-                while (ny + 1 < BOARD_H && board[ny + 1][x] == EMPTY) ny++;
-                board[ny][x] = board[y][x];
-                board[y][x] = EMPTY;
-                moved = 1;
-            }
+void init_game() {
+    // Reset Grid
+    for(int y=0; y<GRID_H; y++) {
+        for(int x=0; x<GRID_W; x++) {
+            grid[y][x] = 0;
         }
     }
-    return moved;
-}
-
-//----------------------------------------------------------------------
-// Match detection (flood fill)
-//----------------------------------------------------------------------
-static int floodCount(int x, int y, int color, u8 visited[BOARD_H][BOARD_W]) {
-    if (!inBounds(x, y) || visited[y][x] || board[y][x] != color)
-        return 0;
-    visited[y][x] = 1;
-    return 1 + floodCount(x+1, y, color, visited)
-             + floodCount(x-1, y, color, visited)
-             + floodCount(x, y+1, color, visited)
-             + floodCount(x, y-1, color, visited);
-}
-
-static void floodMark(int x, int y, int color) {
-    if (!inBounds(x, y) || mark[y][x] || board[y][x] != color)
-        return;
-    mark[y][x] = 1;
-    floodMark(x+1, y, color);
-    floodMark(x-1, y, color);
-    floodMark(x, y+1, color);
-    floodMark(x, y-1, color);
-}
-
-static int checkMatches(void) {
-    u8 visited[BOARD_H][BOARD_W] = {0};
-    memset(mark, 0, sizeof(mark));
-    int found = 0;
-    
-    for (int y = 0; y < BOARD_H; y++) {
-        for (int x = 0; x < BOARD_W; x++) {
-            if (board[y][x] != EMPTY && !visited[y][x]) {
-                int col = board[y][x];
-                u8 temp[BOARD_H][BOARD_W];
-                memcpy(temp, visited, sizeof(temp));
-                int cnt = floodCount(x, y, col, temp);
-                if (cnt >= 4) {
-                    floodMark(x, y, col);
-                    found = 1;
-                }
-                memcpy(visited, temp, sizeof(visited));
-            }
-        }
-    }
-    return found;
-}
-
-static void removeMarked(void) {
-    int cnt = 0;
-    for (int y = 0; y < BOARD_H; y++) {
-        for (int x = 0; x < BOARD_W; x++) {
-            if (mark[y][x]) {
-                board[y][x] = EMPTY;
-                cnt++;
-            }
-        }
-    }
-    chain++;
-    score += cnt * 10 * chain * chain;
-}
-
-//----------------------------------------------------------------------
-// Graphics setup
-//----------------------------------------------------------------------
-
-// Simple 8x8 tile patterns (4bpp = 32 bytes per tile)
-static void createTile(int idx, u8 colorIdx) {
-    u32 fill = colorIdx * 0x11111111u;
-    for (int i = 0; i < 8; i++) {
-        tile_mem[0][idx].data[i] = fill;
-    }
-}
-
-// Create a puyo tile with border
-static void createPuyoTile(int idx, u8 colorIdx) {
-    u32 fill = colorIdx * 0x11111111u;
-    u32 dark = (colorIdx == 0) ? 0 : ((colorIdx) * 0x11111111u);
-    
-    // Simple filled square - could be enhanced with shading
-    for (int i = 0; i < 8; i++) {
-        tile_mem[0][idx].data[i] = fill;
-    }
-    // Add simple border effect
-    tile_mem[0][idx].data[0] = dark;
-    tile_mem[0][idx].data[7] = dark;
-}
-
-static void initGraphics(void) {
-    // Video mode 0, BG0 enabled
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-    
-    // BG0: charblock 0, screenblock 31
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
-    
-    // Set up palette
-    pal_bg_mem[0]  = RGB15(1, 1, 2);      // BG color (dark blue)
-    pal_bg_mem[1]  = RGB15(31, 6, 6);     // Red puyo
-    pal_bg_mem[2]  = RGB15(6, 31, 6);     // Green puyo
-    pal_bg_mem[3]  = RGB15(6, 10, 31);    // Blue puyo
-    pal_bg_mem[4]  = RGB15(31, 31, 6);    // Yellow puyo
-    pal_bg_mem[5]  = RGB15(3, 3, 8);      // Board BG
-    pal_bg_mem[6]  = RGB15(18, 18, 22);   // Border
-    pal_bg_mem[7]  = RGB15(31, 31, 31);   // White (text)
-    pal_bg_mem[8]  = RGB15(20, 4, 4);     // Dark red
-    pal_bg_mem[9]  = RGB15(4, 20, 4);     // Dark green
-    pal_bg_mem[10] = RGB15(4, 6, 20);     // Dark blue
-    pal_bg_mem[11] = RGB15(20, 20, 4);    // Dark yellow
-    pal_bg_mem[12] = RGB15(10, 10, 10);   // Gray
-    
-    // Create tiles
-    createTile(0, 0);   // Empty
-    createPuyoTile(1, 1);  // Red
-    createPuyoTile(2, 2);  // Green
-    createPuyoTile(3, 3);  // Blue
-    createPuyoTile(4, 4);  // Yellow
-    createTile(5, 5);   // Board BG
-    createTile(6, 6);   // Border
-    createTile(7, 7);   // White block
-    createTile(8, 12);  // Gray block
-    
-    // Clear screen map
-    memset16(&se_mem[31][0], 0, 32*32);
-}
-
-//----------------------------------------------------------------------
-// Drawing
-//----------------------------------------------------------------------
-static void drawBoard(void) {
-    // Draw border
-    for (int y = 0; y <= BOARD_H + 1; y++) {
-        se_mem[31][(BOARD_Y + y) * 32 + BOARD_X - 1] = 6;
-        se_mem[31][(BOARD_Y + y) * 32 + BOARD_X + BOARD_W] = 6;
-    }
-    for (int x = 0; x < BOARD_W; x++) {
-        se_mem[31][(BOARD_Y + BOARD_H + 1) * 32 + BOARD_X + x] = 6;
-    }
-    
-    // Draw board contents
-    for (int y = 0; y < BOARD_H; y++) {
-        for (int x = 0; x < BOARD_W; x++) {
-            int tile = 5;  // Board background
-            if (board[y][x] != EMPTY) {
-                tile = board[y][x];
-                // Flash during pop
-                if (state == ST_POPPING && mark[y][x]) {
-                    tile = ((popTimer >> 2) & 1) ? 0 : board[y][x];
-                }
-            }
-            se_mem[31][(BOARD_Y + y) * 32 + BOARD_X + x] = tile;
-        }
-    }
-    
-    // Draw falling pair
-    if (state == ST_FALLING || state == ST_LOCK_DELAY) {
-        if (fall.y1 >= 0) {
-            se_mem[31][(BOARD_Y + fall.y1) * 32 + BOARD_X + fall.x1] = fall.c1;
-        }
-        if (fall.y2 >= 0) {
-            se_mem[31][(BOARD_Y + fall.y2) * 32 + BOARD_X + fall.x2] = fall.c2;
-        }
-    }
-    
-    // Draw next piece preview
-    int nx = BOARD_X + BOARD_W + 2;
-    int ny = BOARD_Y + 1;
-    se_mem[31][ny * 32 + nx] = nextC2;
-    se_mem[31][(ny + 1) * 32 + nx] = nextC1;
-    
-    // Draw score indicator (chain count as blocks)
-    for (int i = 0; i < 8; i++) {
-        int tile = (i < chain) ? 7 : 8;
-        se_mem[31][(BOARD_Y + BOARD_H) * 32 + nx + i] = tile;
-    }
-}
-
-static void drawGameOver(void) {
-    // Simple X pattern in center of board
-    int cx = BOARD_X + BOARD_W / 2;
-    int cy = BOARD_Y + BOARD_H / 2;
-    for (int i = -2; i <= 2; i++) {
-        se_mem[31][(cy + i) * 32 + cx + i] = 1;
-        se_mem[31][(cy + i) * 32 + cx - i] = 1;
-    }
-}
-
-//----------------------------------------------------------------------
-// Game logic update
-//----------------------------------------------------------------------
-static void initGame(void) {
-    memset(board, EMPTY, sizeof(board));
-    memset(mark, 0, sizeof(mark));
-    
-    randState = 12345;  // Could seed from timer
-    nextC1 = randColor();
-    nextC2 = randColor();
-    
-    state = ST_FALLING;
-    fallTimer = 0;
-    fallSpeed = 40;  // Frames per drop
-    lockTimer = 0;
-    popTimer = 0;
-    chain = 0;
     score = 0;
-    
-    spawnPair();
+    gameOver = false;
+    isResolving = false;
 }
 
-static void updateGame(void) {
-    key_poll();
-    
-    switch (state) {
-    case ST_FALLING:
-        // Input handling
-        if (key_hit(KEY_LEFT))  tryMove(-1);
-        if (key_hit(KEY_RIGHT)) tryMove(1);
-        if (key_hit(KEY_A))     tryRotate(1);
-        if (key_hit(KEY_B))     tryRotate(-1);
-        if (key_hit(KEY_UP))    tryRotate(1);
-        
-        // Faster drop
-        if (key_is_down(KEY_DOWN)) fallTimer += 5;
-        
-        // Auto-fall
-        fallTimer++;
-        if (fallTimer >= fallSpeed) {
-            fallTimer = 0;
-            if (canFall()) {
-                fall.y1++;
-                fall.y2++;
-            } else {
-                lockTimer = 20;
-                state = ST_LOCK_DELAY;
-            }
-        }
-        break;
-        
-    case ST_LOCK_DELAY:
-        // Allow last-second moves
-        if (key_hit(KEY_LEFT))  tryMove(-1);
-        if (key_hit(KEY_RIGHT)) tryMove(1);
-        if (key_hit(KEY_A))     tryRotate(1);
-        if (key_hit(KEY_B))     tryRotate(-1);
-        
-        if (canFall()) {
-            state = ST_FALLING;
-        } else {
-            lockTimer--;
-            if (lockTimer <= 0 || key_is_down(KEY_DOWN)) {
-                lockPair();
-            }
-        }
-        break;
-        
-    case ST_DROPPING:
-        if (!applyGravity()) {
-            state = ST_CHECKING;
-        }
-        break;
-        
-    case ST_CHECKING:
-        if (checkMatches()) {
-            popTimer = 25;
-            state = ST_POPPING;
-        } else {
-            spawnPair();
-            if (state != ST_GAMEOVER) {
-                state = ST_FALLING;
-                fallTimer = 0;
-            }
-        }
-        break;
-        
-    case ST_POPPING:
-        popTimer--;
-        if (popTimer <= 0) {
-            removeMarked();
-            state = ST_DROPPING;
-        }
-        break;
-        
-    case ST_GAMEOVER:
-        if (key_hit(KEY_START)) {
-            initGame();
-        }
-        break;
+void spawn_piece() {
+    p.x = 2; 
+    p.y = 0; // Start at top
+    p.rot = 0; // Sub is above Main
+    p.cMain = (qran_range(1, 6)); // Random color 1-5
+    p.cSub  = (qran_range(1, 6)); 
+    p.timer = 0;
+
+    // Game Over check: if spawn point blocked
+    if(grid[p.y][p.x] != 0) gameOver = true;
+}
+
+// Get coordinates of the Sub Puyo based on rotation
+void get_sub_coords(int mx, int my, int rot, int *sx, int *sy) {
+    *sx = mx; *sy = my;
+    switch(rot) {
+        case 0: (*sy)--; break; // Top
+        case 1: (*sx)++; break; // Right
+        case 2: (*sy)++; break; // Bottom
+        case 3: (*sx)--; break; // Left
     }
 }
 
-//----------------------------------------------------------------------
-// Main
-//----------------------------------------------------------------------
-int main(void) {
-    // Set up interrupts for VBlank
-    irq_init(NULL);
-    irq_enable(II_VBLANK);
+// Check if a coordinate is valid and empty
+bool can_move(int x, int y) {
+    if(x < 0 || x >= GRID_W) return false;
+    if(y < 0 || y >= GRID_H) return false;
+    if(grid[y][x] != 0) return false;
+    return true;
+}
+
+// --- Logic: Chain Reaction & Gravity ---
+
+// Recursive flood fill to count connected blocks
+int count_connected(int x, int y, u8 color) {
+    if(x<0 || x>=GRID_W || y<0 || y>=GRID_H) return 0;
+    if(visited[y][x] || grid[y][x] != color) return 0;
+
+    visited[y][x] = 1;
+    int count = 1;
+    count += count_connected(x+1, y, color);
+    count += count_connected(x-1, y, color);
+    count += count_connected(x, y+1, color);
+    count += count_connected(x, y-1, color);
+    return count;
+}
+
+// Helper to remove marked blocks
+void remove_connected(int x, int y, u8 color) {
+    if(x<0 || x>=GRID_W || y<0 || y>=GRID_H) return;
+    if(grid[y][x] != color) return;
+
+    grid[y][x] = 0; // Remove
+    remove_connected(x+1, y, color);
+    remove_connected(x-1, y, color);
+    remove_connected(x, y+1, color);
+    remove_connected(x, y-1, color);
+}
+
+// Returns true if changes happened (gravity or pops)
+bool resolve_board() {
+    bool changed = false;
+
+    // 1. Gravity: Pull blocks down
+    for(int x=0; x<GRID_W; x++) {
+        for(int y=GRID_H-1; y>=0; y--) {
+            if(grid[y][x] == 0) {
+                // Look for a block above to pull down
+                for(int k=y-1; k>=0; k--) {
+                    if(grid[k][x] != 0) {
+                        grid[y][x] = grid[k][x];
+                        grid[k][x] = 0;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if(changed) return true; // Let gravity finish before checking matches
+
+    // 2. Check Matches (Connect 4)
+    bool popped = false;
     
-    initGraphics();
-    initGame();
+    // Clear visited
+    for(int i=0; i<GRID_H*GRID_W; i++) ((u8*)visited)[i] = 0;
+
+    for(int y=0; y<GRID_H; y++) {
+        for(int x=0; x<GRID_W; x++) {
+            if(grid[y][x] != 0 && !visited[y][x]) {
+                // Temporarily store visited state for this check
+                // We need to pass a clean visited map or handle it carefully.
+                // Simplified: reset visited, run check. 
+                // Optimization: Actually, we just need to know if this group > 4.
+                
+                // Clear local visited for accurate count
+                for(int i=0; i<GRID_H*GRID_W; i++) ((u8*)visited)[i] = 0;
+                
+                int count = count_connected(x, y, grid[y][x]);
+                if(count >= 4) {
+                    remove_connected(x, y, grid[y][x]);
+                    score += (count * 10);
+                    popped = true;
+                }
+            }
+        }
+    }
+
+    return popped;
+}
+
+// --- Main Loop Functions ---
+
+void update() {
+    if(gameOver) {
+        if(key_hit(KEY_START)) init_game();
+        return;
+    }
+
+    // If we are in chain-reaction mode
+    if(isResolving) {
+        // Slow down the resolution so player can see it
+        static int resolveDelay = 0;
+        if(++resolveDelay > 15) {
+            resolveDelay = 0;
+            if(!resolve_board()) {
+                isResolving = false; // Board settled
+                spawn_piece();
+            }
+        }
+        return;
+    }
+
+    // Player Control
+    int dx = 0;
+    if(key_hit(KEY_LEFT)) dx = -1;
+    if(key_hit(KEY_RIGHT)) dx = 1;
+
+    int sx, sy;
+    get_sub_coords(p.x, p.y, p.rot, &sx, &sy);
+
+    // Horizontal Movement
+    if(dx != 0) {
+        if(can_move(p.x + dx, p.y) && can_move(sx + dx, sy)) {
+            p.x += dx;
+        }
+    }
+
+    // Rotation (A = Clockwise)
+    if(key_hit(KEY_A)) {
+        int newRot = (p.rot + 1) % 4;
+        int nsx, nsy;
+        get_sub_coords(p.x, p.y, newRot, &nsx, &nsy);
+        
+        if(can_move(nsx, nsy)) {
+            p.rot = newRot;
+        } else {
+            // Wall kick: Try moving main piece left/right to accommodate rotation
+            if(can_move(p.x-1, p.y) && can_move(nsx-1, nsy)) {
+                p.x--; p.rot = newRot;
+            } else if (can_move(p.x+1, p.y) && can_move(nsx+1, nsy)) {
+                p.x++; p.rot = newRot;
+            }
+        }
+    }
+
+    // Gravity / Soft Drop
+    bool drop = false;
+    p.timer++;
+    if(key_is_down(KEY_DOWN) || p.timer > DROP_SPEED) {
+        p.timer = 0;
+        
+        // Check if can move down
+        get_sub_coords(p.x, p.y, p.rot, &sx, &sy);
+        
+        if(can_move(p.x, p.y+1) && can_move(sx, sy+1)) {
+            p.y++;
+        } else {
+            // Lock piece
+            grid[p.y][p.x] = p.cMain;
+            grid[sy][sx]   = p.cSub;
+            isResolving = true; // Start chain checks
+        }
+    }
+}
+
+void draw() {
+    // Clear Field area
+    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CL_BLACK);
     
-    while (1) {
+    // Draw Border
+    draw_rect(FIELD_X-1, FIELD_Y-1, (GRID_W*BLOCK_SIZE)+2, (GRID_H*BLOCK_SIZE)+2, CL_WHITE);
+    // Redraw inner black to clear previous frame mess (lazy clearing)
+    draw_rect(FIELD_X, FIELD_Y, GRID_W*BLOCK_SIZE, GRID_H*BLOCK_SIZE, CL_BLACK);
+
+    // Draw Static Grid
+    for(int y=0; y<GRID_H; y++) {
+        for(int x=0; x<GRID_W; x++) {
+            if(grid[y][x] != 0) {
+                draw_block(x, y, grid[y][x]);
+            }
+        }
+    }
+
+    // Draw Active Piece
+    if(!gameOver && !isResolving) {
+        draw_block(p.x, p.y, p.cMain);
+        int sx, sy;
+        get_sub_coords(p.x, p.y, p.rot, &sx, &sy);
+        draw_block(sx, sy, p.cSub);
+    }
+
+    // Draw Score (Visual representation since we don't have font assets)
+    // Draw a bar at the bottom representing score
+    int barLen = (score / 10);
+    if(barLen > 240) barLen = 240;
+    draw_rect(0, 150, barLen, 5, CL_LIME);
+
+    if(gameOver) {
+        draw_rect(FIELD_X + 10, FIELD_Y + 50, 50, 20, CL_RED); // "Game Over" box
+    }
+}
+
+int main() {
+    // Init GBA Mode 3 (240x160 Bitmap) and BG2
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+
+    // Seed random
+    sqran(1); 
+
+    init_game();
+    spawn_piece();
+
+    while(1) {
         VBlankIntrWait();
-        updateGame();
-        drawBoard();
-        
-        if (state == ST_GAMEOVER) {
-            drawGameOver();
-        }
+        key_poll();
+
+        update();
+        draw();
     }
-    
+
     return 0;
 }
