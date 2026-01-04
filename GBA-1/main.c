@@ -7,6 +7,8 @@
 #include <tonc.h>
 #include <string.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 //----------------------------------------------------------------------
 // Constants
 //----------------------------------------------------------------------
@@ -111,41 +113,41 @@ Game game;
 // Palette Data (16 colors)
 //----------------------------------------------------------------------
 const COLOR palette_bg[16] = {
-    RGB15(0,0,0),       // 0: Black/transparent
-    RGB15(8,20,8),      // 1: Dark green (grass shadow)
-    RGB15(12,24,8),     // 2: Green (grass)
-    RGB15(16,28,12),    // 3: Light green
-    RGB15(20,16,12),    // 4: Brown (dirt/wood)
-    RGB15(16,16,20),    // 5: Gray (stone)
-    RGB15(20,20,24),    // 6: Light gray
-    RGB15(4,12,28),     // 7: Blue (water)
-    RGB15(8,16,31),     // 8: Light blue
-    RGB15(28,24,8),     // 9: Yellow
-    RGB15(24,8,8),      // 10: Red
-    RGB15(28,28,24),    // 11: White
-    RGB15(12,8,4),      // 12: Dark brown
-    RGB15(24,20,16),    // 13: Tan
-    RGB15(4,20,4),      // 14: Dark green (trees)
-    RGB15(8,8,8),       // 15: Dark gray
+    RGB15_C(0,0,0),       // 0: Black/transparent
+    RGB15_C(8,20,8),      // 1: Dark green (grass shadow)
+    RGB15_C(12,24,8),     // 2: Green (grass)
+    RGB15_C(16,28,12),    // 3: Light green
+    RGB15_C(20,16,12),    // 4: Brown (dirt/wood)
+    RGB15_C(16,16,20),    // 5: Gray (stone)
+    RGB15_C(20,20,24),    // 6: Light gray
+    RGB15_C(4,12,28),     // 7: Blue (water)
+    RGB15_C(8,16,31),     // 8: Light blue
+    RGB15_C(28,24,8),     // 9: Yellow
+    RGB15_C(24,8,8),      // 10: Red
+    RGB15_C(28,28,24),    // 11: White
+    RGB15_C(12,8,4),      // 12: Dark brown
+    RGB15_C(24,20,16),    // 13: Tan
+    RGB15_C(4,20,4),      // 14: Dark green (trees)
+    RGB15_C(8,8,8),       // 15: Dark gray
 };
 
 const COLOR palette_sprite[16] = {
-    RGB15(31,0,31),     // 0: Transparent (magenta)
-    RGB15(24,28,16),    // 1: Skin
-    RGB15(8,24,8),      // 2: Green (tunic)
-    RGB15(4,16,4),      // 3: Dark green
-    RGB15(28,24,8),     // 4: Yellow/blonde
-    RGB15(20,16,4),     // 5: Dark yellow
-    RGB15(24,8,8),      // 6: Red
-    RGB15(16,4,4),      // 7: Dark red
-    RGB15(20,20,24),    // 8: Silver (sword)
-    RGB15(12,12,16),    // 9: Dark silver
-    RGB15(4,12,28),     // 10: Blue
-    RGB15(28,28,28),    // 11: White
-    RGB15(8,8,8),       // 12: Dark gray
-    RGB15(20,12,4),     // 13: Brown
-    RGB15(28,20,12),    // 14: Orange
-    RGB15(0,0,0),       // 15: Black
+    RGB15_C(31,0,31),     // 0: Transparent (magenta)
+    RGB15_C(24,28,16),    // 1: Skin
+    RGB15_C(8,24,8),      // 2: Green (tunic)
+    RGB15_C(4,16,4),      // 3: Dark green
+    RGB15_C(28,24,8),     // 4: Yellow/blonde
+    RGB15_C(20,16,4),     // 5: Dark yellow
+    RGB15_C(24,8,8),      // 6: Red
+    RGB15_C(16,4,4),      // 7: Dark red
+    RGB15_C(20,20,24),    // 8: Silver (sword)
+    RGB15_C(12,12,16),    // 9: Dark silver
+    RGB15_C(4,12,28),     // 10: Blue
+    RGB15_C(28,28,28),    // 11: White
+    RGB15_C(8,8,8),       // 12: Dark gray
+    RGB15_C(20,12,4),     // 13: Brown
+    RGB15_C(28,20,12),    // 14: Orange
+    RGB15_C(0,0,0),       // 15: Black
 };
 
 //----------------------------------------------------------------------
