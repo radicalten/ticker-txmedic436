@@ -59,7 +59,6 @@ static const u16 block_colors[NUM_COLORS+1] =
 // -----------------------------------------------------------------------------
 
 static void vsync(void);
-static void clear_screen(u16 color);
 static void draw_rect_filled(int x, int y, int w, int h, u16 color);
 static void draw_rect_outline(int x, int y, int w, int h, u16 color);
 static void draw_board(void);
