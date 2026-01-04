@@ -15,6 +15,8 @@
 #include <stdlib.h>     // for rand, srand
 #include <string.h>     // for memset
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // -----------------------------------------------------------------------------
 // Constants & configuration
 // -----------------------------------------------------------------------------
@@ -61,16 +63,16 @@ static int score     = 0;
 // Simple color table (index 0 unused here)
 static const u16 puyoColors[NUM_COLORS+1] =
 {
-    RGB15(0,0,0),            // 0: empty (unused)
-    RGB15(31,0,0),           // 1: red
-    RGB15(0,31,0),           // 2: green
-    RGB15(0,0,31),           // 3: blue
-    RGB15(31,31,0)           // 4: yellow
+    RGB15_C(0,0,0),            // 0: empty (unused)
+    RGB15_C(31,0,0),           // 1: red
+    RGB15_C(0,31,0),           // 2: green
+    RGB15_C(0,0,31),           // 3: blue
+    RGB15_C(31,31,0)           // 4: yellow
 };
 
-static const u16 COLOR_BG     = RGB15(0,0,0);
-static const u16 COLOR_BORDER = RGB15(10,10,10);
-static const u16 COLOR_TEXT   = RGB15(31,31,31);
+static const u16 COLOR_BG     = RGB15_C(0,0,0);
+static const u16 COLOR_BORDER = RGB15_C(10,10,10);
+static const u16 COLOR_TEXT   = RGB15_C(31,31,31);
 
 // -----------------------------------------------------------------------------
 // Low-level drawing helpers (Mode 3)
@@ -497,7 +499,7 @@ int main(void)
     REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
     // Initialize keys & game state
-    key_init();
+    //key_init();
     init_game();
 
     while(1)
