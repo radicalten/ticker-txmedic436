@@ -1,578 +1,512 @@
-// puyo_gba_tonc_singlefile.c
-//
-// Single-file "Puyo Puyo-like" puzzle game for GBA using tonc.
-// - Mode 3 bitmap rendering (simple colored blocks)
-// - 6x12 board (+2 hidden rows)
-// - Falling 2-piece capsule, rotate/move/drop
-// - Clear groups of 4+ connected same-color puyos
-//
-// Controls:
-//   Left/Right : move
-//   Down       : soft drop
-//   Up         : hard drop
-//   A          : rotate CW
-//   B          : rotate CCW
-//   Start      : restart (also from game over)
-//
-// Build: put this in a tonc/devkitARM project and compile normally with tonc.
-// You need tonc available (tonc.h, libtonc).
+//======================================================================
+// Puyo Puyo GBA - Single File Implementation using TONC
+// Build with: make (using a standard GBA Makefile with TONC)
+//======================================================================
 
 #include <tonc.h>
-#include <stdio.h>
 #include <string.h>
-#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
 
-// -------------------- Config --------------------
+//----------------------------------------------------------------------
+// Constants
+//----------------------------------------------------------------------
+#define BOARD_W     6
+#define BOARD_H     12
+#define CELL_SIZE   8
+#define BOARD_X     11      // Screen tile offset X
+#define BOARD_Y     2       // Screen tile offset Y
 
-#define GRID_W      6
-#define GRID_H      12
-#define HIDDEN_ROWS 2
-#define TOTAL_H     (GRID_H + HIDDEN_ROWS)
+#define EMPTY       0
+#define NUM_COLORS  4
 
-#define CELL        12
-
-#define BOARD_X     16
-#define BOARD_Y     8
-
-#define PREVIEW_X   120
-#define PREVIEW_Y   24
-
-// -------------------- Colors --------------------
-
-enum
-{
-	C_EMPTY = 0,
-	C_RED   = 1,
-	C_GRN   = 2,
-	C_BLU   = 3,
-	C_YEL   = 4,
-	C_PUR   = 5,
-	C_MAX
+// Game states
+enum {
+    ST_FALLING,
+    ST_LOCK_DELAY,
+    ST_DROPPING,
+    ST_CHECKING,
+    ST_POPPING,
+    ST_GAMEOVER
 };
 
-static const u16 g_bg_col      = RGB15_C(3, 3, 5);
-static const u16 g_border_col  = RGB15_C(0, 0, 0);
-static const u16 g_text_col    = RGB15_C(31, 31, 31);
+//----------------------------------------------------------------------
+// Structures
+//----------------------------------------------------------------------
+typedef struct {
+    int x1, y1;     // Main puyo position
+    int x2, y2;     // Sub puyo position
+    int c1, c2;     // Colors
+    int rot;        // Rotation state (0-3)
+} FallingPair;
 
-static u16 puyo_col(int c)
-{
-	switch(c)
-	{
-	case C_RED: return RGB15_C(31, 6, 6);
-	case C_GRN: return RGB15_C(6, 31, 10);
-	case C_BLU: return RGB15_C(8, 12, 31);
-	case C_YEL: return RGB15_C(31, 28, 6);
-	case C_PUR: return RGB15_C(22, 8, 28);
-	default:    return g_bg_col;
-	}
+//----------------------------------------------------------------------
+// Globals
+//----------------------------------------------------------------------
+static u8 board[BOARD_H][BOARD_W];
+static u8 mark[BOARD_H][BOARD_W];
+static FallingPair fall;
+static int nextC1, nextC2;
+
+static int state;
+static int fallTimer;
+static int fallSpeed;
+static int lockTimer;
+static int popTimer;
+static int chain;
+static u32 score;
+static u32 randState;
+
+//----------------------------------------------------------------------
+// Random number generator
+//----------------------------------------------------------------------
+static u32 randNext(void) {
+    randState = randState * 1664525u + 1013904223u;
+    return randState;
 }
 
-static u16 puyo_col_dark(int c)
-{
-	switch(c)
-	{
-	case C_RED: return RGB15_C(18, 2, 2);
-	case C_GRN: return RGB15_C(2, 18, 6);
-	case C_BLU: return RGB15_C(3, 5, 18);
-	case C_YEL: return RGB15_C(18, 16, 2);
-	case C_PUR: return RGB15_C(12, 3, 16);
-	default:    return RGB15_C(1,1,2);
-	}
+static int randColor(void) {
+    return (randNext() % NUM_COLORS) + 1;
 }
 
-static u16 puyo_col_light(int c)
-{
-	switch(c)
-	{
-	case C_RED: return RGB15_C(31, 20, 20);
-	case C_GRN: return RGB15_C(20, 31, 22);
-	case C_BLU: return RGB15_C(20, 22, 31);
-	case C_YEL: return RGB15_C(31, 31, 18);
-	case C_PUR: return RGB15_C(28, 20, 31);
-	default:    return RGB15_C(10,10,12);
-	}
+//----------------------------------------------------------------------
+// Board helpers
+//----------------------------------------------------------------------
+static int inBounds(int x, int y) {
+    return x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H;
 }
 
-// -------------------- RNG --------------------
-
-static u32 g_rng = 0x12345678;
-
-static u32 rng_next(void)
-{
-	// Simple LCG
-	g_rng = 1664525u*g_rng + 1013904223u;
-	return g_rng;
+static int isEmpty(int x, int y) {
+    if (y < 0) return 1;  // Above board is empty
+    if (x < 0 || x >= BOARD_W || y >= BOARD_H) return 0;
+    return board[y][x] == EMPTY;
 }
 
-static int rng_range(int lo, int hi_inclusive)
-{
-	u32 r = rng_next();
-	int span = (hi_inclusive - lo + 1);
-	return lo + (int)(r % (u32)span);
+//----------------------------------------------------------------------
+// Spawn and rotation
+//----------------------------------------------------------------------
+static void calcSubPos(int x1, int y1, int rot, int *x2, int *y2) {
+    // rot: 0=up, 1=right, 2=down, 3=left
+    const int dx[] = { 0, 1, 0, -1 };
+    const int dy[] = { -1, 0, 1, 0 };
+    *x2 = x1 + dx[rot];
+    *y2 = y1 + dy[rot];
 }
 
-// -------------------- Game State --------------------
-
-typedef struct
-{
-	int x, y;     // pivot position in grid coords (includes hidden rows)
-	int rot;      // 0=2nd above, 1=right, 2=below, 3=left
-	u8  c1, c2;   // colors
-} Piece;
-
-typedef enum
-{
-	ST_FALLING = 0,
-	ST_RESOLVE = 1,
-	ST_GAMEOVER = 2
-} GameState;
-
-static u8 field[TOTAL_H][GRID_W];   // 0 empty, else color
-
-static Piece cur, nextp;
-static GameState state = ST_FALLING;
-
-static int score = 0;
-static int chain = 0;
-
-static int fall_ctr = 0;
-static int base_fall_interval = 28; // frames per step at normal speed
-
-// -------------------- Drawing Helpers (Mode 3) --------------------
-
-
-static void draw_puyo_px(int px, int py, int col_id)
-{
-	if(col_id == C_EMPTY) return;
-
-	// Outer block
-	m3_rect(px, py, CELL, CELL, puyo_col(col_id));
-
-	// Border
-	m3_hline(px, py, CELL, puyo_col_dark(col_id));
-	m3_hline(px, py+CELL-1, CELL, puyo_col_dark(col_id));
-	for(int iy=0; iy<CELL; iy++)
-	{
-		vid_mem[(py+iy)*240 + px]           = puyo_col_dark(col_id);
-		vid_mem[(py+iy)*240 + (px+CELL-1)]  = puyo_col_dark(col_id);
-	}
-
-	// Simple highlight
-	m3_rect(px+2, py+2, 4, 4, puyo_col_light(col_id));
+static int canPlace(int x1, int y1, int x2, int y2) {
+    return isEmpty(x1, y1) && isEmpty(x2, y2);
 }
 
-static void draw_cell(int gx, int gy, int col_id)
-{
-	// gy is in visible coordinates 0..GRID_H-1
-	int px = BOARD_X + gx*CELL;
-	int py = BOARD_Y + gy*CELL;
-	draw_puyo_px(px, py, col_id);
+static void spawnPair(void) {
+    fall.x1 = 2;
+    fall.y1 = 0;
+    fall.rot = 0;
+    fall.c1 = nextC1;
+    fall.c2 = nextC2;
+    calcSubPos(fall.x1, fall.y1, fall.rot, &fall.x2, &fall.y2);
+    
+    nextC1 = randColor();
+    nextC2 = randColor();
+    
+    // Check game over
+    if (!isEmpty(fall.x1, fall.y1)) {
+        state = ST_GAMEOVER;
+    }
 }
 
-static void draw_board_frame(void)
-{
-	int w = GRID_W*CELL;
-	int h = GRID_H*CELL;
-
-	// Background
-	m3_rect(0, 0, 240, 160, g_bg_col);
-
-	// Board border
-	m3_rect(BOARD_X-2, BOARD_Y-2, w+4, 2, g_border_col);
-	m3_rect(BOARD_X-2, BOARD_Y+h, w+4, 2, g_border_col);
-	m3_rect(BOARD_X-2, BOARD_Y-2, 2, h+4, g_border_col);
-	m3_rect(BOARD_X+w,  BOARD_Y-2, 2, h+4, g_border_col);
-
-	// Sidebar area
-	m3_rect(PREVIEW_X-8, 8, 240-(PREVIEW_X-8), 144, RGB15_C(2,2,4));
+static void tryRotate(int dir) {
+    int newRot = (fall.rot + dir + 4) % 4;
+    int nx2, ny2;
+    calcSubPos(fall.x1, fall.y1, newRot, &nx2, &ny2);
+    
+    // Try normal rotation
+    if (canPlace(fall.x1, fall.y1, nx2, ny2)) {
+        fall.rot = newRot;
+        fall.x2 = nx2;
+        fall.y2 = ny2;
+        return;
+    }
+    
+    // Wall kick: try shifting
+    int kicks[] = { -1, 1, 0 };
+    for (int i = 0; i < 2; i++) {
+        int kx = fall.x1 + kicks[i];
+        int kx2, ky2;
+        calcSubPos(kx, fall.y1, newRot, &kx2, &ky2);
+        if (canPlace(kx, fall.y1, kx2, ky2)) {
+            fall.x1 = kx;
+            fall.rot = newRot;
+            fall.x2 = kx2;
+            fall.y2 = ky2;
+            return;
+        }
+    }
+    
+    // Floor kick for upward rotation
+    if (newRot == 0) {
+        int ny1 = fall.y1 - 1;
+        calcSubPos(fall.x1, ny1, newRot, &nx2, &ny2);
+        if (canPlace(fall.x1, ny1, nx2, ny2)) {
+            fall.y1 = ny1;
+            fall.rot = newRot;
+            fall.x2 = nx2;
+            fall.y2 = ny2;
+        }
+    }
 }
 
-// -------------------- Piece Logic --------------------
-
-static void piece_offsets(int rot, int *dx2, int *dy2)
-{
-	switch(rot & 3)
-	{
-	default:
-	case 0: *dx2 = 0;  *dy2 = -1; break; // above
-	case 1: *dx2 = 1;  *dy2 = 0;  break; // right
-	case 2: *dx2 = 0;  *dy2 = 1;  break; // below
-	case 3: *dx2 = -1; *dy2 = 0;  break; // left
-	}
+static void tryMove(int dx) {
+    int nx1 = fall.x1 + dx;
+    int nx2 = fall.x2 + dx;
+    if (canPlace(nx1, fall.y1, nx2, fall.y2)) {
+        fall.x1 = nx1;
+        fall.x2 = nx2;
+    }
 }
 
-static bool in_bounds(int x, int y)
-{
-	return (x >= 0 && x < GRID_W && y >= 0 && y < TOTAL_H);
+static int canFall(void) {
+    return isEmpty(fall.x1, fall.y1 + 1) && isEmpty(fall.x2, fall.y2 + 1);
 }
 
-static bool cell_empty(int x, int y)
-{
-	return field[y][x] == C_EMPTY;
+//----------------------------------------------------------------------
+// Lock and gravity
+//----------------------------------------------------------------------
+static void lockPair(void) {
+    // Drop main puyo
+    int y = fall.y1;
+    while (y + 1 < BOARD_H && board[y + 1][fall.x1] == EMPTY) y++;
+    if (y >= 0 && y < BOARD_H) board[y][fall.x1] = fall.c1;
+    
+    // Drop sub puyo
+    y = fall.y2;
+    while (y + 1 < BOARD_H && board[y + 1][fall.x2] == EMPTY) y++;
+    if (y >= 0 && y < BOARD_H) board[y][fall.x2] = fall.c2;
+    
+    chain = 0;
+    state = ST_DROPPING;
 }
 
-static bool can_place_piece_at(const Piece *p, int nx, int ny, int nrot)
-{
-	int dx2, dy2;
-	piece_offsets(nrot, &dx2, &dy2);
-
-	int x1 = nx, y1 = ny;
-	int x2 = nx + dx2, y2 = ny + dy2;
-
-	if(!in_bounds(x1,y1) || !in_bounds(x2,y2))
-		return false;
-
-	if(!cell_empty(x1,y1) || !cell_empty(x2,y2))
-		return false;
-
-	return true;
+static int applyGravity(void) {
+    int moved = 0;
+    for (int x = 0; x < BOARD_W; x++) {
+        for (int y = BOARD_H - 2; y >= 0; y--) {
+            if (board[y][x] != EMPTY && board[y + 1][x] == EMPTY) {
+                int ny = y;
+                while (ny + 1 < BOARD_H && board[ny + 1][x] == EMPTY) ny++;
+                board[ny][x] = board[y][x];
+                board[y][x] = EMPTY;
+                moved = 1;
+            }
+        }
+    }
+    return moved;
 }
 
-static bool try_move(int dx, int dy)
-{
-	int nx = cur.x + dx;
-	int ny = cur.y + dy;
-	if(can_place_piece_at(&cur, nx, ny, cur.rot))
-	{
-		cur.x = nx; cur.y = ny;
-		return true;
-	}
-	return false;
+//----------------------------------------------------------------------
+// Match detection (flood fill)
+//----------------------------------------------------------------------
+static int floodCount(int x, int y, int color, u8 visited[BOARD_H][BOARD_W]) {
+    if (!inBounds(x, y) || visited[y][x] || board[y][x] != color)
+        return 0;
+    visited[y][x] = 1;
+    return 1 + floodCount(x+1, y, color, visited)
+             + floodCount(x-1, y, color, visited)
+             + floodCount(x, y+1, color, visited)
+             + floodCount(x, y-1, color, visited);
 }
 
-static bool try_rotate(int dir) // dir: +1 cw, -1 ccw
-{
-	int nrot = (cur.rot + (dir>0 ? 1 : 3)) & 3;
-
-	// Try rotate in place, then simple wall-kicks.
-	static const int kicks[3] = { 0, -1, +1 };
-	for(int i=0; i<3; i++)
-	{
-		int nx = cur.x + kicks[i];
-		int ny = cur.y;
-		if(can_place_piece_at(&cur, nx, ny, nrot))
-		{
-			cur.x = nx;
-			cur.rot = nrot;
-			return true;
-		}
-	}
-	return false;
+static void floodMark(int x, int y, int color) {
+    if (!inBounds(x, y) || mark[y][x] || board[y][x] != color)
+        return;
+    mark[y][x] = 1;
+    floodMark(x+1, y, color);
+    floodMark(x-1, y, color);
+    floodMark(x, y+1, color);
+    floodMark(x, y-1, color);
 }
 
-static void lock_piece(void)
-{
-	int dx2, dy2;
-	piece_offsets(cur.rot, &dx2, &dy2);
-
-	int x1 = cur.x, y1 = cur.y;
-	int x2 = cur.x + dx2, y2 = cur.y + dy2;
-
-	// Write into field
-	if(in_bounds(x1,y1)) field[y1][x1] = cur.c1;
-	if(in_bounds(x2,y2)) field[y2][x2] = cur.c2;
+static int checkMatches(void) {
+    u8 visited[BOARD_H][BOARD_W] = {0};
+    memset(mark, 0, sizeof(mark));
+    int found = 0;
+    
+    for (int y = 0; y < BOARD_H; y++) {
+        for (int x = 0; x < BOARD_W; x++) {
+            if (board[y][x] != EMPTY && !visited[y][x]) {
+                int col = board[y][x];
+                u8 temp[BOARD_H][BOARD_W];
+                memcpy(temp, visited, sizeof(temp));
+                int cnt = floodCount(x, y, col, temp);
+                if (cnt >= 4) {
+                    floodMark(x, y, col);
+                    found = 1;
+                }
+                memcpy(visited, temp, sizeof(visited));
+            }
+        }
+    }
+    return found;
 }
 
-static void gen_random_piece(Piece *p)
-{
-	p->x = GRID_W/2;
-	p->y = HIDDEN_ROWS-1; // start in hidden area
-	p->rot = 2;           // second below pivot at spawn (enters board)
-	p->c1 = (u8)rng_range(1, C_MAX-1);
-	p->c2 = (u8)rng_range(1, C_MAX-1);
+static void removeMarked(void) {
+    int cnt = 0;
+    for (int y = 0; y < BOARD_H; y++) {
+        for (int x = 0; x < BOARD_W; x++) {
+            if (mark[y][x]) {
+                board[y][x] = EMPTY;
+                cnt++;
+            }
+        }
+    }
+    chain++;
+    score += cnt * 10 * chain * chain;
 }
 
-static void spawn_piece(void)
-{
-	cur = nextp;
-	cur.x = GRID_W/2;
-	cur.y = HIDDEN_ROWS-1;
-	cur.rot = 2;
+//----------------------------------------------------------------------
+// Graphics setup
+//----------------------------------------------------------------------
 
-	gen_random_piece(&nextp);
-
-	if(!can_place_piece_at(&cur, cur.x, cur.y, cur.rot))
-	{
-		state = ST_GAMEOVER;
-	}
-	else
-	{
-		state = ST_FALLING;
-	}
+// Simple 8x8 tile patterns (4bpp = 32 bytes per tile)
+static void createTile(int idx, u8 colorIdx) {
+    u32 fill = colorIdx * 0x11111111u;
+    for (int i = 0; i < 8; i++) {
+        tile_mem[0][idx].data[i] = fill;
+    }
 }
 
-// -------------------- Clear + Gravity --------------------
-
-static void apply_gravity(void)
-{
-	for(int x=0; x<GRID_W; x++)
-	{
-		int write_y = TOTAL_H-1;
-		for(int y=TOTAL_H-1; y>=0; y--)
-		{
-			u8 v = field[y][x];
-			if(v != C_EMPTY)
-			{
-				field[y][x] = C_EMPTY;
-				field[write_y][x] = v;
-				write_y--;
-			}
-		}
-		// Above write_y remains empty already.
-	}
+// Create a puyo tile with border
+static void createPuyoTile(int idx, u8 colorIdx) {
+    u32 fill = colorIdx * 0x11111111u;
+    u32 dark = (colorIdx == 0) ? 0 : ((colorIdx) * 0x11111111u);
+    
+    // Simple filled square - could be enhanced with shading
+    for (int i = 0; i < 8; i++) {
+        tile_mem[0][idx].data[i] = fill;
+    }
+    // Add simple border effect
+    tile_mem[0][idx].data[0] = dark;
+    tile_mem[0][idx].data[7] = dark;
 }
 
-static int resolve_clears_once(void)
-{
-	bool vis[TOTAL_H][GRID_W];
-	memset(vis, 0, sizeof(vis));
-
-	bool to_clear[TOTAL_H][GRID_W];
-	memset(to_clear, 0, sizeof(to_clear));
-
-	int cleared = 0;
-
-	// BFS buffers (max cells)
-	int qx[GRID_W*TOTAL_H];
-	int qy[GRID_W*TOTAL_H];
-
-	for(int sy=0; sy<TOTAL_H; sy++)
-	{
-		for(int sx=0; sx<GRID_W; sx++)
-		{
-			u8 col = field[sy][sx];
-			if(col == C_EMPTY || vis[sy][sx]) continue;
-
-			// BFS group
-			int head=0, tail=0;
-			int group_n = 0;
-
-			// store group coords for potential marking
-			int gx[GRID_W*TOTAL_H];
-			int gy[GRID_W*TOTAL_H];
-
-			vis[sy][sx] = true;
-			qx[tail] = sx; qy[tail] = sy; tail++;
-
-			while(head < tail)
-			{
-				int x = qx[head];
-				int y = qy[head];
-				head++;
-
-				gx[group_n] = x;
-				gy[group_n] = y;
-				group_n++;
-
-				// 4-neighbors
-				static const int dx[4] = {1,-1,0,0};
-				static const int dy[4] = {0,0,1,-1};
-
-				for(int i=0; i<4; i++)
-				{
-					int nx = x + dx[i];
-					int ny = y + dy[i];
-					if(nx<0 || nx>=GRID_W || ny<0 || ny>=TOTAL_H) continue;
-					if(vis[ny][nx]) continue;
-					if(field[ny][nx] != col) continue;
-
-					vis[ny][nx] = true;
-					qx[tail] = nx; qy[tail] = ny; tail++;
-				}
-			}
-
-			if(group_n >= 4)
-			{
-				for(int i=0; i<group_n; i++)
-					to_clear[gy[i]][gx[i]] = true;
-			}
-		}
-	}
-
-	for(int y=0; y<TOTAL_H; y++)
-	{
-		for(int x=0; x<GRID_W; x++)
-		{
-			if(to_clear[y][x] && field[y][x] != C_EMPTY)
-			{
-				field[y][x] = C_EMPTY;
-				cleared++;
-			}
-		}
-	}
-
-	return cleared;
+static void initGraphics(void) {
+    // Video mode 0, BG0 enabled
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+    
+    // BG0: charblock 0, screenblock 31
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
+    
+    // Set up palette
+    pal_bg_mem[0]  = RGB15(1, 1, 2);      // BG color (dark blue)
+    pal_bg_mem[1]  = RGB15(31, 6, 6);     // Red puyo
+    pal_bg_mem[2]  = RGB15(6, 31, 6);     // Green puyo
+    pal_bg_mem[3]  = RGB15(6, 10, 31);    // Blue puyo
+    pal_bg_mem[4]  = RGB15(31, 31, 6);    // Yellow puyo
+    pal_bg_mem[5]  = RGB15(3, 3, 8);      // Board BG
+    pal_bg_mem[6]  = RGB15(18, 18, 22);   // Border
+    pal_bg_mem[7]  = RGB15(31, 31, 31);   // White (text)
+    pal_bg_mem[8]  = RGB15(20, 4, 4);     // Dark red
+    pal_bg_mem[9]  = RGB15(4, 20, 4);     // Dark green
+    pal_bg_mem[10] = RGB15(4, 6, 20);     // Dark blue
+    pal_bg_mem[11] = RGB15(20, 20, 4);    // Dark yellow
+    pal_bg_mem[12] = RGB15(10, 10, 10);   // Gray
+    
+    // Create tiles
+    createTile(0, 0);   // Empty
+    createPuyoTile(1, 1);  // Red
+    createPuyoTile(2, 2);  // Green
+    createPuyoTile(3, 3);  // Blue
+    createPuyoTile(4, 4);  // Yellow
+    createTile(5, 5);   // Board BG
+    createTile(6, 6);   // Border
+    createTile(7, 7);   // White block
+    createTile(8, 12);  // Gray block
+    
+    // Clear screen map
+    memset16(&se_mem[31][0], 0, 32*32);
 }
 
-static void resolve_board(void)
-{
-	chain = 0;
-	for(;;)
-	{
-		int cleared = resolve_clears_once();
-		if(cleared <= 0)
-			break;
-
-		chain++;
-		// Simple scoring: base on cleared and chain multiplier
-		score += cleared * 10 * chain;
-
-		apply_gravity();
-	}
+//----------------------------------------------------------------------
+// Drawing
+//----------------------------------------------------------------------
+static void drawBoard(void) {
+    // Draw border
+    for (int y = 0; y <= BOARD_H + 1; y++) {
+        se_mem[31][(BOARD_Y + y) * 32 + BOARD_X - 1] = 6;
+        se_mem[31][(BOARD_Y + y) * 32 + BOARD_X + BOARD_W] = 6;
+    }
+    for (int x = 0; x < BOARD_W; x++) {
+        se_mem[31][(BOARD_Y + BOARD_H + 1) * 32 + BOARD_X + x] = 6;
+    }
+    
+    // Draw board contents
+    for (int y = 0; y < BOARD_H; y++) {
+        for (int x = 0; x < BOARD_W; x++) {
+            int tile = 5;  // Board background
+            if (board[y][x] != EMPTY) {
+                tile = board[y][x];
+                // Flash during pop
+                if (state == ST_POPPING && mark[y][x]) {
+                    tile = ((popTimer >> 2) & 1) ? 0 : board[y][x];
+                }
+            }
+            se_mem[31][(BOARD_Y + y) * 32 + BOARD_X + x] = tile;
+        }
+    }
+    
+    // Draw falling pair
+    if (state == ST_FALLING || state == ST_LOCK_DELAY) {
+        if (fall.y1 >= 0) {
+            se_mem[31][(BOARD_Y + fall.y1) * 32 + BOARD_X + fall.x1] = fall.c1;
+        }
+        if (fall.y2 >= 0) {
+            se_mem[31][(BOARD_Y + fall.y2) * 32 + BOARD_X + fall.x2] = fall.c2;
+        }
+    }
+    
+    // Draw next piece preview
+    int nx = BOARD_X + BOARD_W + 2;
+    int ny = BOARD_Y + 1;
+    se_mem[31][ny * 32 + nx] = nextC2;
+    se_mem[31][(ny + 1) * 32 + nx] = nextC1;
+    
+    // Draw score indicator (chain count as blocks)
+    for (int i = 0; i < 8; i++) {
+        int tile = (i < chain) ? 7 : 8;
+        se_mem[31][(BOARD_Y + BOARD_H) * 32 + nx + i] = tile;
+    }
 }
 
-// -------------------- Rendering --------------------
-
-static void draw_game(void)
-{
-	draw_board_frame();
-
-	// Draw settled field (visible only)
-	for(int y=HIDDEN_ROWS; y<TOTAL_H; y++)
-	{
-		for(int x=0; x<GRID_W; x++)
-		{
-			u8 col = field[y][x];
-			if(col != C_EMPTY)
-				draw_cell(x, y - HIDDEN_ROWS, col);
-		}
-	}
-
-	// Draw current piece (if falling)
-	if(state == ST_FALLING)
-	{
-		int dx2, dy2;
-		piece_offsets(cur.rot, &dx2, &dy2);
-
-		int x1 = cur.x, y1 = cur.y;
-		int x2 = cur.x + dx2, y2 = cur.y + dy2;
-
-		if(y1 >= HIDDEN_ROWS)
-			draw_cell(x1, y1 - HIDDEN_ROWS, cur.c1);
-		if(y2 >= HIDDEN_ROWS)
-			draw_cell(x2, y2 - HIDDEN_ROWS, cur.c2);
-	}
-
-	// Text UI
-	char buf[128];
-
-	tte_set_pos(PREVIEW_X, 10);
-	tte_set_ink(g_text_col);
-	tte_write("NEXT");
-
-	// Next preview (2 blocks)
-	draw_puyo_px(PREVIEW_X, PREVIEW_Y, nextp.c1);
-	draw_puyo_px(PREVIEW_X, PREVIEW_Y + CELL + 2, nextp.c2);
-
-	tte_set_pos(PREVIEW_X, 90);
-	snprintf(buf, sizeof(buf), "SCORE\n%d", score);
-	tte_write(buf);
-
-	tte_set_pos(PREVIEW_X, 130);
-	tte_write("A/B rot\nUP drop\nSTART rst");
-
-	if(state == ST_GAMEOVER)
-	{
-		// Overlay message
-		m3_rect(20, 58, 200, 44, RGB15_C(0,0,0));
-		m3_rect(22, 60, 196, 40, RGB15_C(6,6,10));
-		tte_set_pos(62, 72);
-		tte_write("GAME OVER");
-		tte_set_pos(34, 86);
-		tte_write("Press START to restart");
-	}
+static void drawGameOver(void) {
+    // Simple X pattern in center of board
+    int cx = BOARD_X + BOARD_W / 2;
+    int cy = BOARD_Y + BOARD_H / 2;
+    for (int i = -2; i <= 2; i++) {
+        se_mem[31][(cy + i) * 32 + cx + i] = 1;
+        se_mem[31][(cy + i) * 32 + cx - i] = 1;
+    }
 }
 
-// -------------------- Game Reset --------------------
-
-static void reset_game(void)
-{
-	memset(field, 0, sizeof(field));
-	score = 0;
-	chain = 0;
-	fall_ctr = 0;
-
-	gen_random_piece(&nextp);
-	spawn_piece();
+//----------------------------------------------------------------------
+// Game logic update
+//----------------------------------------------------------------------
+static void initGame(void) {
+    memset(board, EMPTY, sizeof(board));
+    memset(mark, 0, sizeof(mark));
+    
+    randState = 12345;  // Could seed from timer
+    nextC1 = randColor();
+    nextC2 = randColor();
+    
+    state = ST_FALLING;
+    fallTimer = 0;
+    fallSpeed = 40;  // Frames per drop
+    lockTimer = 0;
+    popTimer = 0;
+    chain = 0;
+    score = 0;
+    
+    spawnPair();
 }
 
-// -------------------- Main --------------------
+static void updateGame(void) {
+    key_poll();
+    
+    switch (state) {
+    case ST_FALLING:
+        // Input handling
+        if (key_hit(KEY_LEFT))  tryMove(-1);
+        if (key_hit(KEY_RIGHT)) tryMove(1);
+        if (key_hit(KEY_A))     tryRotate(1);
+        if (key_hit(KEY_B))     tryRotate(-1);
+        if (key_hit(KEY_UP))    tryRotate(1);
+        
+        // Faster drop
+        if (key_is_down(KEY_DOWN)) fallTimer += 5;
+        
+        // Auto-fall
+        fallTimer++;
+        if (fallTimer >= fallSpeed) {
+            fallTimer = 0;
+            if (canFall()) {
+                fall.y1++;
+                fall.y2++;
+            } else {
+                lockTimer = 20;
+                state = ST_LOCK_DELAY;
+            }
+        }
+        break;
+        
+    case ST_LOCK_DELAY:
+        // Allow last-second moves
+        if (key_hit(KEY_LEFT))  tryMove(-1);
+        if (key_hit(KEY_RIGHT)) tryMove(1);
+        if (key_hit(KEY_A))     tryRotate(1);
+        if (key_hit(KEY_B))     tryRotate(-1);
+        
+        if (canFall()) {
+            state = ST_FALLING;
+        } else {
+            lockTimer--;
+            if (lockTimer <= 0 || key_is_down(KEY_DOWN)) {
+                lockPair();
+            }
+        }
+        break;
+        
+    case ST_DROPPING:
+        if (!applyGravity()) {
+            state = ST_CHECKING;
+        }
+        break;
+        
+    case ST_CHECKING:
+        if (checkMatches()) {
+            popTimer = 25;
+            state = ST_POPPING;
+        } else {
+            spawnPair();
+            if (state != ST_GAMEOVER) {
+                state = ST_FALLING;
+                fallTimer = 0;
+            }
+        }
+        break;
+        
+    case ST_POPPING:
+        popTimer--;
+        if (popTimer <= 0) {
+            removeMarked();
+            state = ST_DROPPING;
+        }
+        break;
+        
+    case ST_GAMEOVER:
+        if (key_hit(KEY_START)) {
+            initGame();
+        }
+        break;
+    }
+}
 
-int main(void)
-{
-	// Video: Mode 3, BG2
-	REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
-
-	// Enable VBlank IRQ so VBlankIntrWait works reliably
-	irq_init(NULL);
-	irq_add(II_VBLANK, NULL);
-	irq_enable(II_VBLANK);
-
-	// Text engine for Mode 3
-	tte_init_bmp_default(3);
-	tte_set_margins(0,0,240,160);
-
-	// Seed RNG a bit from hardware timers (best-effort)
-	g_rng ^= REG_VCOUNT;
-	g_rng ^= (u32)REG_TM0CNT_L << 16;
-	g_rng ^= (u32)REG_TM1CNT_L;
-
-	reset_game();
-
-	while(1)
-	{
-		key_poll();
-
-		if(key_hit(KEY_START))
-		{
-			reset_game();
-		}
-
-		if(state == ST_FALLING)
-		{
-			// Input: moves
-			if(key_hit(KEY_LEFT))  try_move(-1, 0);
-			if(key_hit(KEY_RIGHT)) try_move(+1, 0);
-
-			// Rotations
-			if(key_hit(KEY_A)) try_rotate(+1);
-			if(key_hit(KEY_B)) try_rotate(-1);
-
-			// Hard drop
-			if(key_hit(KEY_UP))
-			{
-				while(try_move(0, +1)) { /* fall */ }
-				lock_piece();
-				state = ST_RESOLVE;
-			}
-
-			// Falling timer (soft drop speeds up)
-			int interval = base_fall_interval;
-			if(key_is_down(KEY_DOWN))
-				interval = 2;
-
-			fall_ctr++;
-			if(fall_ctr >= interval)
-			{
-				fall_ctr = 0;
-				if(!try_move(0, +1))
-				{
-					lock_piece();
-					state = ST_RESOLVE;
-				}
-			}
-		}
-
-		if(state == ST_RESOLVE)
-		{
-			resolve_board();
-			spawn_piece();
-		}
-
-		// Draw during VBlank
-		VBlankIntrWait();
-		draw_game();
-	}
-
-	return 0;
+//----------------------------------------------------------------------
+// Main
+//----------------------------------------------------------------------
+int main(void) {
+    // Set up interrupts for VBlank
+    irq_init(NULL);
+    irq_enable(II_VBLANK);
+    
+    initGraphics();
+    initGame();
+    
+    while (1) {
+        VBlankIntrWait();
+        updateGame();
+        drawBoard();
+        
+        if (state == ST_GAMEOVER) {
+            drawGameOver();
+        }
+    }
+    
+    return 0;
 }
