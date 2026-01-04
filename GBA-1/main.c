@@ -10,8 +10,6 @@
 #define DROP_SPEED   30    // Frames per gravity tick (lower = faster)
 
 // Colors
-#define CLR_EMPTY    CLR_BLACK
-#define CLR_WALL     CLR_GRAY
 
 // --- Global State ---
 u8 grid[GRID_H][GRID_W];
