@@ -445,7 +445,7 @@ int main(void)
     tte_printf("#{es}");
 
     // Seed tonc's quick RNG
-    qran(1);
+    qran();
 
     // Initial player status
     player_max_hp = 20;
