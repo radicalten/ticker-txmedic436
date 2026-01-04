@@ -1,496 +1,200 @@
-// main.c - single-file "Pokemon-style" mini RPG for GBA using tonc
-// Features:
-// - Top-down tile map with walls/grass/path
-// - Player sprite you can move with D-pad (collision enabled)
-// - Random encounters when stepping on grass
-// - Simple turn-based battle UI (A: Attack, B: Run)
-//
-// Build (example; you may already have a Makefile/project):
-//   arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -Wall -Wextra -std=c11 \
-//     main.c -o game.elf -ltonc -specs=gba.specs
-//   arm-none-eabi-objcopy -O binary game.elf game.gba
-//
-// Notes:
-// - Requires devkitARM + tonc/tonclib properly installed and linkable.
-// - No external art assets used; tiles/sprite are generated from simple solid colors.
-
 #include <tonc.h>
-#include <string.h>
-#include <stdio.h>
+#include <stdlib.h>
 
-// ----------------------------- Config ---------------------------------
+// --- Constants ---
+#define MAP_WIDTH   32
+#define MAP_HEIGHT  32
 
-#define MAP_W 32
-#define MAP_H 32
+// Tile Indices
+#define TID_EMPTY   0
+#define TID_GRASS   1
+#define TID_BUSH    2 // Tall grass (encounters)
+#define TID_HERO    4
 
-#define TILE_EMPTY 0
-#define TILE_GRASS 1
-#define TILE_PATH  2
-#define TILE_WALL  3
+// Palettes
+#define PAL_BG      0
+#define PAL_HERO    0
 
-typedef enum GameMode
-{
-    MODE_WORLD = 0,
-    MODE_BATTLE = 1,
-} GameMode;
+// Game States
+typedef enum {
+    STATE_OVERWORLD,
+    STATE_BATTLE
+} GameState;
 
-typedef struct Fighter
-{
-    const char* name;
-    int hp, maxhp;
-} Fighter;
+// Player Struct
+typedef struct {
+    int x, y;       // Pixel coordinates
+    u32 tileIndex;
+} Player;
 
-// ----------------------------- Globals --------------------------------
+// Global Variables
+GameState currentState = STATE_OVERWORLD;
+Player hero;
+u16 mapData[MAP_WIDTH * MAP_HEIGHT]; // The Background Map
 
-static GameMode g_mode = MODE_WORLD;
+// --- Helper Functions ---
 
-static OBJ_ATTR obj_buffer[128];
-
-static u8 g_terrain[MAP_W*MAP_H];   // collision/encounter classification
-static u16 g_world_se[MAP_W*MAP_H]; // screen entries for BG1
-
-static int g_px = 120;  // player x in pixels (0..239)
-static int g_py = 72;   // player y in pixels (0..159)
-
-static int g_last_tx = -1;
-static int g_last_ty = -1;
-
-static u32 g_rng = 0x12345678;
-
-static Fighter g_player = { "HERO", 20, 20 };
-static Fighter g_enemy  = { "TONCMON", 15, 15 };
-
-static char g_battle_msg[64] = "Wild TONCMON appeared!";
-
-static bool g_ui_dirty = true;
-
-// ----------------------------- Tiny RNG --------------------------------
-
-static inline u32 rng_next(void)
-{
-    // LCG (common parameters)
-    g_rng = (u32)(g_rng * 1664525u + 1013904223u);
-    return g_rng;
-}
-
-static inline int rng_range(int lo, int hi_inclusive)
-{
-    u32 r = rng_next();
-    int span = hi_inclusive - lo + 1;
-    return lo + (int)(r % (u32)span);
-}
-
-// ----------------------------- Tiles ----------------------------------
-// 4bpp tile is 32 bytes = 8 u32 rows. For a solid palette index p (0..15),
-// each byte is 0xPP and each u32 row is 0xPPPPPPPP.
-
-#define SOLID_ROW(pp) ((u32)((pp) * 0x11111111u))
-
-static const u32 bg_tiles[][8] =
-{
-    // TILE_EMPTY (index 0): all 0
-    { 0,0,0,0,0,0,0,0 },
-
-    // TILE_GRASS (index 1): palette index 2 (keep 0/1 for text)
-    { SOLID_ROW(0x2),SOLID_ROW(0x2),SOLID_ROW(0x2),SOLID_ROW(0x2),
-      SOLID_ROW(0x2),SOLID_ROW(0x2),SOLID_ROW(0x2),SOLID_ROW(0x2) },
-
-    // TILE_PATH (index 2): palette index 3
-    { SOLID_ROW(0x3),SOLID_ROW(0x3),SOLID_ROW(0x3),SOLID_ROW(0x3),
-      SOLID_ROW(0x3),SOLID_ROW(0x3),SOLID_ROW(0x3),SOLID_ROW(0x3) },
-
-    // TILE_WALL (index 3): palette index 4
-    { SOLID_ROW(0x4),SOLID_ROW(0x4),SOLID_ROW(0x4),SOLID_ROW(0x4),
-      SOLID_ROW(0x4),SOLID_ROW(0x4),SOLID_ROW(0x4),SOLID_ROW(0x4) },
-};
-
-// Simple 16x16 sprite: four identical solid tiles using palette index 1.
-static const u32 obj_tiles[][8] =
-{
-    { SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),
-      SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1) },
-
-    { SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),
-      SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1) },
-
-    { SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),
-      SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1) },
-
-    { SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),
-      SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1),SOLID_ROW(0x1) },
-};
-
-// ----------------------------- Map ------------------------------------
-
-static inline u8 terrain_at(int tx, int ty)
-{
-    if(tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H)
-        return TILE_WALL;
-    return g_terrain[ty*MAP_W + tx];
-}
-
-static inline bool is_walkable_tile(u8 t)
-{
-    return (t != TILE_WALL);
-}
-
-static void build_world(void)
-{
-    // Simple layout:
-    // - solid wall border
-    // - inside is mostly grass
-    // - a cross-shaped path through the middle
-    for(int y=0; y<MAP_H; y++)
-    {
-        for(int x=0; x<MAP_W; x++)
-        {
-            u8 t = TILE_GRASS;
-
-            if(x==0 || y==0 || x==MAP_W-1 || y==MAP_H-1)
-                t = TILE_WALL;
-
-            // Horizontal path
-            if(y == 10 && x>1 && x<MAP_W-2)
-                t = TILE_PATH;
-
-            // Vertical path
-            if(x == 15 && y>1 && y<MAP_H-2)
-                t = TILE_PATH;
-
-            // Add a small "room" wall block
-            if(x>=22 && x<=28 && y>=4 && y<=8)
-            {
-                if(x==22 || x==28 || y==4 || y==8)
-                    t = TILE_WALL;
-                else
-                    t = TILE_PATH;
-            }
-
-            g_terrain[y*MAP_W + x] = t;
-            g_world_se[y*MAP_W + x] = (u16)t; // tile index == terrain id here
-        }
+// Generate a solid color tile in VRAM
+void create_solid_tile(int tile_index, u16 color, int block_base) {
+    u32 *tile_mem = (u32*)tile_mem_obj[block_base] + (tile_index * 8);
+    u32 packed = color | (color << 16);
+    for(int i=0; i<8; i++) {
+        tile_mem[i] = packed;
     }
 }
 
-static void load_world_bg(void)
-{
-    // Copy map to BG1 screenblock 30
-    memcpy16(se_mem[30], g_world_se, sizeof(g_world_se));
-}
-
-static void fill_bg1(u16 tile_id)
-{
-    for(int i=0; i<MAP_W*MAP_H; i++)
-        se_mem[30][i] = tile_id;
-}
-
-// ----------------------------- UI -------------------------------------
-
-static void ui_world(void)
-{
-    // BG0 is text layer via TTE
-    tte_erase_screen();
-
-    tte_set_pos(0, 0);
-    tte_printf("HP %d/%d", g_player.hp, g_player.maxhp);
-
-    tte_set_pos(0, 144);
-    tte_write("D-Pad: Move   (grass = encounters)");
-
-    tte_set_pos(0, 152);
-    tte_write("A: (nothing)  B: (nothing)");
-}
-
-static void ui_battle(void)
-{
-    tte_erase_screen();
-
-    tte_set_pos(0, 0);
-    tte_printf("Battle!");
-
-    tte_set_pos(0, 20);
-    tte_printf("%s HP %d/%d", g_enemy.name, g_enemy.hp, g_enemy.maxhp);
-
-    tte_set_pos(0, 40);
-    tte_printf("%s HP %d/%d", g_player.name, g_player.hp, g_player.maxhp);
-
-    tte_set_pos(0, 80);
-    tte_write(g_battle_msg);
-
-    tte_set_pos(0, 144);
-    tte_write("A: Attack   B: Run");
-}
-
-// ----------------------------- Mode transitions ------------------------
-
-static void enter_world(void)
-{
-    g_mode = MODE_WORLD;
-    load_world_bg();
-
-    // show player sprite
-    obj_buffer[0].attr0 = ATTR0_SQUARE | ATTR0_Y(g_py);
-    obj_buffer[0].attr1 = ATTR1_SIZE_16 | ATTR1_X(g_px);
-    obj_buffer[0].attr2 = ATTR2_PALBANK(0) | ATTR2_ID(0);
-
-    g_ui_dirty = true;
-}
-
-static void enter_battle(void)
-{
-    g_mode = MODE_BATTLE;
-
-    g_enemy.name = "TONCMON";
-    g_enemy.maxhp = 15;
-    g_enemy.hp = 15;
-
-    strncpy(g_battle_msg, "Wild TONCMON appeared!", sizeof(g_battle_msg)-1);
-    g_battle_msg[sizeof(g_battle_msg)-1] = '\0';
-
-    // simple battle background
-    fill_bg1(TILE_PATH);
-
-    // hide player sprite
-    obj_buffer[0].attr0 = ATTR0_HIDE;
-
-    g_ui_dirty = true;
-}
-
-// ----------------------------- World update ----------------------------
-
-static bool would_collide(int newx, int newy)
-{
-    // Collision point: near the player's "feet" center.
-    // Sprite is 16x16, so feet center ~ (x+8, y+14).
-    int cx = newx + 8;
-    int cy = newy + 14;
-
-    int tx = cx >> 3;
-    int ty = cy >> 3;
-
-    u8 t = terrain_at(tx, ty);
-    return !is_walkable_tile(t);
-}
-
-static void world_update(void)
-{
-    key_poll();
-
-    int speed = 2;
-    int nx = g_px;
-    int ny = g_py;
-
-    if(key_is_down(KEY_LEFT))  nx -= speed;
-    if(key_is_down(KEY_RIGHT)) nx += speed;
-    if(key_is_down(KEY_UP))    ny -= speed;
-    if(key_is_down(KEY_DOWN))  ny += speed;
-
-    // clamp to screen (no camera)
-    if(nx < 0) nx = 0;
-    if(ny < 0) ny = 0;
-    if(nx > 240-16) nx = 240-16;
-    if(ny > 160-16) ny = 160-16;
-
-    // collision
-    if(!would_collide(nx, ny))
-    {
-        g_px = nx;
-        g_py = ny;
-    }
-
-    // tile transition detection (use center point)
-    int tx = (g_px + 8) >> 3;
-    int ty = (g_py + 8) >> 3;
-
-    if(tx != g_last_tx || ty != g_last_ty)
-    {
-        g_last_tx = tx;
-        g_last_ty = ty;
-
-        // Random encounter on grass
-        if(terrain_at(tx, ty) == TILE_GRASS)
-        {
-            // 1/16 chance per new tile stepped onto
-            if((rng_next() & 0x0Fu) == 0)
-            {
-                enter_battle();
-                return;
+// Generate the map (mostly grass, some bushes)
+void init_map() {
+    for(int y=0; y<MAP_HEIGHT; y++) {
+        for(int x=0; x<MAP_WIDTH; x++) {
+            // Create a patch of tall grass in the middle
+            if(x > 5 && x < 15 && y > 5 && y < 15) {
+                mapData[y*MAP_WIDTH + x] = SE_PALBANK(0) | TID_BUSH;
+            } else {
+                mapData[y*MAP_WIDTH + x] = SE_PALBANK(0) | TID_GRASS;
             }
         }
     }
-
-    // update sprite position
-    obj_buffer[0].attr0 = ATTR0_SQUARE | ATTR0_Y(g_py);
-    obj_buffer[0].attr1 = ATTR1_SIZE_16 | ATTR1_X(g_px);
-
-    // UI refresh (cheap enough to do occasionally; here only if dirty)
-    if(g_ui_dirty)
-    {
-        ui_world();
-        g_ui_dirty = false;
-    }
+    // Copy map to Screen Block 30
+    memcpy16(&se_mem[30][0], mapData, MAP_WIDTH*MAP_HEIGHT);
 }
 
-// ----------------------------- Battle update ---------------------------
+// Setup Graphics (Video mode, Palettes, Tiles)
+void init_graphics() {
+    // 1. Set Video Mode: Mode 0 (Tiled), BG0 enabled, OBJ (Sprites) enabled
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
 
-static void battle_update(void)
-{
-    key_poll();
+    // 2. Setup Background Control (BG0)
+    // Charblock 0 (Tiles), Screenblock 30 (Map), Size 32x32, 256 colors
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_8BPP | BG_REG_32x32;
 
-    if(g_ui_dirty)
-    {
-        ui_battle();
-        g_ui_dirty = false;
-    }
+    // 3. Setup Palettes
+    // Background Palette
+    pal_bg_mem[0] = CLR_LIME;       // Light Green (Grass)
+    pal_bg_mem[1] = RGB15(0,15,0);  // Dark Green (Bush)
+    pal_bg_mem[2] = CLR_SKYBLUE;    // Sky (Battle BG)
+    
+    // Sprite Palette
+    pal_obj_mem[0] = CLR_RED;       // Hero Color
+    pal_obj_mem[1] = CLR_WHITE;     // UI Borders
 
-    if(key_hit(KEY_A))
-    {
-        int dmg = rng_range(3, 6);
-        g_enemy.hp -= dmg;
-        if(g_enemy.hp < 0) g_enemy.hp = 0;
+    // 4. Create "Assets" (Procedural Tiles)
+    // We write directly into VRAM to create solid color squares
+    
+    // Background Tiles (Charblock 0)
+    // TID_GRASS (Index 1) -> Light Green (Palette Index 0)
+    // 8bpp tiles use bytes as palette indices. 
+    // 0x00000000 = 4 pixels of palette index 0
+    u32* bg_tile_mem = (u32*)tile_mem[0];
+    
+    // Fill Tile 1 (Grass) with 0s (Palette index 0)
+    for(int i=0; i<16; i++) bg_tile_mem[1*16 + i] = 0x00000000; 
+    
+    // Fill Tile 2 (Bush) with 0x01010101 (Palette index 1)
+    for(int i=0; i<16; i++) bg_tile_mem[2*16 + i] = 0x01010101; 
 
-        snprintf(g_battle_msg, sizeof(g_battle_msg),
-                 "You hit %s for %d!", g_enemy.name, dmg);
+    // Sprite Tiles (Charblock 4 is default for sprites)
+    u32* obj_tile_mem = (u32*)tile_mem[4];
+    
+    // Fill Hero Tile with 0 (Palette index 0 = Red)
+    for(int i=0; i<8; i++) obj_tile_mem[TID_HERO*8 + i] = 0x00000000;
+    
+    // 5. Initialize Text Engine (TTE) using default BIOS font
+    tte_init_se_default(0, BG_CBB(0)|BG_SBB(31)); 
+    // Note: We use SBB 31 for text, SBB 30 for the map.
+}
 
-        if(g_enemy.hp <= 0)
-        {
-            strncpy(g_battle_msg, "Enemy fainted! Back to world.", sizeof(g_battle_msg)-1);
-            g_battle_msg[sizeof(g_battle_msg)-1] = '\0';
-            g_ui_dirty = true;
-            ui_battle();
+void update_overworld() {
+    int speed = 1;
+    bool moved = false;
 
-            // Immediately return (keeps this simple)
-            enter_world();
-            return;
-        }
+    // Input Handling
+    if(key_is_down(KEY_UP))    { hero.y -= speed; moved = true; }
+    if(key_is_down(KEY_DOWN))  { hero.y += speed; moved = true; }
+    if(key_is_down(KEY_LEFT))  { hero.x -= speed; moved = true; }
+    if(key_is_down(KEY_RIGHT)) { hero.x += speed; moved = true; }
 
-        // Enemy counter-attack
-        int edmg = rng_range(2, 5);
-        g_player.hp -= edmg;
-        if(g_player.hp < 0) g_player.hp = 0;
+    // Update Sprite OAM
+    OBJ_ATTR *hero_obj = &oam_mem[0];
+    obj_set_attr(hero_obj, 
+        ATTR0_SQUARE | ATTR0_8BPP,  // Square shape, 256 colors
+        ATTR1_SIZE_8,               // 8x8 pixels
+        ATTR2_PALBANK(0) | TID_HERO // Palette 0, Tile Index
+    );
+    obj_set_pos(hero_obj, hero.x, hero.y);
 
-        // Show combined message (simple)
-        char tmp[64];
-        snprintf(tmp, sizeof(tmp), " %s hits %d!", g_enemy.name, edmg);
-
-        // Append if room
-        size_t len = strnlen(g_battle_msg, sizeof(g_battle_msg));
-        strncat(g_battle_msg, tmp, sizeof(g_battle_msg)-len-1);
-
-        if(g_player.hp <= 0)
-        {
-            strncpy(g_battle_msg, "You fainted... Restored to full.", sizeof(g_battle_msg)-1);
-            g_battle_msg[sizeof(g_battle_msg)-1] = '\0';
-            g_player.hp = g_player.maxhp;
-            g_ui_dirty = true;
-            ui_battle();
-            enter_world();
-            return;
-        }
-
-        g_ui_dirty = true;
-    }
-
-    if(key_hit(KEY_B))
-    {
-        // 50% chance to run
-        if(rng_next() & 1u)
-        {
-            strncpy(g_battle_msg, "Got away safely!", sizeof(g_battle_msg)-1);
-            g_battle_msg[sizeof(g_battle_msg)-1] = '\0';
-            g_ui_dirty = true;
-            ui_battle();
-            enter_world();
-            return;
-        }
-        else
-        {
-            int edmg = rng_range(2, 5);
-            g_player.hp -= edmg;
-            if(g_player.hp < 0) g_player.hp = 0;
-
-            snprintf(g_battle_msg, sizeof(g_battle_msg),
-                     "Couldn't run! %s hits %d!", g_enemy.name, edmg);
-
-            if(g_player.hp <= 0)
-            {
-                strncpy(g_battle_msg, "You fainted... Restored to full.", sizeof(g_battle_msg)-1);
-                g_battle_msg[sizeof(g_battle_msg)-1] = '\0';
-                g_player.hp = g_player.maxhp;
-                g_ui_dirty = true;
-                ui_battle();
-                enter_world();
-                return;
-            }
-
-            g_ui_dirty = true;
+    // Collision & Random Encounters
+    // Calculate which map tile center of hero is standing on
+    int mapX = (hero.x + 4) / 8;
+    int mapY = (hero.y + 4) / 8;
+    int tileIdx = mapY * MAP_WIDTH + mapX;
+    
+    // Check if tile is a Bush (Tall Grass)
+    // Mask off palette bits to get raw tile ID
+    if(moved && (mapData[tileIdx] & 0x03FF) == TID_BUSH) {
+        // 1 in 100 chance per frame while moving
+        if((qran() % 100) == 0) {
+            currentState = STATE_BATTLE;
+            
+            // Visual Flash effect
+            REG_MOSAIC = MOS_BG0_H(8) | MOS_BG0_V(8);
+            REG_BG0CNT |= BG_MOSAIC;
+            
+            // Clear Text Layer
+            tte_erase_screen();
         }
     }
 }
 
-// ----------------------------- Init ------------------------------------
+void update_battle() {
+    // Hide the overworld map by disabling BG0 or changing priority.
+    // For simplicity, we just draw a box using the Text Engine.
+    
+    tte_write("#{P:20,60}"); // Position cursor
+    tte_write("#{ci:1}Wild PIDGEY appeared!\n\n");
+    tte_write("   Press A to Run.");
+    
+    // Hide hero sprite
+    obj_hide(&oam_mem[0]);
 
-static void video_init(void)
-{
-    // Interrupts for VBlankIntrWait
-    irq_init(NULL);
-    irq_add(II_VBLANK, NULL);
-    irq_enable(II_VBLANK);
-
-    // Mode 0, BG0 text, BG1 world, sprites on
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_OBJ | DCNT_OBJ_1D;
-
-    // Text engine on BG0, screenblock 31, charblock 0
-    tte_init_se_default(0, BG_CBB(0) | BG_SBB(31));
-
-    // World on BG1, screenblock 30, charblock 1
-    REG_BG1CNT = BG_CBB(1) | BG_SBB(30) | BG_4BPP | BG_REG_32x32 | BG_PRIO(2);
-
-    // Keep BG palette indices 0/1 friendly to text (black/white).
-    pal_bg_mem[0] = RGB15(0, 0, 0);
-    pal_bg_mem[1] = RGB15(31, 31, 31);
-
-    // World colors (indices 2..4)
-    pal_bg_mem[2] = RGB15(10, 24, 10);  // grass green
-    pal_bg_mem[3] = RGB15(24, 20, 10);  // path tan
-    pal_bg_mem[4] = RGB15(12, 12, 12);  // wall gray
-
-    // Load BG1 tiles into charblock 1
-    dma3_cpy(tile_mem[1], bg_tiles, sizeof(bg_tiles));
-
-    // OBJ palette
-    pal_obj_mem[0] = RGB15(0,0,0);      // transparent index (treated as 0)
-    pal_obj_mem[1] = RGB15(31, 6, 6);   // player color (red-ish)
-
-    // Load sprite tiles into OBJ tile memory
-    dma3_cpy(tile_mem[4], obj_tiles, sizeof(obj_tiles));
-
-    // Init OAM shadow
-    oam_init(obj_buffer, 128);
-
-    // Seed RNG with some changing register bits
-    g_rng ^= ((u32)REG_VCOUNT << 16) ^ (u32)REG_TM0CNT_L;
+    if(key_hit(KEY_A)) {
+        currentState = STATE_OVERWORLD;
+        tte_erase_screen();
+        // Turn off mosaic effect
+        REG_BG0CNT &= ~BG_MOSAIC;
+    }
 }
 
-// ----------------------------- Main ------------------------------------
+// --- Main Loop ---
 
-int main(void)
-{
-    video_init();
-    build_world();
-    enter_world();
+int main() {
+    // Basic setup
+    init_graphics();
+    init_map();
+    
+    // Init Player
+    hero.x = 20;
+    hero.y = 20;
+    hero.tileIndex = TID_HERO;
+    
+    // Seed random number generator
+    sqran(1234);
 
-    while(1)
-    {
-        VBlankIntrWait();
+    while(1) {
+        vid_vsync();
+        key_poll();
 
-        // Update game logic
-        if(g_mode == MODE_WORLD)
-            world_update();
-        else
-            battle_update();
-
-        // Push OAM shadow to hardware
-        oam_copy(oam_mem, obj_buffer, 1);
+        if(currentState == STATE_OVERWORLD) {
+            // Ensure Map is visible, Text is hidden (or transparent)
+            REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
+            update_overworld();
+        } 
+        else if (currentState == STATE_BATTLE) {
+            // In battle, we use the text layer.
+            // TTE writes to map 31.
+            update_battle();
+        }
     }
+
+    return 0;
 }
