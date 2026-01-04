@@ -7,6 +7,8 @@
 #include <tonc.h>
 #include <string.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -153,25 +155,25 @@ static const u32 tile_star[8] = {
 
 // Sprite palette
 static const u16 obj_palette[16] = {
-    RGB15( 0,  0,  0),    // 0: Transparent
-    RGB15(31, 31, 31),    // 1: White
-    RGB15( 0, 16, 31),    // 2: Light blue (player)
-    RGB15(31, 31,  0),    // 3: Yellow (player accent)
-    RGB15(31, 16, 16),    // 4: Pink (enemy 0)
-    RGB15(31,  0,  0),    // 5: Red (enemy 1)
-    RGB15(20, 16, 31),    // 6: Purple accent
-    RGB15(20,  0, 31),    // 7: Purple (enemy 2)
-    RGB15(31, 20,  0),    // 8: Orange accent
-    RGB15( 0, 31,  0),    // 9: Green (powerup)
-    RGB15(31, 16,  0),    // A: Orange (explosion)
+    RGB15_C( 0,  0,  0),    // 0: Transparent
+    RGB15_C(31, 31, 31),    // 1: White
+    RGB15_C( 0, 16, 31),    // 2: Light blue (player)
+    RGB15_C(31, 31,  0),    // 3: Yellow (player accent)
+    RGB15_C(31, 16, 16),    // 4: Pink (enemy 0)
+    RGB15_C(31,  0,  0),    // 5: Red (enemy 1)
+    RGB15_C(20, 16, 31),    // 6: Purple accent
+    RGB15_C(20,  0, 31),    // 7: Purple (enemy 2)
+    RGB15_C(31, 20,  0),    // 8: Orange accent
+    RGB15_C( 0, 31,  0),    // 9: Green (powerup)
+    RGB15_C(31, 16,  0),    // A: Orange (explosion)
     0, 0, 0, 0, 0
 };
 
 // Background palette
 static const u16 bg_palette[16] = {
-    RGB15( 0,  0,  4),    // 0: Dark blue (space)
-    RGB15(20, 20, 25),    // 1: Dim star
-    RGB15(31, 31, 31),    // 2: Bright star
+    RGB15_C( 0,  0,  4),    // 0: Dark blue (space)
+    RGB15_C(20, 20, 25),    // 1: Dim star
+    RGB15_C(31, 31, 31),    // 2: Bright star
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
