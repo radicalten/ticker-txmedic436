@@ -4,6 +4,8 @@
 // 1. GRAPHICS DATA (EMBEDDED)
 // ===========================================================================
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // A simple 16-color palette
 // Color 0: Transparent/Backdrop
 // Color 1: Dark Green (Grass)
@@ -13,8 +15,8 @@
 // Color 5: Brown (Boots/Belt)
 // Color 6: Silver (Sword)
 const unsigned short game_palette[] = {
-    RGB15(0,0,0),    RGB15(0,15,0),   RGB15(5,20,5),   RGB15(31,25,15), 
-    RGB15(0,31,0),   RGB15(15,10,0),  RGB15(25,25,25), RGB15(31,31,31),
+    RGB15_C(0,0,0),    RGB15_C(0,15,0),   RGB15_C(5,20,5),   RGB15_C(31,25,15), 
+    RGB15_C(0,31,0),   RGB15_C(15,10,0),  RGB15_C(25,25,25), RGB15_C(31,31,31),
     0,0,0,0,0,0,0,0 // Padding
 };
 
