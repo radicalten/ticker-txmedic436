@@ -5,6 +5,7 @@
 #define GRID_W      6
 #define GRID_H      10
 #define BLOCK_SIZE  16
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
 
 // Screen positioning to center the grid
 #define OFFSET_X    ((240 - (GRID_W * BLOCK_SIZE)) / 2)
@@ -12,7 +13,7 @@
 
 // Colors
 #define COLOR_BG    CLR_BLACK
-#define COLOR_GRID  RGB15(5, 5, 5)
+#define COLOR_GRID  RGB15_C(5, 5, 5)
 
 // Block Types
 enum {
