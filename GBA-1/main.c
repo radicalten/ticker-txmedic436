@@ -1,530 +1,269 @@
-// panel_pon_like_tonc_single_file.c
-// Minimal Panel de Pon / Puzzle League-like prototype for GBA using tonc.
-// - 6x12 grid of colored blocks
-// - 2-wide cursor, swap with A
-// - match 3+ in rows/cols, clear, gravity, chain-clears
-// - rising stack over time (hold L to raise faster)
-// - single C file, no external art assets (tiles generated at runtime)
-//
-// Build (typical devkitARM + tonc setup):
-// arm-none-eabi-gcc ... panel_pon_like_tonc_single_file.c -ltonc -o game.elf
-// (Exact makefile/link flags depend on your environment.)
-
 #include <tonc.h>
-#include <stdbool.h>
-#include <string.h>
+#include <stdlib.h>
 
-// ---------------------------- Config ---------------------------------
+/* --- CONFIGURATION --- */
+#define GRID_W      6
+#define GRID_H      10
+#define BLOCK_SIZE  16
 
-#define COLS        6
-#define ROWS        12
-#define N_COLORS    6
+// Screen positioning to center the grid
+#define OFFSET_X    ((240 - (GRID_W * BLOCK_SIZE)) / 2)
+#define OFFSET_Y    ((160 - (GRID_H * BLOCK_SIZE)) / 2)
 
-// BG tile IDs
-#define TID_EMPTY   0
-#define TID_RED     1
-#define TID_GREEN   2
-#define TID_BLUE    3
-#define TID_YELLOW  4
-#define TID_PURPLE  5
-#define TID_CYAN    6
-#define TID_BORDER  7
+// Colors
+#define COLOR_BG    CLR_BLACK
+#define COLOR_GRID  RGB15(5, 5, 5)
 
-// Where the board is drawn on BG0 tilemap (in 8x8 tiles)
-#define BOARD_TX    12
-#define BOARD_TY    4
+// Block Types
+enum {
+    TYPE_EMPTY = 0,
+    TYPE_RED,
+    TYPE_GREEN,
+    TYPE_BLUE,
+    TYPE_YELLOW,
+    TYPE_PURPLE,
+    TYPE_CYAN,
+    TYPE_COUNT // Used for RNG
+};
 
-// Cursor uses two 8x8 sprites (OBJ) side-by-side
-#define CURSOR_OBJ_COUNT 2
+// Map colors to the enum
+const u16 block_colors[] = {
+    COLOR_GRID,   // Empty slot color
+    CLR_RED,
+    CLR_LIME,
+    CLR_BLUE,
+    CLR_YELLOW,
+    CLR_MAG,
+    CLR_CYAN
+};
 
-// Rising stack timing (in frames at ~60fps)
-#define RAISE_INTERVAL_FRAMES  150u
+/* --- GLOBAL STATE --- */
+u8 map[GRID_H][GRID_W];
+int cursor_x = 2;
+int cursor_y = 5;
 
-// Initial filled rows at bottom
-#define START_FILLED_ROWS  8
+// Simple state machine to handle animations/cascades
+enum GameState {
+    STATE_INPUT,
+    STATE_RESOLVE
+};
+int state = STATE_INPUT;
+int resolve_timer = 0;
 
-// Safety cap for resolve iterations (prevents pathological infinite loops)
-#define RESOLVE_ITER_CAP   32
+/* --- DRAWING FUNCTIONS --- */
 
-// ---------------------------- State ----------------------------------
-
-static u8 g_board[ROWS][COLS];
-
-static int g_cur_x = 0;   // 0..COLS-2 (cursor spans 2 horizontally)
-static int g_cur_y = 0;   // 0..ROWS-1
-
-static u32 g_raise_timer = 0;
-static bool g_dirty = true;
-static bool g_game_over = false;
-
-// OAM shadow
-static OBJ_ATTR g_obj_buffer[128];
-
-// ------------------------ Tiny “art” helpers --------------------------
-
-static inline void tile4bpp_solid(TILE *t, u8 pal_idx)
-{
-	// TILE.data is u32[8]; each u32 is 8 pixels (4bpp nibbles) for one row.
-	const u32 v = (u32)pal_idx * 0x11111111u;
-	for(int i=0; i<8; i++)
-		t->data[i] = v;
+// Draw a filled rectangle in Mode 3
+void draw_rect(int x, int y, int w, int h, u16 color) {
+    for (int iy = 0; iy < h; iy++) {
+        for (int ix = 0; ix < w; ix++) {
+            m3_mem[((y + iy) * 240) + (x + ix)] = color;
+        }
+    }
 }
 
-static inline void tile4bpp_outline8(TILE *t, u8 pal_idx)
-{
-	// 8x8 outline: edges = pal_idx, inside = 0 (transparent for OBJ, black for BG).
-	// We'll use it for OBJ; palette index 0 is transparent in OBJ.
-	u8 px[8][8];
-	memset(px, 0, sizeof(px));
-
-	for(int y=0; y<8; y++)
-	{
-		for(int x=0; x<8; x++)
-		{
-			if(x==0 || x==7 || y==0 || y==7)
-				px[y][x] = pal_idx;
-		}
-	}
-
-	for(int y=0; y<8; y++)
-	{
-		u32 row = 0;
-		for(int x=0; x<8; x++)
-		{
-			// pack nibble x into row
-			row |= ((u32)(px[y][x] & 0xF)) << (4*x);
-		}
-		t->data[y] = row;
-	}
+// Draw a hollow rectangle (for the cursor)
+void draw_frame(int x, int y, int w, int h, u16 color) {
+    // Top & Bottom
+    for(int ix=0; ix<w; ix++) {
+        m3_mem[(y * 240) + (x + ix)] = color;
+        m3_mem[((y + h - 1) * 240) + (x + ix)] = color;
+    }
+    // Left & Right
+    for(int iy=0; iy<h; iy++) {
+        m3_mem[((y + iy) * 240) + x] = color;
+        m3_mem[((y + iy) * 240) + (x + w - 1)] = color;
+    }
 }
 
-// ---------------------------- Random ---------------------------------
+void draw_game() {
+    // 1. Draw the board blocks
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            int px = OFFSET_X + (x * BLOCK_SIZE);
+            int py = OFFSET_Y + (y * BLOCK_SIZE);
+            
+            // Draw block body
+            // We subtract 1 from size to create a small grid line effect
+            draw_rect(px, py, BLOCK_SIZE-1, BLOCK_SIZE-1, block_colors[map[y][x]]);
+        }
+    }
 
-static inline u8 rand_color(void)
-{
-	// Colors are 1..N_COLORS (tile IDs match palette index in this prototype)
-	return (u8)(1 + (qran() % N_COLORS));
+    // 2. Draw the Cursor (2 blocks wide)
+    int cx = OFFSET_X + (cursor_x * BLOCK_SIZE);
+    int cy = OFFSET_Y + (cursor_y * BLOCK_SIZE);
+    
+    // Draw a thick white outline (simulated by drawing 2 frames)
+    u16 cursor_col = CLR_WHITE;
+    draw_frame(cx - 1, cy - 1, (BLOCK_SIZE * 2) + 1, BLOCK_SIZE + 1, cursor_col);
+    draw_frame(cx - 2, cy - 2, (BLOCK_SIZE * 2) + 3, BLOCK_SIZE + 3, cursor_col);
 }
 
-// --------------------------- Game logic --------------------------------
+/* --- GAME LOGIC --- */
 
-static void board_clear(void)
-{
-	memset(g_board, 0, sizeof(g_board));
+void init_map() {
+    // Initialize with some random blocks, but leave top empty
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            if(y > 4) { // Only fill bottom half
+                map[y][x] = (rand() % (TYPE_COUNT - 1)) + 1;
+            } else {
+                map[y][x] = TYPE_EMPTY;
+            }
+        }
+    }
 }
 
-static void board_init(void)
-{
-	board_clear();
+// Check for matches (horizontal and vertical)
+// Returns 1 if matches were found and cleared
+int check_matches() {
+    u8 to_remove[GRID_H][GRID_W];
+    // Clear remove mask
+    for(int i=0; i<GRID_H * GRID_W; i++) ((u8*)to_remove)[i] = 0;
 
-	// Fill bottom START_FILLED_ROWS with random blocks.
-	for(int y=ROWS-START_FILLED_ROWS; y<ROWS; y++)
-		for(int x=0; x<COLS; x++)
-			g_board[y][x] = rand_color();
+    int match_found = 0;
 
-	// Remove any immediate matches by resolving a few times.
-	// (This keeps it from starting with obvious clears.)
-	for(int i=0; i<RESOLVE_ITER_CAP; i++)
-	{
-		// gravity first
-		bool moved = false;
-		for(int x=0; x<COLS; x++)
-		{
-			int write = ROWS-1;
-			for(int y=ROWS-1; y>=0; y--)
-			{
-				u8 v = g_board[y][x];
-				if(v)
-				{
-					if(y != write)
-					{
-						g_board[write][x] = v;
-						g_board[y][x] = 0;
-						moved = true;
-					}
-					write--;
-				}
-			}
-		}
+    // Horizontal Checks
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W - 2; x++) {
+            u8 t = map[y][x];
+            if (t == TYPE_EMPTY) continue;
+            if (map[y][x+1] == t && map[y][x+2] == t) {
+                to_remove[y][x] = 1;
+                to_remove[y][x+1] = 1;
+                to_remove[y][x+2] = 1;
+                match_found = 1;
+            }
+        }
+    }
 
-		// find matches
-		u8 mark[ROWS][COLS];
-		memset(mark, 0, sizeof(mark));
-		bool any = false;
+    // Vertical Checks
+    for (int x = 0; x < GRID_W; x++) {
+        for (int y = 0; y < GRID_H - 2; y++) {
+            u8 t = map[y][x];
+            if (t == TYPE_EMPTY) continue;
+            if (map[y+1][x] == t && map[y+2][x] == t) {
+                to_remove[y][x] = 1;
+                to_remove[y+1][x] = 1;
+                to_remove[y+2][x] = 1;
+                match_found = 1;
+            }
+        }
+    }
 
-		// horizontal
-		for(int y=0; y<ROWS; y++)
-		{
-			int x=0;
-			while(x < COLS)
-			{
-				u8 c = g_board[y][x];
-				if(!c) { x++; continue; }
-				int len=1;
-				while(x+len < COLS && g_board[y][x+len]==c) len++;
-				if(len >= 3)
-				{
-					any = true;
-					for(int k=0; k<len; k++) mark[y][x+k] = 1;
-				}
-				x += len;
-			}
-		}
+    // Apply removal
+    if (match_found) {
+        for (int y = 0; y < GRID_H; y++) {
+            for (int x = 0; x < GRID_W; x++) {
+                if (to_remove[y][x]) {
+                    map[y][x] = TYPE_EMPTY;
+                }
+            }
+        }
+    }
 
-		// vertical
-		for(int x=0; x<COLS; x++)
-		{
-			int y=0;
-			while(y < ROWS)
-			{
-				u8 c = g_board[y][x];
-				if(!c) { y++; continue; }
-				int len=1;
-				while(y+len < ROWS && g_board[y+len][x]==c) len++;
-				if(len >= 3)
-				{
-					any = true;
-					for(int k=0; k<len; k++) mark[y+k][x] = 1;
-				}
-				y += len;
-			}
-		}
-
-		if(any)
-		{
-			for(int y=0; y<ROWS; y++)
-				for(int x=0; x<COLS; x++)
-					if(mark[y][x]) g_board[y][x] = 0;
-		}
-		else if(!moved)
-			break;
-	}
-
-	g_cur_x = 0;
-	g_cur_y = ROWS-2;
-	g_raise_timer = 0;
-	g_game_over = false;
-	g_dirty = true;
+    return match_found;
 }
 
-static bool apply_gravity(void)
-{
-	bool moved = false;
-	for(int x=0; x<COLS; x++)
-	{
-		int write = ROWS-1;
-		for(int y=ROWS-1; y>=0; y--)
-		{
-			u8 v = g_board[y][x];
-			if(v)
-			{
-				if(y != write)
-				{
-					g_board[write][x] = v;
-					g_board[y][x] = 0;
-					moved = true;
-				}
-				write--;
-			}
-		}
-	}
-	return moved;
+// Handle gravity
+// Returns 1 if any blocks moved down
+int handle_gravity() {
+    int moved = 0;
+    // Iterate from bottom up, column by column
+    for (int x = 0; x < GRID_W; x++) {
+        for (int y = GRID_H - 1; y > 0; y--) {
+            // If current is empty and above is not
+            if (map[y][x] == TYPE_EMPTY && map[y-1][x] != TYPE_EMPTY) {
+                map[y][x] = map[y-1][x];
+                map[y-1][x] = TYPE_EMPTY;
+                moved = 1;
+            }
+        }
+    }
+    return moved;
 }
 
-static bool find_matches(u8 mark[ROWS][COLS])
-{
-	memset(mark, 0, ROWS*COLS);
-	bool any = false;
+/* --- MAIN --- */
 
-	// horizontal
-	for(int y=0; y<ROWS; y++)
-	{
-		int x=0;
-		while(x < COLS)
-		{
-			u8 c = g_board[y][x];
-			if(!c) { x++; continue; }
-			int len=1;
-			while(x+len < COLS && g_board[y][x+len]==c) len++;
-			if(len >= 3)
-			{
-				any = true;
-				for(int k=0; k<len; k++) mark[y][x+k] = 1;
-			}
-			x += len;
-		}
-	}
+int main() {
+    // 1. Init Graphics (Mode 3: 240x160 Bitmap, BG2 enabled)
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
 
-	// vertical
-	for(int x=0; x<COLS; x++)
-	{
-		int y=0;
-		while(y < ROWS)
-		{
-			u8 c = g_board[y][x];
-			if(!c) { y++; continue; }
-			int len=1;
-			while(y+len < ROWS && g_board[y+len][x]==c) len++;
-			if(len >= 3)
-			{
-				any = true;
-				for(int k=0; k<len; k++) mark[y+k][x] = 1;
-			}
-			y += len;
-		}
-	}
+    // 2. Setup initial state
+    init_map();
+    
+    // Seed RNG (crude)
+    srand(1234);
 
-	return any;
-}
+    while (1) {
+        vid_vsync(); // Wait for VBlank
+        key_poll();  // Read input
 
-static int clear_marked(const u8 mark[ROWS][COLS])
-{
-	int cleared = 0;
-	for(int y=0; y<ROWS; y++)
-	{
-		for(int x=0; x<COLS; x++)
-		{
-			if(mark[y][x] && g_board[y][x])
-			{
-				g_board[y][x] = 0;
-				cleared++;
-			}
-		}
-	}
-	return cleared;
-}
+        // Clear screen (Simple fill)
+        // Optimization: In a real game, only redraw changed areas.
+        // For this demo, we clear the specific grid area to avoid full screen clear flicker
+        draw_rect(OFFSET_X-5, OFFSET_Y-5, (GRID_W*BLOCK_SIZE)+10, (GRID_H*BLOCK_SIZE)+10, COLOR_BG);
 
-static void resolve_board(void)
-{
-	for(int iter=0; iter<RESOLVE_ITER_CAP; iter++)
-	{
-		bool moved = apply_gravity();
+        /* GAME LOOP */
+        
+        if (state == STATE_INPUT) {
+            // MOVEMENT
+            if (key_hit(KEY_UP) && cursor_y > 0) cursor_y--;
+            if (key_hit(KEY_DOWN) && cursor_y < GRID_H - 1) cursor_y++;
+            if (key_hit(KEY_LEFT) && cursor_x > 0) cursor_x--;
+            if (key_hit(KEY_RIGHT) && cursor_x < GRID_W - 2) cursor_x++; // -2 because cursor is width 2
 
-		u8 mark[ROWS][COLS];
-		bool any = find_matches(mark);
-		if(any)
-		{
-			clear_marked(mark);
-			g_dirty = true;
-			continue;
-		}
+            // SWAPPING (Button A)
+            if (key_hit(KEY_A)) {
+                u8 temp = map[cursor_y][cursor_x];
+                map[cursor_y][cursor_x] = map[cursor_y][cursor_x + 1];
+                map[cursor_y][cursor_x + 1] = temp;
+                
+                // After a swap, we check if physics need to happen
+                state = STATE_RESOLVE;
+                resolve_timer = 10; // Initial delay
+            }
 
-		if(!moved)
-			break;
-	}
-}
+            // RESET (Button Select)
+            if (key_hit(KEY_SELECT)) {
+                init_map();
+            }
+            
+            // Check if blocks are floating (e.g. after a manual clear or swap)
+            if(handle_gravity()) state = STATE_RESOLVE;
+            // Check if matches exist spontaneously
+            if(check_matches()) state = STATE_RESOLVE;
 
-static void swap_cursor_pair(void)
-{
-	const int x = g_cur_x;
-	const int y = g_cur_y;
+        } 
+        else if (state == STATE_RESOLVE) {
+            // This state handles Gravity and Matching cascades automatically.
+            // We add a small timer so the player can see the blocks falling/clearing.
+            
+            if (resolve_timer > 0) {
+                resolve_timer--;
+            } else {
+                // 1. Try Gravity
+                int fell = handle_gravity();
+                
+                if (fell) {
+                    // If things fell, wait a bit, then loop again
+                    resolve_timer = 5; 
+                } else {
+                    // 2. If stable, Check Matches
+                    int matched = check_matches();
+                    
+                    if (matched) {
+                        // If things popped, gravity might need to happen next
+                        resolve_timer = 15; // Longer pause on pop
+                    } else {
+                        // 3. Stable board, return to input
+                        state = STATE_INPUT;
+                    }
+                }
+            }
+        }
 
-	// cursor spans x and x+1
-	u8 *a = &g_board[y][x];
-	u8 *b = &g_board[y][x+1];
+        draw_game();
+    }
 
-	// Optional: do nothing if both empty
-	if((*a==0) && (*b==0))
-		return;
-
-	u8 tmp = *a;
-	*a = *b;
-	*b = tmp;
-
-	g_dirty = true;
-	resolve_board();
-}
-
-static void raise_stack(void)
-{
-	// Game over if anything is already in the top row.
-	for(int x=0; x<COLS; x++)
-	{
-		if(g_board[0][x] != 0)
-		{
-			g_game_over = true;
-			return;
-		}
-	}
-
-	// Shift everything up by 1 row.
-	for(int y=0; y<ROWS-1; y++)
-		for(int x=0; x<COLS; x++)
-			g_board[y][x] = g_board[y+1][x];
-
-	// New random bottom row.
-	for(int x=0; x<COLS; x++)
-		g_board[ROWS-1][x] = rand_color();
-
-	g_dirty = true;
-	resolve_board();
-}
-
-// --------------------------- Rendering ---------------------------------
-
-static void draw_border(void)
-{
-	SCR_ENTRY *map = se_mem[31];
-
-	// top/bottom border
-	for(int x=BOARD_TX-1; x<=BOARD_TX+COLS; x++)
-	{
-		map[(BOARD_TY-1)*32 + x]       = TID_BORDER;
-		map[(BOARD_TY+ROWS)*32 + x]    = TID_BORDER;
-	}
-
-	// left/right border
-	for(int y=BOARD_TY-1; y<=BOARD_TY+ROWS; y++)
-	{
-		map[y*32 + (BOARD_TX-1)]       = TID_BORDER;
-		map[y*32 + (BOARD_TX+COLS)]    = TID_BORDER;
-	}
-}
-
-static void draw_board(void)
-{
-	SCR_ENTRY *map = se_mem[31];
-
-	// draw cells
-	for(int y=0; y<ROWS; y++)
-	{
-		for(int x=0; x<COLS; x++)
-		{
-			const u16 tid = (u16)g_board[y][x]; // 0..6
-			map[(BOARD_TY+y)*32 + (BOARD_TX+x)] = tid;
-		}
-	}
-
-	draw_border();
-}
-
-static void update_cursor_objs(void)
-{
-	if(g_game_over)
-	{
-		for(int i=0; i<CURSOR_OBJ_COUNT; i++)
-			obj_hide(&g_obj_buffer[i]);
-		return;
-	}
-
-	const int px = (BOARD_TX + g_cur_x)*8;
-	const int py = (BOARD_TY + g_cur_y)*8;
-
-	// left highlight
-	obj_unhide(&g_obj_buffer[0], 0);
-	obj_set_pos(&g_obj_buffer[0], px, py);
-
-	// right highlight
-	obj_unhide(&g_obj_buffer[1], 0);
-	obj_set_pos(&g_obj_buffer[1], px+8, py);
-}
-
-// ------------------------- Video setup ---------------------------------
-
-static void video_init(void)
-{
-	REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-	REG_BG0CNT  = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32;
-
-	// BG palette (indices match tile “colors” in this prototype)
-	pal_bg_mem[0] = RGB15(0,0,0);       // empty
-	pal_bg_mem[1] = RGB15(31,6,6);      // red
-	pal_bg_mem[2] = RGB15(6,31,6);      // green
-	pal_bg_mem[3] = RGB15(6,6,31);      // blue
-	pal_bg_mem[4] = RGB15(31,31,6);     // yellow
-	pal_bg_mem[5] = RGB15(31,6,31);     // purple
-	pal_bg_mem[6] = RGB15(6,31,31);     // cyan
-	pal_bg_mem[7] = RGB15(12,12,12);    // border
-
-	// Generate BG tiles: solid fills for IDs 0..7
-	for(int tid=0; tid<=TID_BORDER; tid++)
-		tile4bpp_solid(&tile_mem[0][tid], (u8)tid);
-
-	// Clear map
-	memset16(se_mem[31], 0, 32*32);
-
-	// OBJ palette for cursor outline
-	pal_obj_mem[0] = RGB15(0,0,0);       // transparent (index 0)
-	pal_obj_mem[1] = RGB15(31,31,31);    // white outline
-
-	// Cursor tile at OBJ tile 0
-	tile4bpp_outline8(&tile_mem_obj[0], 1);
-
-	// Init OAM shadow and create 2 cursor sprites
-	oam_init(g_obj_buffer, 128);
-
-	for(int i=0; i<CURSOR_OBJ_COUNT; i++)
-	{
-		// 8x8 square, tile 0, palette bank 0, priority 0
-		obj_set_attr(&g_obj_buffer[i],
-			ATTR0_SQUARE,
-			ATTR1_SIZE_8,
-			ATTR2_BUILD(0, 0, 0));
-		obj_hide(&g_obj_buffer[i]);
-	}
-}
-
-// ------------------------------ Main -----------------------------------
-
-int main(void)
-{
-	// Seed PRNG. (If you want more variety, you can mix in REG_VCOUNT/keys, etc.)
-	sqran(0xC0FFEEu);
-
-	video_init();
-	board_init();
-
-	u32 frame = 0;
-
-	while(1)
-	{
-		key_poll();
-
-		if(!g_game_over)
-		{
-			// Cursor movement with simple key-repeat.
-			const u16 held = key_curr;
-			const bool repeat_tick = ((frame & 7u) == 0);
-
-			if(key_hit(KEY_LEFT)  || (repeat_tick && (held & KEY_LEFT)))  { if(g_cur_x > 0)        g_cur_x--; }
-			if(key_hit(KEY_RIGHT) || (repeat_tick && (held & KEY_RIGHT))) { if(g_cur_x < COLS-2)   g_cur_x++; }
-			if(key_hit(KEY_UP)    || (repeat_tick && (held & KEY_UP)))    { if(g_cur_y > 0)        g_cur_y--; }
-			if(key_hit(KEY_DOWN)  || (repeat_tick && (held & KEY_DOWN)))  { if(g_cur_y < ROWS-1)   g_cur_y++; }
-
-			if(key_hit(KEY_A))
-				swap_cursor_pair();
-
-			// Rising stack: hold L to speed up.
-			g_raise_timer += (held & KEY_L) ? 3u : 1u;
-			if(g_raise_timer >= RAISE_INTERVAL_FRAMES)
-			{
-				g_raise_timer = 0;
-				raise_stack();
-			}
-		}
-		else
-		{
-			// Restart
-			if(key_hit(KEY_START) || key_hit(KEY_A))
-				board_init();
-		}
-
-		update_cursor_objs();
-
-		// VBlank section
-		vid_vsync();
-
-		if(g_dirty)
-		{
-			draw_board();
-			g_dirty = false;
-		}
-
-		oam_copy(oam_mem, g_obj_buffer, 128);
-
-		frame++;
-	}
-
-	// not reached
-	// return 0;
+    return 0;
 }
