@@ -1,454 +1,231 @@
-// main.c - Single-file "Link's Awakening-ish" top-down prototype using tonc
-// Controls:
-//   D-Pad: move
-//   A    : sword attack
-//
-// Build notes (typical devkitARM + tonc setup):
-//   - Put this in a tonc project (tonc template) as main.c and build normally, OR
-//   - Compile/link against libtonc + libgba with your existing makefile/toolchain.
-//
-// This is a small prototype, not a full game.
-
 #include <tonc.h>
 
-// ---------------------------- Config ----------------------------
+// ===========================================================================
+// 1. GRAPHICS DATA (EMBEDDED)
+// ===========================================================================
 
-#define MAP_W      32
-#define MAP_H      32
-#define TILE_SIZE   8
-#define MAP_PX_W   (MAP_W*TILE_SIZE)
-#define MAP_PX_H   (MAP_H*TILE_SIZE)
+// A simple 16-color palette
+// Color 0: Transparent/Backdrop
+// Color 1: Dark Green (Grass)
+// Color 2: Light Green (Grass Highlight)
+// Color 3: Skin Tone
+// Color 4: Tunic Green
+// Color 5: Brown (Boots/Belt)
+// Color 6: Silver (Sword)
+const unsigned short game_palette[] = {
+    RGB15(0,0,0),    RGB15(0,15,0),   RGB15(5,20,5),   RGB15(31,25,15), 
+    RGB15(0,31,0),   RGB15(15,10,0),  RGB15(25,25,25), RGB15(31,31,31),
+    0,0,0,0,0,0,0,0 // Padding
+};
 
-#define SCREEN_W 240
-#define SCREEN_H 160
+// Tile: Grass (8x8 pixels, 4bpp)
+// Represented as integers where each hex digit is a pixel color index
+const unsigned int tile_grass[8] = {
+    0x11111111, 0x12111121, 0x11111111, 0x11121111,
+    0x11111111, 0x11211211, 0x11111111, 0x12111111
+};
 
-// Player collision box inside 16x16 sprite
-#define PL_OX 2
-#define PL_OY 2
-#define PL_W  12
-#define PL_H  12
+// Meta-Tile: Player (16x16 pixels -> 4 tiles of 8x8)
+// Top-Left, Top-Right, Bottom-Left, Bottom-Right
+const unsigned int tile_link[32] = {
+    // Tile 0: Head Left
+    0x00044400, 0x00444440, 0x04444444, 0x04444444,
+    0x04444444, 0x00333333, 0x00333303, 0x00033300,
+    // Tile 1: Head Right
+    0x00444000, 0x04444400, 0x44444440, 0x44444440,
+    0x44444440, 0x33333300, 0x30333300, 0x00333000,
+    // Tile 2: Body Left
+    0x00044400, 0x00444440, 0x00055500, 0x00044400,
+    0x00044400, 0x00444440, 0x00440440, 0x00550550,
+    // Tile 3: Body Right
+    0x00444000, 0x04444400, 0x00555000, 0x00444000,
+    0x00444000, 0x04444400, 0x04404400, 0x05505500
+};
 
-typedef enum { DIR_UP=0, DIR_DOWN=1, DIR_LEFT=2, DIR_RIGHT=3 } Dir;
+// Meta-Tile: Player Attacking (Sword out)
+const unsigned int tile_link_atk[32] = {
+    // Tile 0: Head Left
+    0x00044400, 0x00444440, 0x04444444, 0x04444444,
+    0x04444444, 0x00333333, 0x00333303, 0x00033300,
+    // Tile 1: Head Right (Sword Hand)
+    0x00444000, 0x04444400, 0x44444440, 0x44444440,
+    0x44444440, 0x33333300, 0x30333366, 0x00333066,
+    // Tile 2: Body Left
+    0x00044400, 0x00444440, 0x00055500, 0x00044400,
+    0x00044400, 0x00444440, 0x00440440, 0x00550550,
+    // Tile 3: Body Right (Sword Tip)
+    0x00444000, 0x04444400, 0x00555066, 0x00444066,
+    0x00444000, 0x04444400, 0x04404400, 0x05505500
+};
 
-typedef struct
-{
-    int x, y;          // world position (top-left of 16x16 sprite)
-    Dir dir;
-    int hp;            // 0..3
-    int invuln;        // frames of invulnerability after taking damage
-    int attack;        // frames remaining of sword swing (0=not attacking)
+// ===========================================================================
+// 2. GAME CONSTANTS & STRUCTS
+// ===========================================================================
+
+#define PLAYER_SPEED 2
+#define ATK_DURATION 15
+
+typedef enum {
+    STATE_IDLE,
+    STATE_WALK,
+    STATE_ATTACK
+} State;
+
+typedef struct {
+    int x, y;
+    int dx, dy;
+    State state;
+    int facing_right; // 1 = Right, 0 = Left
+    int timer;        // For attack duration
 } Player;
 
-typedef struct
-{
-    int x, y;
-    int vx;            // simple patrol velocity
-    int alive;
-} Enemy;
+OBJ_ATTR obj_buffer[128]; // OAM Buffer
+Player link;
 
-// ---------------------------- Globals ----------------------------
+// ===========================================================================
+// 3. INITIALIZATION
+// ===========================================================================
 
-OBJ_ATTR obj_buffer[128];
+void init_graphics() {
+    // 1. Load Palette (Background and Sprite)
+    memcpy32(pal_bg_mem, game_palette, sizeof(game_palette)/4);
+    memcpy32(pal_obj_mem, game_palette, sizeof(game_palette)/4);
 
-static u16 g_map[MAP_W*MAP_H];   // tile ids (0=floor, 1=wall)
+    // 2. Load Tiles into VRAM
+    // Background tiles go to Charblock 0
+    memcpy32(&tile_mem[0][1], tile_grass, sizeof(tile_grass)/4);
+    
+    // Sprite tiles go to Charblock 4
+    // We load Normal Link at index 0, Attack Link at index 4
+    memcpy32(&tile_mem[4][0], tile_link, sizeof(tile_link)/4);
+    memcpy32(&tile_mem[4][4], tile_link_atk, sizeof(tile_link_atk)/4);
 
-// Sprite tile indices in OBJ VRAM (1D mapping)
-enum
-{
-    OBJT_LINK_BASE  = 0,   // uses 4 tiles (16x16)
-    OBJT_SWORD_BASE = 4,   // uses 4 tiles (16x16)
-    OBJT_ENEMY_BASE = 8,   // uses 4 tiles (16x16)
-    OBJT_HEART_FULL = 12,  // 1 tile (8x8)
-    OBJT_HEART_EMPTY= 13   // 1 tile (8x8)
-};
+    // 3. Create Background Map (Screenblock 30)
+    // Fill the screen (32x32 tiles) with the grass tile (Index 1)
+    u16 *map_ptr = se_mem[30];
+    for(int i=0; i<32*32; i++) {
+        map_ptr[i] = 1; // Use tile index 1
+    }
 
-// OAM object indices
-enum
-{
-    OAM_LINK  = 0,
-    OAM_SWORD = 1,
-    OAM_H0    = 2,
-    OAM_H1    = 3,
-    OAM_H2    = 4,
-    OAM_ENEMY = 5
-};
-
-// ---------------------------- Helpers ----------------------------
-
-static inline int i_clamp(int v, int lo, int hi)
-{
-    if(v < lo) return lo;
-    if(v > hi) return hi;
-    return v;
+    // 4. Initialize OAM
+    oam_init(obj_buffer, 128);
 }
 
-static inline int rects_overlap(int ax, int ay, int aw, int ah,
-                                int bx, int by, int bw, int bh)
-{
-    return (ax < bx+bw) && (ax+aw > bx) && (ay < by+bh) && (ay+ah > by);
+void init_game() {
+    link.x = 104; // Center X (approx)
+    link.y = 64;  // Center Y (approx)
+    link.dx = 0;
+    link.dy = 0;
+    link.state = STATE_IDLE;
+    link.facing_right = 1;
+    link.timer = 0;
 }
 
-// 4bpp tile row with repeated nibble color (8 pixels => 8 nibbles => 32 bits)
-static inline u32 row_fill_nibble(int c4)
-{
-    // c4 must be 0..15
-    u32 n = (u32)(c4 & 15);
-    return n * 0x11111111u;
-}
+// ===========================================================================
+// 4. MAIN LOOP LOGIC
+// ===========================================================================
 
-static void make_tile_solid(TILE *t, int c4)
-{
-    for(int i=0; i<8; i++)
-        t->data[i] = row_fill_nibble(c4);
-}
+void update() {
+    // Handle Input
+    key_poll();
 
-static void make_tile_outline(TILE *t, int fill, int border)
-{
-    // Simple 8x8 outline. Pixels are nibbles packed in u32 rows.
-    // We'll build each row nibble-by-nibble for clarity.
-    for(int y=0; y<8; y++)
-    {
-        u32 row = 0;
-        for(int x=0; x<8; x++)
-        {
-            int c = fill;
-            if(x==0 || x==7 || y==0 || y==7) c = border;
-            row |= (u32)(c & 15) << (x*4);
+    // Attack Logic
+    if(link.state == STATE_ATTACK) {
+        link.timer--;
+        if(link.timer <= 0) {
+            link.state = STATE_IDLE;
         }
-        t->data[y] = row;
+    } 
+    else {
+        // Movement Input
+        link.dx = key_tri_horz() * PLAYER_SPEED;
+        link.dy = key_tri_vert() * PLAYER_SPEED;
+
+        // Start Attack
+        if(key_hit(KEY_A)) {
+            link.state = STATE_ATTACK;
+            link.timer = ATK_DURATION;
+            link.dx = 0; // Stop moving when attacking
+            link.dy = 0;
+        }
+
+        // Determine Facing
+        if(link.dx > 0) link.facing_right = 1;
+        if(link.dx < 0) link.facing_right = 0;
+
+        // Apply Movement
+        link.x += link.dx;
+        link.y += link.dy;
+
+        // Screen Boundaries (0 to 240 width, 0 to 160 height)
+        // Sprite is 16x16
+        if(link.x < 0) link.x = 0;
+        if(link.x > 240 - 16) link.x = 240 - 16;
+        if(link.y < 0) link.y = 0;
+        if(link.y > 160 - 16) link.y = 160 - 16;
     }
 }
 
-static void make_tile_heart(TILE *t, int fill, int outline)
-{
-    // Tiny stylized 8x8 "heart-ish" blob.
-    // 0 is transparent in OBJ; we still draw outline/fill.
-    static const u8 px[8][8] =
-    {
-        {0,1,1,0,0,1,1,0},
-        {1,1,1,1,1,1,1,1},
-        {1,1,1,1,1,1,1,1},
-        {1,1,1,1,1,1,1,1},
-        {0,1,1,1,1,1,1,0},
-        {0,0,1,1,1,1,0,0},
-        {0,0,0,1,1,0,0,0},
-        {0,0,0,0,0,0,0,0},
-    };
+void draw() {
+    OBJ_ATTR *obj = &obj_buffer[0];
 
-    for(int y=0; y<8; y++)
-    {
-        u32 row=0;
-        for(int x=0; x<8; x++)
-        {
-            int c=0;
-            if(px[y][x])
-            {
-                // outline if near an empty pixel
-                int nearEmpty=0;
-                for(int dy=-1; dy<=1; dy++)
-                for(int dx=-1; dx<=1; dx++)
-                {
-                    int nx=x+dx, ny=y+dy;
-                    if(nx<0||nx>=8||ny<0||ny>=8) continue;
-                    if(!px[ny][nx]) nearEmpty=1;
-                }
-                c = nearEmpty ? outline : fill;
-            }
-            row |= (u32)(c & 15) << (x*4);
-        }
-        t->data[y]=row;
-    }
-}
+    // Configure Sprite Attribute
+    u16 tid = 0; // Tile ID
+    u16 attr1_flips = 0;
 
-static void init_palettes(void)
-{
-    // BG palette
-    pal_bg_mem[0] = RGB15(0,0,0);          // background color
-    pal_bg_mem[1] = RGB15(10,18,10);       // floor green
-    pal_bg_mem[2] = RGB15(14,14,16);       // wall gray
-    pal_bg_mem[3] = RGB15(6,10,6);         // darker accent
-
-    // OBJ palette (index 0 must be transparent)
-    pal_obj_mem[0] = RGB15(0,0,0);         // transparent (treated as 0)
-    pal_obj_mem[1] = RGB15(0,20,0);        // Link green
-    pal_obj_mem[2] = RGB15(31,25,18);      // light (face-ish)
-    pal_obj_mem[3] = RGB15(0,10,0);        // dark green outline
-    pal_obj_mem[4] = RGB15(31,31,0);       // sword yellow
-    pal_obj_mem[5] = RGB15(31,0,0);        // enemy red
-    pal_obj_mem[6] = RGB15(12,12,12);      // empty heart gray
-    pal_obj_mem[7] = RGB15(31,0,12);       // heart fill (pink-red)
-}
-
-static void init_bg_tiles_and_map(void)
-{
-    // BG tiles go in charblock 0 (tile_mem[0])
-    TILE *bgtiles = tile_mem[0];
-
-    // Tile 0: floor
-    make_tile_solid(&bgtiles[0], 1);
-
-    // Tile 1: wall (outline-ish)
-    make_tile_outline(&bgtiles[1], 2, 3);
-
-    // Fill map with floor + border walls + some obstacles
-    for(int y=0; y<MAP_H; y++)
-    for(int x=0; x<MAP_W; x++)
-    {
-        int id = 0; // floor
-
-        if(x==0 || y==0 || x==MAP_W-1 || y==MAP_H-1)
-            id = 1; // border wall
-
-        // a few interior blocks
-        if((x==8 && y>4 && y<20) || (y==14 && x>10 && x<28) ||
-           (x==20 && y>8 && y<28) || (y==6 && x>3 && x<12))
-            id = 1;
-
-        // small "room" on right side
-        if(x>=24 && x<=29 && y>=20 && y<=27)
-        {
-            if(x==24 || x==29 || y==20 || y==27) id=1;
-        }
-
-        g_map[y*MAP_W + x] = (u16)id;
+    // Handle Animation Frame
+    if(link.state == STATE_ATTACK) {
+        tid = 4; // Start at tile index 4 for attack gfx
+    } else {
+        tid = 0; // Standard walk gfx
     }
 
-    // Copy map into screenblock 31
-    u16 *mapdst = se_mem[31];
-    for(int i=0; i<MAP_W*MAP_H; i++)
-        mapdst[i] = g_map[i]; // tile id only, no flips, palbank 0
+    // Handle flipping (Sprite Memory is optimized for one direction)
+    // If facing left, we flip horizontally
+    if(!link.facing_right) {
+        attr1_flips = ATTR1_HFLIP;
+    }
+
+    // Set OAM attributes
+    obj_set_attr(obj, 
+        ATTR0_SQUARE | ATTR0_Y(link.y),      // Shape and Y pos
+        ATTR1_SIZE_16 | ATTR1_X(link.x) | attr1_flips, // Size and X pos
+        ATTR2_PALBANK(0) | tid               // Palette 0, Tile Index
+    );
+
+    // Copy buffer to actual OAM memory
+    oam_copy(oam_mem, obj_buffer, 1);
 }
 
-static void init_obj_tiles(void)
-{
-    // OBJ tiles go in charblock 4 (tile_mem[4]) when using 1D mapping.
-    TILE *ot = tile_mem[4];
+// ===========================================================================
+// 5. ENTRY POINT
+// ===========================================================================
 
-    // Link: a green outlined square (4 tiles for 16x16)
-    for(int i=0; i<4; i++)
-        make_tile_outline(&ot[OBJT_LINK_BASE + i], 1, 3);
-
-    // Sword: bright yellow outlined square (4 tiles)
-    for(int i=0; i<4; i++)
-        make_tile_outline(&ot[OBJT_SWORD_BASE + i], 4, 3);
-
-    // Enemy: red outlined square (4 tiles)
-    for(int i=0; i<4; i++)
-        make_tile_outline(&ot[OBJT_ENEMY_BASE + i], 5, 3);
-
-    // Heart tiles: 8x8 each (single tile)
-    make_tile_heart(&ot[OBJT_HEART_FULL], 7, 5);   // fill pink-red, outline red
-    make_tile_heart(&ot[OBJT_HEART_EMPTY], 6, 3);  // fill gray, outline dark
-}
-
-static inline int map_is_solid_tile(int tx, int ty)
-{
-    if(tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H)
-        return 1;
-    return (g_map[ty*MAP_W + tx] == 1);
-}
-
-static inline int map_is_solid_px(int px, int py)
-{
-    int tx = px >> 3;
-    int ty = py >> 3;
-    return map_is_solid_tile(tx, ty);
-}
-
-static int player_collides_at(Player *pl, int nx, int ny)
-{
-    int x0 = nx + PL_OX;
-    int y0 = ny + PL_OY;
-    int x1 = x0 + PL_W - 1;
-    int y1 = y0 + PL_H - 1;
-
-    // Check 4 corners against wall tiles
-    if(map_is_solid_px(x0, y0)) return 1;
-    if(map_is_solid_px(x1, y0)) return 1;
-    if(map_is_solid_px(x0, y1)) return 1;
-    if(map_is_solid_px(x1, y1)) return 1;
-    return 0;
-}
-
-static void move_player(Player *pl, int dx, int dy)
-{
-    // Move X then Y for nicer wall sliding
-    int nx = pl->x + dx;
-    int ny = pl->y;
-
-    if(!player_collides_at(pl, nx, ny))
-        pl->x = nx;
-
-    nx = pl->x;
-    ny = pl->y + dy;
-
-    if(!player_collides_at(pl, nx, ny))
-        pl->y = ny;
-
-    pl->x = i_clamp(pl->x, 0, MAP_PX_W-16);
-    pl->y = i_clamp(pl->y, 0, MAP_PX_H-16);
-}
-
-static void set_obj16(int oam_id, int x, int y, int tile_id)
-{
-    OBJ_ATTR *oa = &obj_buffer[oam_id];
-    obj_set_attr(oa,
-        ATTR0_SQUARE,
-        ATTR1_SIZE_16,
-        ATTR2_PALBANK(0) | ATTR2_ID(tile_id));
-    obj_set_pos(oa, x, y);
-}
-
-static void set_obj8(int oam_id, int x, int y, int tile_id)
-{
-    OBJ_ATTR *oa = &obj_buffer[oam_id];
-    obj_set_attr(oa,
-        ATTR0_SQUARE,
-        ATTR1_SIZE_8,
-        ATTR2_PALBANK(0) | ATTR2_ID(tile_id));
-    obj_set_pos(oa, x, y);
-}
-
-// ---------------------------- Main ----------------------------
-
-int main(void)
-{
+int main() {
+    // Enable VBlank Interrupt (Good practice for vsync)
     irq_init(NULL);
     irq_add(II_VBLANK, NULL);
 
-    // Display setup: Mode 0, BG0, OBJ, 1D object tiles
+    // Setup Video Mode
+    // Mode 0: Tiled Backgrounds + Sprites
+    // BG0: Active
+    // OBJ: Active, 1D Mapping (Standard)
     REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
 
-    // BG0: charblock 0, screenblock 31, 4bpp, 32x32
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
+    // Setup Background Control
+    // Size: 32x32 tiles (256x256 pixels)
+    // Charblock: 0 (Where tiles are stored)
+    // Screenblock: 30 (Where map is stored)
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
 
-    init_palettes();
-    init_bg_tiles_and_map();
-    init_obj_tiles();
+    init_graphics();
+    init_game();
 
-    // Init OAM shadow
-    oam_init(obj_buffer, 128);
-
-    Player pl = { .x=32, .y=32, .dir=DIR_DOWN, .hp=3, .invuln=0, .attack=0 };
-    Enemy en  = { .x=160, .y=96, .vx=1, .alive=1 };
-
-    int camx=0, camy=0;
-
-    while(1)
-    {
-        key_poll();
-
-        // --- Input + player update ---
-        int dx=0, dy=0;
-        if(key_is_down(KEY_LEFT))  { dx -= 1; pl.dir=DIR_LEFT; }
-        if(key_is_down(KEY_RIGHT)) { dx += 1; pl.dir=DIR_RIGHT; }
-        if(key_is_down(KEY_UP))    { dy -= 1; pl.dir=DIR_UP; }
-        if(key_is_down(KEY_DOWN))  { dy += 1; pl.dir=DIR_DOWN; }
-
-        if(pl.invuln > 0) pl.invuln--;
-
-        // Attack trigger
-        if(key_hit(KEY_A) && pl.attack == 0)
-            pl.attack = 10;  // frames
-
-        if(pl.attack > 0)
-            pl.attack--;
-
-        // Movement (you can still move while attacking, like classic top-down Zelda)
-        if(dx || dy)
-            move_player(&pl, dx, dy);
-
-        // --- Enemy update ---
-        if(en.alive)
-        {
-            int ex2 = en.x + en.vx;
-            // simple wall bounce using a slightly smaller collision sample
-            if(map_is_solid_px(ex2+2, en.y+8) || map_is_solid_px(ex2+13, en.y+8))
-                en.vx = -en.vx;
-            else
-                en.x = ex2;
-
-            // keep within map bounds
-            en.x = i_clamp(en.x, 0, MAP_PX_W-16);
-        }
-
-        // --- Sword hitbox & enemy hit detection ---
-        int sword_visible = (pl.attack > 0);
-        int swx=0, swy=0;
-
-        if(sword_visible)
-        {
-            // Place sword adjacent to player in facing direction
-            swx = pl.x;
-            swy = pl.y;
-
-            switch(pl.dir)
-            {
-                case DIR_UP:    swy -= 12; break;
-                case DIR_DOWN:  swy += 12; break;
-                case DIR_LEFT:  swx -= 12; break;
-                case DIR_RIGHT: swx += 12; break;
-            }
-
-            // If sword overlaps enemy, "defeat" it
-            if(en.alive && rects_overlap(swx+2, swy+2, 12, 12, en.x+2, en.y+2, 12, 12))
-                en.alive = 0;
-        }
-
-        // --- Player/enemy damage ---
-        if(en.alive && pl.invuln==0)
-        {
-            if(rects_overlap(pl.x+PL_OX, pl.y+PL_OY, PL_W, PL_H, en.x+2, en.y+2, 12, 12))
-            {
-                pl.hp--;
-                pl.invuln = 45; // ~0.75s at 60fps
-                if(pl.hp <= 0)
-                {
-                    // simple respawn
-                    pl.hp = 3;
-                    pl.x = 32; pl.y = 32;
-                }
-            }
-        }
-
-        // --- Camera follow ---
-        camx = i_clamp(pl.x + 8 - SCREEN_W/2, 0, MAP_PX_W - SCREEN_W);
-        camy = i_clamp(pl.y + 8 - SCREEN_H/2, 0, MAP_PX_H - SCREEN_H);
-
-        REG_BG0HOFS = (u16)camx;
-        REG_BG0VOFS = (u16)camy;
-
-        // --- Draw sprites (convert world -> screen by subtracting camera) ---
-        int plsx = pl.x - camx;
-        int plsy = pl.y - camy;
-
-        // Link (blink when invulnerable)
-        if(pl.invuln > 0 && ((pl.invuln/4) & 1))
-            obj_hide(&obj_buffer[OAM_LINK]);
-        else
-            set_obj16(OAM_LINK, plsx, plsy, OBJT_LINK_BASE);
-
-        // Sword
-        if(sword_visible)
-            set_obj16(OAM_SWORD, swx - camx, swy - camy, OBJT_SWORD_BASE);
-        else
-            obj_hide(&obj_buffer[OAM_SWORD]);
-
-        // Enemy
-        if(en.alive)
-            set_obj16(OAM_ENEMY, en.x - camx, en.y - camy, OBJT_ENEMY_BASE);
-        else
-            obj_hide(&obj_buffer[OAM_ENEMY]);
-
-        // Hearts UI (screen-space, not world-space)
-        for(int i=0; i<3; i++)
-        {
-            int tile = (pl.hp > i) ? OBJT_HEART_FULL : OBJT_HEART_EMPTY;
-            set_obj8(OAM_H0+i, 6 + i*10, 6, tile);
-        }
-
-        // --- Present ---
-        vid_vsync();
-        oam_copy(oam_mem, obj_buffer, 128);
+    while(1) {
+        vid_vsync(); // Wait for Vertical Blank (60 FPS cap)
+        update();
+        draw();
     }
+
+    return 0;
 }
