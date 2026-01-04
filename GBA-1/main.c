@@ -606,7 +606,7 @@ static void draw_cursor_and_preview()
         for(int a=0;a<360;a+=8)
         {
             // quick integer circle
-            int px= cx + (pr * lut_cos(a))/1024; // But we don't have LUT. Instead do diamond
+            int px= cx + (pr * lu_cos(a))/1024; // But we don't have LUT. Instead do diamond
         }
         // Simple diamond range (cheaper than circle): draw 4 lines
         int r= 42;
@@ -863,12 +863,12 @@ static void draw_win()
 
 int main(void)
 {
-    irq_hit(NULL);
+    irq_set(NULL);
     irq_add(II_VBLANK, NULL);
 
     REG_DISPCNT= DCNT_MODE3 | DCNT_BG2;
 
-    key_init();
+    key_hit();
     game_reset();
     gstate= GS_TITLE;
 
