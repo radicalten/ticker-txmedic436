@@ -92,7 +92,7 @@ void init_graphics() {
     pal_bg_mem[1] = CLR_WHITE;   // Cloud color
 
     // Sprite Palette (Banks 0-15)
-    pal_obj_mem[0] = CLR_MAGENTA; // Transparent key
+    pal_obj_mem[0] = CLR_MAG; // Transparent key
     pal_obj_mem[1] = CLR_BLUE;    // Player
     pal_obj_mem[2] = CLR_CYAN;    // Player Highlight
     pal_obj_mem[3] = CLR_RED;     // Enemy
