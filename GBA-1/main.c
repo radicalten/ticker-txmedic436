@@ -1,780 +1,799 @@
-// main.c - single-file GBA “Master Dungeon”-style tiny dungeon crawler using tonc
+// main.c - Single-file Mystery Dungeon-like prototype for GBA using tonc
+// Controls:
+//   D-Pad: move (4-dir)
+//   A    : wait (consume a turn)
+//   R    : use held berry (heal)
+//   START: descend if standing on stairs
 //
-// Features:
-// - Random “carved” dungeon per floor, stairs to descend
-// - Turn-based movement/combat, simple monster AI, potions
-// - Fog-of-war (seen vs currently visible) with line-of-sight
-// - Mode 3 bitmap rendering + tiny built-in 5x7 UI font
-//
-// Build (typical devkitARM + tonc setup):
-// - Put this in a project that links against tonclib (or has tonc.h available).
-// - Compile as a normal GBA ROM.
-//
-// References (hardware + tonc docs):
-// - GBA video modes / Mode 3 framebuffer: https://problemkaputt.de/gbatek.htm
-// - Tonc programming guide: https://www.coranac.com/tonc/text/
+// Build: use a standard tonc/devkitARM project linking tonclib.
+// (Drop this as source and compile with your usual tonc template Makefile.)
 
 #include <tonc.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 
-// ---------------------------- Config ---------------------------------
+enum { MAP_W=30, MAP_H=18 };          // 30x18 playfield, bottom 2 rows are HUD (in 32x32 screenblock)
+enum { HUD_Y=18 };
 
-#define SCR_W 240
-#define SCR_H 160
+typedef enum { CELL_WALL=0, CELL_FLOOR=1 } Cell;
 
-#define CELL     8
-#define MAP_W    30
-#define MAP_H    18
-#define UI_H     16
-#define UI_Y     (MAP_H*CELL)
+typedef struct { int x,y; int hp, maxhp; } Player;
 
-#define MAX_MON  14
-#define MAX_POT  6
+typedef struct { int x,y; int hp; bool alive; } Mob;
 
-#define FOV_R    7
+typedef struct { int x,y; bool taken; } Item;
 
-// ---------------------------- Colors ---------------------------------
+#define MAX_ENEMIES  10
+#define MAX_ITEMS     8
+#define FOV_R         7
 
-static inline u16 rgb(u32 r, u32 g, u32 b) { return RGB15(r,g,b); }
+// --- Tiles (BG0, 4bpp) -------------------------------------------------------
+enum TileId {
+	TID_UNSEEN=0,
 
-enum {
-	C_BG      = 0,
-	C_FLOOR   = 1,
-	C_WALL    = 2,
-	C_PLAYER  = 3,
-	C_MON     = 4,
-	C_POT     = 5,
-	C_STAIRS  = 6,
-	C_UI_BG   = 7,
-	C_UI_FG   = 8,
-	C_DARKEN  = 9
+	TID_FLOOR_V=1,
+	TID_FLOOR_M=2,
+	TID_WALL_V =3,
+	TID_WALL_M =4,
+
+	TID_STAIRS =5,
+	TID_ITEM   =6,
+	TID_ENEMY  =7,
+	TID_PLAYER =8,
+
+	TID_BLANK  =9,
+
+	TID_HEART_F=10,
+	TID_HEART_E=11,
+
+	TID_DIGIT0 =12, // 12..21
+	TID_H      =22,
+	TID_P      =23,
+	TID_F      =24,
+	TID_I      =25,
+
+	NUM_TILES
 };
 
-static u16 g_pal[16];
+static Cell g_map[MAP_H][MAP_W];
+static bool g_explored[MAP_H][MAP_W];
+static bool g_visible[MAP_H][MAP_W];
 
-// ---------------------------- Map / Entities --------------------------
+static Player g_pl;
+static Mob    g_mobs[MAX_ENEMIES];
+static Item   g_items[MAX_ITEMS];
 
-typedef enum : u8 { T_WALL=0, T_FLOOR=1 } Tile;
+static int g_floor = 1;
 
-typedef struct {
-	s8 x, y;
-	s8 hp;
-	bool alive;
-} Monster;
+static int g_stairs_x=1, g_stairs_y=1;
 
-typedef struct {
-	s8 x, y;
-	bool alive;
-} Potion;
+static bool g_has_berry=false;
 
-static Tile    g_map[MAP_W*MAP_H];
-static u8      g_seen[MAP_W*MAP_H];
-static u8      g_vis[MAP_W*MAP_H];
+// --- Tiny helpers ------------------------------------------------------------
 
-static s8      g_px, g_py;
-static s8      g_pHP, g_pMaxHP;
-static u8      g_pots;
-static u8      g_depth;
+static inline int iabs(int v){ return v<0 ? -v : v; }
+static inline int isgn(int v){ return (v>0) - (v<0); }
 
-static s8      g_stx, g_sty;
-
-static Monster g_mon[MAX_MON];
-static Potion  g_pot[MAX_POT];
-
-static char    g_msg[64];
-
-// ---------------------------- RNG ------------------------------------
-
-static u32 g_rng = 0x12345678u;
-
-static inline u32 rng_u32(void)
-{
-	// xorshift32
-	u32 x = g_rng;
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	g_rng = x;
-	return x;
+static inline bool in_bounds(int x,int y){
+	return (unsigned)x < MAP_W && (unsigned)y < MAP_H;
 }
 
-static inline u32 rng_range(u32 n)
-{
-	// uniform enough for small n in a tiny game
-	return (n == 0) ? 0 : (rng_u32() % n);
+static inline bool is_blocking(int x,int y){
+	return !in_bounds(x,y) || g_map[y][x]==CELL_WALL;
 }
 
-// ---------------------------- GBA helpers ----------------------------
-
-static inline void vsync(void)
-{
-	while(REG_VCOUNT >= 160) {}
-	while(REG_VCOUNT < 160) {}
+static u32 rng_u32(void){
+	// Use tonc's qran if available; fall back to a simple LCG otherwise.
+	// In standard tonclib builds, qran/sqran exist.
+	#ifdef qran
+		return qran();
+	#else
+		static u32 s=0x1234567;
+		s = 1664525*s + 1013904223;
+		return s;
+	#endif
 }
 
-static inline int idx(int x, int y) { return y*MAP_W + x; }
-
-static inline bool in_bounds(int x, int y)
-{
-	return (x >= 0 && x < MAP_W && y >= 0 && y < MAP_H);
+static int rng_range(int lo, int hi_inclusive){
+	u32 r = rng_u32();
+	int span = (hi_inclusive - lo + 1);
+	return lo + (int)(r % (u32)span);
 }
 
-static inline bool is_wall(int x, int y)
-{
-	return !in_bounds(x,y) || (g_map[idx(x,y)] == T_WALL);
+static inline void sb_put(u16 *sb, int x,int y, int tid){
+	sb[y*32 + x] = (u16)tid;
 }
 
-static int mon_at(int x, int y)
-{
-	for(int i=0;i<MAX_MON;i++)
-		if(g_mon[i].alive && g_mon[i].x==x && g_mon[i].y==y)
-			return i;
-	return -1;
+// --- Tile building (no external art) -----------------------------------------
+
+static inline u32 pack_row_4bpp(const u8 p[8]){
+	u32 row=0;
+	for(int i=0;i<8;i++) row |= (u32)(p[i]&0xF) << (4*i);
+	return row;
 }
 
-static int pot_at(int x, int y)
-{
-	for(int i=0;i<MAX_POT;i++)
-		if(g_pot[i].alive && g_pot[i].x==x && g_pot[i].y==y)
-			return i;
-	return -1;
+static void tile_fill(TILE *t, u8 col){
+	u32 v = 0x11111111u * (u32)(col & 0xF);
+	for(int y=0;y<8;y++) t->data[y]=v;
 }
 
-static bool blocked_for_mon(int x, int y)
-{
-	if(!in_bounds(x,y)) return true;
-	if(g_map[idx(x,y)] == T_WALL) return true;
-	if(x==g_px && y==g_py) return true;
-	if(mon_at(x,y) >= 0) return true;
+static void tile_checker(TILE *t, u8 colA, u8 colB){
+	for(int y=0;y<8;y++){
+		u8 p[8];
+		for(int x=0;x<8;x++){
+			bool a = ((x^y)&1)==0;
+			p[x] = a ? colA : colB;
+		}
+		t->data[y] = pack_row_4bpp(p);
+	}
+}
+
+static void tile_glyph_5x7(TILE *t, const u8 rows7[7], u8 fg, u8 bg){
+	// Center a 5x7 glyph into 8x8 tile. rows7 bits are 5-bit wide (b4..b0).
+	tile_fill(t, bg);
+	for(int y=0;y<7;y++){
+		u8 rowBits = rows7[y] & 0x1F;
+		u8 p[8]={bg,bg,bg,bg,bg,bg,bg,bg};
+		for(int cx=0; cx<5; cx++){
+			bool on = (rowBits >> (4-cx)) & 1;
+			// place at x=1..5
+			p[1+cx] = on ? fg : bg;
+		}
+		t->data[y] = pack_row_4bpp(p);
+	}
+}
+
+static void tile_icon_heart(TILE *t, u8 col){
+	tile_fill(t, 0);
+	// Simple 8x8 heart shape
+	const u8 m[8]={
+		0b01100110,
+		0b11111111,
+		0b11111111,
+		0b11111111,
+		0b01111110,
+		0b00111100,
+		0b00011000,
+		0b00000000
+	};
+	for(int y=0;y<8;y++){
+		u8 p[8]={0,0,0,0,0,0,0,0};
+		for(int x=0;x<8;x++){
+			if((m[y]>>(7-x))&1) p[x]=col;
+		}
+		t->data[y]=pack_row_4bpp(p);
+	}
+}
+
+static void tile_icon_player(TILE *t, u8 col){
+	tile_fill(t, 0);
+	// @-ish circle
+	const u8 m[8]={
+		0b00111100,
+		0b01000010,
+		0b10011001,
+		0b10100101,
+		0b10111101,
+		0b10000001,
+		0b01000010,
+		0b00111100
+	};
+	for(int y=0;y<8;y++){
+		u8 p[8]={0};
+		for(int x=0;x<8;x++) if((m[y]>>(7-x))&1) p[x]=col;
+		t->data[y]=pack_row_4bpp(p);
+	}
+}
+
+static void tile_icon_enemy(TILE *t, u8 col){
+	tile_fill(t, 0);
+	// X
+	const u8 m[8]={
+		0b10000001,
+		0b01000010,
+		0b00100100,
+		0b00011000,
+		0b00011000,
+		0b00100100,
+		0b01000010,
+		0b10000001
+	};
+	for(int y=0;y<8;y++){
+		u8 p[8]={0};
+		for(int x=0;x<8;x++) if((m[y]>>(7-x))&1) p[x]=col;
+		t->data[y]=pack_row_4bpp(p);
+	}
+}
+
+static void tile_icon_item(TILE *t, u8 col){
+	tile_fill(t, 0);
+	// Small diamond
+	const u8 m[8]={
+		0b00011000,
+		0b00111100,
+		0b01111110,
+		0b11111111,
+		0b01111110,
+		0b00111100,
+		0b00011000,
+		0b00000000
+	};
+	for(int y=0;y<8;y++){
+		u8 p[8]={0};
+		for(int x=0;x<8;x++) if((m[y]>>(7-x))&1) p[x]=col;
+		t->data[y]=pack_row_4bpp(p);
+	}
+}
+
+static void tile_icon_stairs(TILE *t, u8 col){
+	tile_fill(t, 0);
+	// Simple downward arrow
+	const u8 m[8]={
+		0b00011000,
+		0b00011000,
+		0b00011000,
+		0b00011000,
+		0b11011011,
+		0b01111110,
+		0b00111100,
+		0b00011000
+	};
+	for(int y=0;y<8;y++){
+		u8 p[8]={0};
+		for(int x=0;x<8;x++) if((m[y]>>(7-x))&1) p[x]=col;
+		t->data[y]=pack_row_4bpp(p);
+	}
+}
+
+static void init_video_and_tiles(void){
+	REG_DISPCNT = DCNT_MODE0 | DCNT_BG0;
+
+	REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_4BPP | BG_REG_32x32 | BG_PRIO(0);
+
+	// Palette (16 entries used)
+	pal_bg_mem[0]  = RGB15(0,0,0);       // black
+	pal_bg_mem[1]  = RGB15(7,6,4);       // floor visible
+	pal_bg_mem[2]  = RGB15(4,3,2);       // floor memory
+	pal_bg_mem[3]  = RGB15(13,13,13);    // wall visible
+	pal_bg_mem[4]  = RGB15(7,7,7);       // wall memory
+	pal_bg_mem[5]  = RGB15(6,10,31);     // player
+	pal_bg_mem[6]  = RGB15(31,6,6);      // enemy
+	pal_bg_mem[7]  = RGB15(31,28,6);     // stairs
+	pal_bg_mem[8]  = RGB15(6,31,10);     // item
+	pal_bg_mem[9]  = RGB15(31,31,31);    // HUD text
+	pal_bg_mem[10] = RGB15(31,10,18);    // full heart
+	pal_bg_mem[11] = RGB15(12,2,4);      // empty heart
+
+	// Build tiles in RAM then copy to VRAM
+	TILE tiles[NUM_TILES];
+	for(int i=0;i<NUM_TILES;i++) tile_fill(&tiles[i], 0);
+
+	// Unseen/blank
+	tile_fill(&tiles[TID_UNSEEN], 0);
+	tile_fill(&tiles[TID_BLANK],  0);
+
+	// Terrain
+	tile_checker(&tiles[TID_FLOOR_V], 1, 0);
+	tile_checker(&tiles[TID_FLOOR_M], 2, 0);
+	tile_fill(&tiles[TID_WALL_V], 3);
+	tile_fill(&tiles[TID_WALL_M], 4);
+
+	// Icons
+	tile_icon_stairs(&tiles[TID_STAIRS], 7);
+	tile_icon_item  (&tiles[TID_ITEM],   8);
+	tile_icon_enemy (&tiles[TID_ENEMY],  6);
+	tile_icon_player(&tiles[TID_PLAYER], 5);
+
+	tile_icon_heart(&tiles[TID_HEART_F], 10);
+	tile_icon_heart(&tiles[TID_HEART_E], 11);
+
+	// Digits 0-9 (5x7)
+	const u8 d[10][7]={
+		{0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}, // 0
+		{0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}, // 1
+		{0x0E,0x11,0x01,0x06,0x08,0x10,0x1F}, // 2
+		{0x1F,0x01,0x02,0x06,0x01,0x11,0x0E}, // 3
+		{0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}, // 4
+		{0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}, // 5
+		{0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, // 6
+		{0x1F,0x01,0x02,0x04,0x08,0x08,0x08}, // 7
+		{0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, // 8
+		{0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}  // 9
+	};
+	for(int i=0;i<10;i++)
+		tile_glyph_5x7(&tiles[TID_DIGIT0+i], d[i], 9, 0);
+
+	// Letters H, P, F, I (5x7)
+	const u8 H[7]={0x11,0x11,0x11,0x1F,0x11,0x11,0x11};
+	const u8 P[7]={0x1E,0x11,0x11,0x1E,0x10,0x10,0x10};
+	const u8 F[7]={0x1F,0x10,0x10,0x1E,0x10,0x10,0x10};
+	const u8 I[7]={0x0E,0x04,0x04,0x04,0x04,0x04,0x0E};
+	tile_glyph_5x7(&tiles[TID_H], H, 9, 0);
+	tile_glyph_5x7(&tiles[TID_P], P, 9, 0);
+	tile_glyph_5x7(&tiles[TID_F], F, 9, 0);
+	tile_glyph_5x7(&tiles[TID_I], I, 9, 0);
+
+	// Copy to charblock 0
+	memcpy32(tile_mem[0], tiles, (sizeof(tiles)+3)/4);
+
+	// Clear screenblock
+	u16 *sb = se_mem[31];
+	for(int i=0;i<32*32;i++) sb[i]=TID_UNSEEN;
+}
+
+// --- Dungeon generation -------------------------------------------------------
+
+typedef struct { int x,y,w,h; int cx,cy; } Room;
+
+static bool room_overlaps(const Room *a, const Room *b){
+	// padded overlap check (1-tile margin)
+	int ax0=a->x-1, ay0=a->y-1, ax1=a->x+a->w, ay1=a->y+a->h;
+	int bx0=b->x-1, by0=b->y-1, bx1=b->x+b->w, by1=b->y+b->h;
+	return !(ax1 < bx0 || bx1 < ax0 || ay1 < by0 || by1 < ay0);
+}
+
+static void carve_room(const Room *r){
+	for(int y=r->y; y<r->y+r->h; y++)
+	for(int x=r->x; x<r->x+r->w; x++)
+		if(in_bounds(x,y)) g_map[y][x]=CELL_FLOOR;
+}
+
+static void carve_hline(int x0,int x1,int y){
+	if(x0>x1){ int t=x0; x0=x1; x1=t; }
+	for(int x=x0;x<=x1;x++) if(in_bounds(x,y)) g_map[y][x]=CELL_FLOOR;
+}
+
+static void carve_vline(int y0,int y1,int x){
+	if(y0>y1){ int t=y0; y0=y1; y1=t; }
+	for(int y=y0;y<=y1;y++) if(in_bounds(x,y)) g_map[y][x]=CELL_FLOOR;
+}
+
+static bool cell_has_mob(int x,int y){
+	for(int i=0;i<MAX_ENEMIES;i++)
+		if(g_mobs[i].alive && g_mobs[i].x==x && g_mobs[i].y==y) return true;
 	return false;
 }
 
-static bool blocked_for_player(int x, int y)
-{
-	if(!in_bounds(x,y)) return true;
-	if(g_map[idx(x,y)] == T_WALL) return true;
+static int mob_index_at(int x,int y){
+	for(int i=0;i<MAX_ENEMIES;i++)
+		if(g_mobs[i].alive && g_mobs[i].x==x && g_mobs[i].y==y) return i;
+	return -1;
+}
+
+static int item_index_at(int x,int y){
+	for(int i=0;i<MAX_ITEMS;i++)
+		if(!g_items[i].taken && g_items[i].x==x && g_items[i].y==y) return i;
+	return -1;
+}
+
+static bool is_occupied(int x,int y){
+	if(g_pl.x==x && g_pl.y==y) return true;
+	if(cell_has_mob(x,y)) return true;
 	return false;
 }
 
-// ---------------------------- Tiny 5x7 font --------------------------
-// Covers: space, 0-9, A-Z, ':', '/', '-', '.'
-
-typedef struct { char c; u8 rows[7]; } Glyph;
-
-// Each row: 5 bits used (MSB on left is bit 4).
-static const Glyph g_font[] = {
-	{' ', {0,0,0,0,0,0,0}},
-	{'.', {0,0,0,0,0,0,0x04}},
-	{'-', {0,0,0,0x1F,0,0,0}},
-	{':', {0,0x04,0,0,0x04,0,0}},
-	{'/', {0x01,0x02,0x04,0x08,0x10,0,0}},
-
-	{'0', {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}},
-	{'1', {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
-	{'2', {0x0E,0x11,0x01,0x06,0x08,0x10,0x1F}},
-	{'3', {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}},
-	{'4', {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}},
-	{'5', {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}},
-	{'6', {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}},
-	{'7', {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
-	{'8', {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}},
-	{'9', {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}},
-
-	{'A', {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}},
-	{'B', {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}},
-	{'C', {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}},
-	{'D', {0x1C,0x12,0x11,0x11,0x11,0x12,0x1C}},
-	{'E', {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}},
-	{'F', {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}},
-	{'G', {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F}},
-	{'H', {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}},
-	{'I', {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E}},
-	{'J', {0x07,0x02,0x02,0x02,0x02,0x12,0x0C}},
-	{'K', {0x11,0x12,0x14,0x18,0x14,0x12,0x11}},
-	{'L', {0x10,0x10,0x10,0x10,0x10,0x10,0x1F}},
-	{'M', {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}},
-	{'N', {0x11,0x19,0x15,0x13,0x11,0x11,0x11}},
-	{'O', {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}},
-	{'P', {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}},
-	{'Q', {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D}},
-	{'R', {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}},
-	{'S', {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E}},
-	{'T', {0x1F,0x04,0x04,0x04,0x04,0x04,0x04}},
-	{'U', {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}},
-	{'V', {0x11,0x11,0x11,0x11,0x11,0x0A,0x04}},
-	{'W', {0x11,0x11,0x11,0x15,0x15,0x1B,0x11}},
-	{'X', {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}},
-	{'Y', {0x11,0x11,0x0A,0x04,0x04,0x04,0x04}},
-	{'Z', {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}},
-};
-
-static const u8* glyph_rows(char c)
-{
-	for(u32 i=0;i<sizeof(g_font)/sizeof(g_font[0]);i++)
-		if(g_font[i].c == c) return g_font[i].rows;
-	return g_font[0].rows; // space
-}
-
-// ---------------------------- Drawing --------------------------------
-
-static inline void pset(int x, int y, u16 c)
-{
-	((u16*)vid_mem)[y*SCR_W + x] = c;
-}
-
-static void fill_rect(int x, int y, int w, int h, u16 c)
-{
-	if(w<=0 || h<=0) return;
-	if(x<0){ w+=x; x=0; }
-	if(y<0){ h+=y; y=0; }
-	if(x+w>SCR_W) w=SCR_W-x;
-	if(y+h>SCR_H) h=SCR_H-y;
-
-	u16* dst = (u16*)vid_mem + y*SCR_W + x;
-	for(int j=0;j<h;j++)
-	{
-		for(int i=0;i<w;i++) dst[i]=c;
-		dst += SCR_W;
+static bool random_floor_pos(int *ox,int *oy, int tries){
+	for(int t=0;t<tries;t++){
+		int x=rng_range(1, MAP_W-2);
+		int y=rng_range(1, MAP_H-2);
+		if(g_map[y][x]!=CELL_FLOOR) continue;
+		if(is_occupied(x,y)) continue;
+		*ox=x; *oy=y;
+		return true;
 	}
+	return false;
 }
 
-static void draw_char_5x7(int x, int y, char ch, u16 fg)
-{
-	const u8* rows = glyph_rows(ch);
-	for(int ry=0; ry<7; ry++)
-	{
-		u8 bits = rows[ry];
-		for(int rx=0; rx<5; rx++)
-		{
-			if(bits & (1<<(4-rx)))
-				pset(x+rx, y+ry, fg);
+static void new_floor(void){
+	// clear map
+	for(int y=0;y<MAP_H;y++)
+	for(int x=0;x<MAP_W;x++){
+		g_map[y][x]=CELL_WALL;
+		g_explored[y][x]=false;
+		g_visible[y][x]=false;
+	}
+
+	// clear entities
+	for(int i=0;i<MAX_ENEMIES;i++){ g_mobs[i].alive=false; g_mobs[i].hp=0; }
+	for(int i=0;i<MAX_ITEMS;i++){ g_items[i].taken=true; g_items[i].x=1; g_items[i].y=1; }
+
+	// generate rooms
+	Room rooms[12];
+	int room_count=0;
+
+	int target_rooms = rng_range(6, 9);
+
+	for(int attempts=0; attempts<200 && room_count<target_rooms; attempts++){
+		Room r;
+		r.w = rng_range(4, 8);
+		r.h = rng_range(3, 6);
+		r.x = rng_range(1, MAP_W - r.w - 1);
+		r.y = rng_range(1, MAP_H - r.h - 1);
+		r.cx = r.x + r.w/2;
+		r.cy = r.y + r.h/2;
+
+		bool ok=true;
+		for(int i=0;i<room_count;i++){
+			if(room_overlaps(&r, &rooms[i])){ ok=false; break; }
 		}
-	}
-}
+		if(!ok) continue;
 
-static void draw_text(int x, int y, const char* s, u16 fg)
-{
-	for(int i=0; s[i]; i++)
-	{
-		char ch = s[i];
-		if(ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
-		draw_char_5x7(x + i*6, y, ch, fg);
-	}
-}
-
-static void draw_cell_base(int cx, int cy, u16 col)
-{
-	fill_rect(cx*CELL, cy*CELL, CELL, CELL, col);
-}
-
-static void draw_cell_marker(int cx, int cy, u16 col)
-{
-	// small 4x4 marker in the center
-	int x = cx*CELL + 2;
-	int y = cy*CELL + 2;
-	fill_rect(x, y, 4, 4, col);
-}
-
-static u16 darken(u16 col)
-{
-	// crude darken: scale components down (RGB15)
-	u32 r = (col     ) & 31;
-	u32 g = (col >> 5) & 31;
-	u32 b = (col >>10) & 31;
-	r = (r*2)/5;
-	g = (g*2)/5;
-	b = (b*2)/5;
-	return RGB15(r,g,b);
-}
-
-// ---------------------------- FOV / LOS ------------------------------
-
-static bool los_clear(int x0, int y0, int x1, int y1)
-{
-	// Bresenham line; blocks if it hits a wall before reaching target.
-	int dx = (x1>x0) ? (x1-x0) : (x0-x1);
-	int sx = (x0<x1) ? 1 : -1;
-	int dy = (y1>y0) ? (y0-y1) : (y1-y0); // negative
-	int sy = (y0<y1) ? 1 : -1;
-	int err = dx + dy;
-
-	int x=x0, y=y0;
-	for(;;)
-	{
-		if(x==x1 && y==y1) return true;
-		// skip checking starting cell; do check intermediate cells
-		if(!(x==x0 && y==y0) && is_wall(x,y)) return false;
-
-		int e2 = 2*err;
-		if(e2 >= dy) { err += dy; x += sx; }
-		if(e2 <= dx) { err += dx; y += sy; }
-		if(!in_bounds(x,y)) return false;
-	}
-}
-
-static void compute_fov(void)
-{
-	memset(g_vis, 0, sizeof(g_vis));
-
-	for(int y=g_py-FOV_R; y<=g_py+FOV_R; y++)
-	for(int x=g_px-FOV_R; x<=g_px+FOV_R; x++)
-	{
-		if(!in_bounds(x,y)) continue;
-		int dx=x-g_px, dy=y-g_py;
-		if(dx*dx + dy*dy > FOV_R*FOV_R) continue;
-
-		if(los_clear(g_px,g_py,x,y))
-		{
-			g_vis[idx(x,y)] = 1;
-			g_seen[idx(x,y)] = 1;
-		}
-	}
-}
-
-// ---------------------------- Generation -----------------------------
-
-static void set_msg(const char* s)
-{
-	strncpy(g_msg, s, sizeof(g_msg)-1);
-	g_msg[sizeof(g_msg)-1] = 0;
-}
-
-static void clear_level_entities(void)
-{
-	for(int i=0;i<MAX_MON;i++) g_mon[i].alive=false;
-	for(int i=0;i<MAX_POT;i++) g_pot[i].alive=false;
-}
-
-static void carve_room(int cx, int cy, int rw, int rh)
-{
-	for(int y=cy-rh; y<=cy+rh; y++)
-	for(int x=cx-rw; x<=cx+rw; x++)
-	{
-		if(x<=0 || y<=0 || x>=MAP_W-1 || y>=MAP_H-1) continue;
-		g_map[idx(x,y)] = T_FLOOR;
-	}
-}
-
-static void generate_level(u8 depth)
-{
-	clear_level_entities();
-	memset(g_seen, 0, sizeof(g_seen));
-	memset(g_vis,  0, sizeof(g_vis));
-
-	// start all walls
-	for(int i=0;i<MAP_W*MAP_H;i++) g_map[i]=T_WALL;
-
-	// random “drunkard walk” carve
-	int x = MAP_W/2;
-	int y = MAP_H/2;
-	g_map[idx(x,y)] = T_FLOOR;
-
-	int steps = (MAP_W*MAP_H) * (6 + depth/2);
-	for(int i=0;i<steps;i++)
-	{
-		// occasionally carve a room blob
-		if((rng_u32() & 63u) == 0)
-			carve_room(x, y, 2 + (int)rng_range(2), 1 + (int)rng_range(2));
-
-		u32 dir = rng_range(4);
-		int nx=x, ny=y;
-		if(dir==0) nx++;
-		if(dir==1) nx--;
-		if(dir==2) ny++;
-		if(dir==3) ny--;
-
-		if(nx<=1 || ny<=1 || nx>=MAP_W-2 || ny>=MAP_H-2) continue;
-		x=nx; y=ny;
-		g_map[idx(x,y)] = T_FLOOR;
+		rooms[room_count++] = r;
+		carve_room(&r);
 	}
 
-	// ensure border walls
-	for(int xx=0;xx<MAP_W;xx++){ g_map[idx(xx,0)]=T_WALL; g_map[idx(xx,MAP_H-1)]=T_WALL; }
-	for(int yy=0;yy<MAP_H;yy++){ g_map[idx(0,yy)]=T_WALL; g_map[idx(MAP_W-1,yy)]=T_WALL; }
+	// connect rooms
+	for(int i=1;i<room_count;i++){
+		int x0=rooms[i-1].cx, y0=rooms[i-1].cy;
+		int x1=rooms[i].cx,   y1=rooms[i].cy;
 
-	// place player near center on a floor
-	int bestX=MAP_W/2, bestY=MAP_H/2;
-	for(int rr=0; rr<1000; rr++)
-	{
-		int tx = (int)rng_range(MAP_W-2)+1;
-		int ty = (int)rng_range(MAP_H-2)+1;
-		if(g_map[idx(tx,ty)] == T_FLOOR)
-		{
-			bestX=tx; bestY=ty;
-			if((tx-(MAP_W/2))*(tx-(MAP_W/2)) + (ty-(MAP_H/2))*(ty-(MAP_H/2)) < 16)
-				break;
-		}
-	}
-	g_px = (s8)bestX; g_py = (s8)bestY;
-
-	// place stairs far-ish from player
-	int stx=g_px, sty=g_py;
-	int bestD=-1;
-	for(int k=0;k<400;k++)
-	{
-		int tx = (int)rng_range(MAP_W-2)+1;
-		int ty = (int)rng_range(MAP_H-2)+1;
-		if(g_map[idx(tx,ty)] != T_FLOOR) continue;
-		int d = (tx-g_px)*(tx-g_px) + (ty-g_py)*(ty-g_py);
-		if(d > bestD)
-		{
-			bestD=d; stx=tx; sty=ty;
-		}
-	}
-	g_stx=(s8)stx; g_sty=(s8)sty;
-
-	// place potions
-	u32 potCount = 1 + depth/2;
-	if(potCount > MAX_POT) potCount = MAX_POT;
-	for(u32 i=0;i<potCount;i++)
-	{
-		for(int tries=0;tries<400;tries++)
-		{
-			int tx = (int)rng_range(MAP_W-2)+1;
-			int ty = (int)rng_range(MAP_H-2)+1;
-			if(g_map[idx(tx,ty)] != T_FLOOR) continue;
-			if((tx==g_px && ty==g_py) || (tx==g_stx && ty==g_sty)) continue;
-			if(pot_at(tx,ty)>=0) continue;
-			g_pot[i].x=(s8)tx; g_pot[i].y=(s8)ty; g_pot[i].alive=true;
-			break;
+		if(rng_range(0,1)==0){
+			carve_hline(x0,x1,y0);
+			carve_vline(y0,y1,x1);
+		}else{
+			carve_vline(y0,y1,x0);
+			carve_hline(x0,x1,y1);
 		}
 	}
 
-	// place monsters
-	u32 monCount = 4 + depth;
-	if(monCount > MAX_MON) monCount = MAX_MON;
-	for(u32 i=0;i<monCount;i++)
-	{
-		for(int tries=0;tries<600;tries++)
-		{
-			int tx = (int)rng_range(MAP_W-2)+1;
-			int ty = (int)rng_range(MAP_H-2)+1;
-			if(g_map[idx(tx,ty)] != T_FLOOR) continue;
-			if((tx==g_px && ty==g_py) || (tx==g_stx && ty==g_sty)) continue;
-			if(mon_at(tx,ty)>=0) continue;
-
-			g_mon[i].x=(s8)tx; g_mon[i].y=(s8)ty;
-			g_mon[i].hp=(s8)(2 + depth/2);
-			g_mon[i].alive=true;
-			break;
-		}
+	// player start
+	if(room_count>0){
+		g_pl.x = rooms[0].cx;
+		g_pl.y = rooms[0].cy;
+	}else{
+		// fallback
+		g_pl.x = MAP_W/2;
+		g_pl.y = MAP_H/2;
+		g_map[g_pl.y][g_pl.x]=CELL_FLOOR;
 	}
 
-	set_msg("FIND THE STAIRS. A=USE POTION / DESCEND");
-	compute_fov();
+	// stairs at last room
+	if(room_count>1){
+		g_stairs_x = rooms[room_count-1].cx;
+		g_stairs_y = rooms[room_count-1].cy;
+	}else{
+		int sx,sy;
+		if(random_floor_pos(&sx,&sy,500)){ g_stairs_x=sx; g_stairs_y=sy; }
+		else { g_stairs_x=g_pl.x; g_stairs_y=g_pl.y; }
+	}
+
+	// enemies
+	int enemy_count = 3 + (g_floor/2);
+	if(enemy_count>MAX_ENEMIES) enemy_count=MAX_ENEMIES;
+
+	for(int i=0;i<enemy_count;i++){
+		int ex,ey;
+		if(!random_floor_pos(&ex,&ey,800)) break;
+		if(ex==g_stairs_x && ey==g_stairs_y) { i--; continue; }
+		g_mobs[i].alive=true;
+		g_mobs[i].x=ex; g_mobs[i].y=ey;
+		g_mobs[i].hp = 2 + (g_floor/2);
+		if(g_mobs[i].hp>8) g_mobs[i].hp=8;
+	}
+
+	// items (berries)
+	int item_count = rng_range(2, 4);
+	if(item_count>MAX_ITEMS) item_count=MAX_ITEMS;
+	for(int i=0;i<item_count;i++){
+		int ix,iy;
+		if(!random_floor_pos(&ix,&iy,800)) break;
+		if(ix==g_stairs_x && iy==g_stairs_y) { i--; continue; }
+		g_items[i].taken=false;
+		g_items[i].x=ix; g_items[i].y=iy;
+	}
 }
 
-// ---------------------------- Rendering ------------------------------
+// --- Visibility (fog of war) -------------------------------------------------
 
-static void render_world(void)
-{
+static bool los_clear(int x0,int y0,int x1,int y1){
+	// Bresenham line; walls block beyond, but target wall is still "visible".
+	int dx=iabs(x1-x0), sx=x0<x1 ? 1 : -1;
+	int dy=-iabs(y1-y0), sy=y0<y1 ? 1 : -1;
+	int err=dx+dy;
+
+	for(;;){
+		if(x0==x1 && y0==y1) return true;
+
+		int e2 = err<<1;
+		if(e2 >= dy){ err += dy; x0 += sx; }
+		if(e2 <= dx){ err += dx; y0 += sy; }
+
+		if(!in_bounds(x0,y0)) return false;
+		if(g_map[y0][x0]==CELL_WALL && !(x0==x1 && y0==y1)) return false;
+	}
+}
+
+static void compute_fov(void){
 	for(int y=0;y<MAP_H;y++)
 	for(int x=0;x<MAP_W;x++)
-	{
-		int k = idx(x,y);
+		g_visible[y][x]=false;
 
-		if(!g_seen[k])
-		{
-			draw_cell_base(x,y, g_pal[C_BG]);
+	for(int yy=g_pl.y-FOV_R; yy<=g_pl.y+FOV_R; yy++)
+	for(int xx=g_pl.x-FOV_R; xx<=g_pl.x+FOV_R; xx++){
+		if(!in_bounds(xx,yy)) continue;
+		int dx=xx-g_pl.x, dy=yy-g_pl.y;
+		if(dx*dx + dy*dy > FOV_R*FOV_R) continue;
+
+		if(los_clear(g_pl.x,g_pl.y,xx,yy)){
+			g_visible[yy][xx]=true;
+			g_explored[yy][xx]=true;
+		}
+	}
+
+	// always know your own tile
+	g_visible[g_pl.y][g_pl.x]=true;
+	g_explored[g_pl.y][g_pl.x]=true;
+}
+
+// --- HUD + Render ------------------------------------------------------------
+
+static void draw_hud(u16 *sb){
+	// Clear HUD rows
+	for(int y=HUD_Y;y<HUD_Y+2;y++)
+	for(int x=0;x<32;x++)
+		sb_put(sb,x,y,TID_BLANK);
+
+	// "HP"
+	sb_put(sb, 0, HUD_Y, TID_H);
+	sb_put(sb, 1, HUD_Y, TID_P);
+
+	// Hearts (max 10 shown)
+	int shown = g_pl.maxhp;
+	if(shown>10) shown=10;
+	for(int i=0;i<shown;i++){
+		int tid = (g_pl.hp > i) ? TID_HEART_F : TID_HEART_E;
+		sb_put(sb, 3+i, HUD_Y, tid);
+	}
+
+	// Floor label "F" and two digits at right
+	sb_put(sb, 22, HUD_Y, TID_F);
+	int f = g_floor;
+	if(f>99) f=99;
+	int tens = f/10;
+	int ones = f%10;
+	sb_put(sb, 24, HUD_Y, TID_DIGIT0+tens);
+	sb_put(sb, 25, HUD_Y, TID_DIGIT0+ones);
+
+	// Item indicator: "I" + icon (berry uses same as ITEM tile)
+	sb_put(sb, 0, HUD_Y+1, TID_I);
+	sb_put(sb, 2, HUD_Y+1, g_has_berry ? TID_ITEM : TID_BLANK);
+
+	// Stairs hint icon if currently visible (just an extra tiny cue)
+	if(g_visible[g_stairs_y][g_stairs_x])
+		sb_put(sb, 4, HUD_Y+1, TID_STAIRS);
+}
+
+static void render_all(void){
+	compute_fov();
+
+	vid_vsync(); // update during vblank to reduce tearing
+	u16 *sb = se_mem[31];
+
+	// Map area
+	for(int y=0;y<MAP_H;y++){
+		for(int x=0;x<MAP_W;x++){
+			int tid=TID_UNSEEN;
+
+			if(!g_explored[y][x]){
+				tid=TID_UNSEEN;
+			}else{
+				bool vis = g_visible[y][x];
+				Cell c = g_map[y][x];
+				if(c==CELL_WALL) tid = vis ? TID_WALL_V : TID_WALL_M;
+				else             tid = vis ? TID_FLOOR_V: TID_FLOOR_M;
+
+				// Overlay only if visible
+				if(vis){
+					// stairs
+					if(x==g_stairs_x && y==g_stairs_y) tid = TID_STAIRS;
+					// item
+					int ii = item_index_at(x,y);
+					if(ii>=0) tid = TID_ITEM;
+					// enemy
+					int mi = mob_index_at(x,y);
+					if(mi>=0) tid = TID_ENEMY;
+				}
+			}
+
+			// Player always drawn
+			if(x==g_pl.x && y==g_pl.y) tid=TID_PLAYER;
+
+			sb_put(sb,x,y,tid);
+		}
+		// Clear remaining columns in row (30..31)
+		sb_put(sb,30,y,TID_UNSEEN);
+		sb_put(sb,31,y,TID_UNSEEN);
+	}
+
+	draw_hud(sb);
+}
+
+// --- Gameplay ----------------------------------------------------------------
+
+static void pickup_if_possible(void){
+	int ii = item_index_at(g_pl.x,g_pl.y);
+	if(ii<0) return;
+	if(g_has_berry) return; // only 1-slot inventory
+	g_has_berry=true;
+	g_items[ii].taken=true;
+}
+
+static void player_attack(int mob_i){
+	// small random damage
+	int dmg = rng_range(1, 2 + (g_floor>=6));
+	if(dmg>3) dmg=3;
+	g_mobs[mob_i].hp -= dmg;
+	if(g_mobs[mob_i].hp <= 0){
+		g_mobs[mob_i].alive=false;
+	}
+}
+
+static void enemy_attack(void){
+	int dmg = rng_range(1, 2);
+	g_pl.hp -= dmg;
+	if(g_pl.hp < 0) g_pl.hp = 0;
+}
+
+static void try_move_player(int nx,int ny){
+	if(!in_bounds(nx,ny)) return;
+	if(g_map[ny][nx]==CELL_WALL) return;
+
+	int mi = mob_index_at(nx,ny);
+	if(mi>=0){
+		player_attack(mi);
+		return; // attacking consumes the turn
+	}
+
+	g_pl.x=nx; g_pl.y=ny;
+	pickup_if_possible();
+}
+
+static void move_enemy_step(int i, int nx,int ny){
+	if(!in_bounds(nx,ny)) return;
+	if(g_map[ny][nx]==CELL_WALL) return;
+	if(nx==g_pl.x && ny==g_pl.y) return;
+	if(cell_has_mob(nx,ny)) return;
+	g_mobs[i].x=nx; g_mobs[i].y=ny;
+}
+
+static bool enemy_can_see_player(const Mob *m){
+	int dx=m->x-g_pl.x, dy=m->y-g_pl.y;
+	if(dx*dx + dy*dy > 9*9) return false;
+	return los_clear(m->x,m->y,g_pl.x,g_pl.y);
+}
+
+static void enemies_take_turn(void){
+	for(int i=0;i<MAX_ENEMIES;i++){
+		if(!g_mobs[i].alive) continue;
+
+		int dx=g_pl.x - g_mobs[i].x;
+		int dy=g_pl.y - g_mobs[i].y;
+
+		// adjacent (Chebyshev)
+		if(iabs(dx)<=1 && iabs(dy)<=1){
+			enemy_attack();
 			continue;
 		}
 
-		u16 base = (g_map[k]==T_WALL) ? g_pal[C_WALL] : g_pal[C_FLOOR];
-		if(!g_vis[k]) base = darken(base);
-		draw_cell_base(x,y, base);
-	}
-
-	// Draw stairs/potions/monsters only if seen (or visible). For clarity: show if seen.
-	if(g_seen[idx(g_stx,g_sty)])
-	{
-		u16 c = g_vis[idx(g_stx,g_sty)] ? g_pal[C_STAIRS] : darken(g_pal[C_STAIRS]);
-		draw_cell_marker(g_stx,g_sty,c);
-	}
-
-	for(int i=0;i<MAX_POT;i++)
-	{
-		if(!g_pot[i].alive) continue;
-		int x=g_pot[i].x, y=g_pot[i].y;
-		if(!g_seen[idx(x,y)]) continue;
-		u16 c = g_vis[idx(x,y)] ? g_pal[C_POT] : darken(g_pal[C_POT]);
-		draw_cell_marker(x,y,c);
-	}
-
-	for(int i=0;i<MAX_MON;i++)
-	{
-		if(!g_mon[i].alive) continue;
-		int x=g_mon[i].x, y=g_mon[i].y;
-		if(!g_seen[idx(x,y)]) continue;
-		u16 c = g_vis[idx(x,y)] ? g_pal[C_MON] : darken(g_pal[C_MON]);
-		draw_cell_marker(x,y,c);
-	}
-
-	// Player always drawn
-	draw_cell_marker(g_px,g_py,g_pal[C_PLAYER]);
-}
-
-static void render_ui(void)
-{
-	fill_rect(0, UI_Y, SCR_W, UI_H, g_pal[C_UI_BG]);
-
-	char line1[64];
-	// Example: "HP: 5/7  POT: 2  D: 3"
-	snprintf(line1, sizeof(line1), "HP:%d/%d  POT:%d  D:%d",
-	         (int)g_pHP, (int)g_pMaxHP, (int)g_pots, (int)g_depth);
-
-	draw_text(2, UI_Y+1, line1, g_pal[C_UI_FG]);
-
-	// message line (truncate)
-	char line2[41];
-	strncpy(line2, g_msg, 40);
-	line2[40]=0;
-	draw_text(2, UI_Y+9, line2, g_pal[C_UI_FG]);
-}
-
-// ---------------------------- Gameplay --------------------------------
-
-static void damage_player(int dmg)
-{
-	g_pHP -= (s8)dmg;
-	if(g_pHP <= 0)
-	{
-		g_pHP = 0;
-		set_msg("YOU DIED. PRESS START.");
+		if(enemy_can_see_player(&g_mobs[i])){
+			// greedy chase
+			int sx=isgn(dx), sy=isgn(dy);
+			// try x-first then y, then alternate if blocked
+			int x0=g_mobs[i].x, y0=g_mobs[i].y;
+			int tx=x0+sx, ty=y0;
+			if(!is_blocking(tx,ty) && !cell_has_mob(tx,ty) && !(tx==g_pl.x && ty==g_pl.y)){
+				move_enemy_step(i,tx,ty);
+			}else{
+				tx=x0; ty=y0+sy;
+				if(!is_blocking(tx,ty) && !cell_has_mob(tx,ty) && !(tx==g_pl.x && ty==g_pl.y)){
+					move_enemy_step(i,tx,ty);
+				}else{
+					// try the other axis combo
+					tx=x0+sx; ty=y0+sy;
+					if(!is_blocking(tx,ty) && !cell_has_mob(tx,ty) && !(tx==g_pl.x && ty==g_pl.y)){
+						move_enemy_step(i,tx,ty);
+					}
+				}
+			}
+		}else{
+			// wander
+			static const int dirs[4][2]={{1,0},{-1,0},{0,1},{0,-1}};
+			int k=rng_range(0,3);
+			move_enemy_step(i, g_mobs[i].x + dirs[k][0], g_mobs[i].y + dirs[k][1]);
+		}
 	}
 }
 
-static void attack_monster(int mi)
-{
-	if(mi<0) return;
-	g_mon[mi].hp -= 1;
-	if(g_mon[mi].hp <= 0)
-	{
-		g_mon[mi].alive=false;
-		set_msg("YOU SLAY THE MONSTER.");
-	}
-	else
-	{
-		set_msg("YOU HIT IT.");
-	}
+static void use_berry(void){
+	if(!g_has_berry) return;
+	g_has_berry=false;
+	g_pl.hp += 5;
+	if(g_pl.hp > g_pl.maxhp) g_pl.hp = g_pl.maxhp;
 }
 
-static void monster_turns(void)
-{
-	if(g_pHP <= 0) return;
+static void reset_game(void){
+	g_floor=1;
+	g_pl.maxhp=10;
+	g_pl.hp=g_pl.maxhp;
+	g_has_berry=false;
+	new_floor();
+	render_all();
+}
 
-	for(int i=0;i<MAX_MON;i++)
-	{
-		if(!g_mon[i].alive) continue;
+int main(void){
+	irq_init(NULL);
+	irq_add(II_VBLANK, NULL);
 
-		int mx=g_mon[i].x, my=g_mon[i].y;
-		int dx=g_px-mx, dy=g_py-my;
-		int adx = dx<0 ? -dx : dx;
-		int ady = dy<0 ? -dy : dy;
+	// Seed RNG (tonc qran/sqran if available)
+	#ifdef sqran
+		sqran(0xC0FFEEu ^ (REG_VCOUNT<<8));
+	#endif
 
-		// attack if adjacent
-		if(adx + ady == 1)
-		{
-			damage_player(1);
-			if(g_pHP<=0) return;
+	init_video_and_tiles();
+
+	g_pl.maxhp=10;
+	g_pl.hp=g_pl.maxhp;
+
+	new_floor();
+	render_all();
+
+	while(1){
+		vid_vsync();
+		key_poll();
+
+		bool acted=false;
+
+		// Game over: restart immediately if dead
+		if(g_pl.hp<=0){
+			reset_game();
 			continue;
 		}
 
-		// move toward player (simple greedy)
-		int sx=0, sy=0;
-		if(adx >= ady) sx = (dx>0) ? 1 : (dx<0 ? -1 : 0);
-		else           sy = (dy>0) ? 1 : (dy<0 ? -1 : 0);
-
-		int nx=mx+sx, ny=my+sy;
-
-		// if primary blocked, try alternate axis
-		if(blocked_for_mon(nx,ny))
-		{
-			nx=mx; ny=my;
-			if(sx!=0)
-				ny = my + ((dy>0)?1:(dy<0?-1:0));
-			else
-				nx = mx + ((dx>0)?1:(dx<0?-1:0));
+		// Use item
+		if(key_hit(KEY_R)){
+			use_berry();
+			acted=true;
 		}
 
-		// if still blocked, random wiggle
-		if(blocked_for_mon(nx,ny))
-		{
-			for(int t=0;t<4;t++)
-			{
-				u32 dir=rng_range(4);
-				nx=mx + (dir==0) - (dir==1);
-				ny=my + (dir==2) - (dir==3);
-				if(!blocked_for_mon(nx,ny)) break;
-				nx=mx; ny=my;
+		// Descend
+		if(!acted && key_hit(KEY_START)){
+			if(g_pl.x==g_stairs_x && g_pl.y==g_stairs_y){
+				g_floor++;
+				if(g_floor>99) g_floor=99;
+				// small reward: heal a bit on descent
+				g_pl.hp += 2;
+				if(g_pl.hp>g_pl.maxhp) g_pl.hp=g_pl.maxhp;
+				g_has_berry=false; // inventory cleared on new floor (simple rule)
+				new_floor();
+				acted=true;
 			}
 		}
 
-		if(!blocked_for_mon(nx,ny))
-		{
-			g_mon[i].x=(s8)nx;
-			g_mon[i].y=(s8)ny;
-		}
-	}
-}
-
-static void try_pickup(void)
-{
-	int pi = pot_at(g_px,g_py);
-	if(pi>=0 && g_pot[pi].alive)
-	{
-		g_pot[pi].alive=false;
-		if(g_pots < 9) g_pots++;
-		set_msg("PICKED UP A POTION.");
-	}
-}
-
-static void use_potion(void)
-{
-	if(g_pHP<=0) return;
-
-	if(g_pots==0)
-	{
-		set_msg("NO POTIONS.");
-		return;
-	}
-	if(g_pHP >= g_pMaxHP)
-	{
-		set_msg("HP IS FULL.");
-		return;
-	}
-
-	g_pots--;
-	g_pHP += 3;
-	if(g_pHP > g_pMaxHP) g_pHP = g_pMaxHP;
-	set_msg("YOU DRINK A POTION.");
-}
-
-static bool player_move_or_attack(int dx, int dy)
-{
-	if(g_pHP<=0) return false;
-
-	int nx = g_px + dx;
-	int ny = g_py + dy;
-
-	if(blocked_for_player(nx,ny))
-	{
-		set_msg("BUMP.");
-		return false;
-	}
-
-	int mi = mon_at(nx,ny);
-	if(mi>=0)
-	{
-		attack_monster(mi);
-		return true; // spent turn
-	}
-
-	g_px = (s8)nx;
-	g_py = (s8)ny;
-	try_pickup();
-
-	if(g_px==g_stx && g_py==g_sty)
-		set_msg("STAIRS HERE. PRESS A TO DESCEND.");
-
-	return true;
-}
-
-static void descend(void)
-{
-	if(g_pHP<=0) return;
-
-	if(!(g_px==g_stx && g_py==g_sty))
-	{
-		use_potion();
-		return;
-	}
-
-	// go down
-	g_depth++;
-	// small heal on descend to keep things moving
-	if(g_pHP < g_pMaxHP) g_pHP++;
-	set_msg("DESCENDING...");
-	generate_level(g_depth);
-}
-
-static void new_game(void)
-{
-	g_depth = 1;
-	g_pMaxHP = 7;
-	g_pHP = g_pMaxHP;
-	g_pots = 1;
-
-	// seed RNG with a little bit of entropy from VCOUNT (not great, but fine)
-	g_rng ^= ((u32)REG_VCOUNT << 16) ^ 0xA5A5C3C3u;
-
-	generate_level(g_depth);
-}
-
-// ---------------------------- Main ------------------------------------
-
-int main(void)
-{
-	// Mode 3 bitmap
-	REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
-
-	// palette-ish constants (Mode 3 doesn't use BG palette, but we store colors here)
-	g_pal[C_BG]      = rgb(0,0,0);
-	g_pal[C_FLOOR]   = rgb(6,6,7);
-	g_pal[C_WALL]    = rgb(2,2,3);
-	g_pal[C_PLAYER]  = rgb(0,31,0);
-	g_pal[C_MON]     = rgb(31,0,0);
-	g_pal[C_POT]     = rgb(0,18,31);
-	g_pal[C_STAIRS]  = rgb(31,31,0);
-	g_pal[C_UI_BG]   = rgb(1,1,2);
-	g_pal[C_UI_FG]   = rgb(31,31,31);
-
-	fill_rect(0,0,SCR_W,SCR_H,g_pal[C_BG]);
-
-	new_game();
-
-	u16 prev=0;
-
-	for(;;)
-	{
-		vsync();
-
-		u16 keys = (u16)(~REG_KEYINPUT & 0x03FF);
-		u16 hit  = (u16)(keys & ~prev);
-		prev = keys;
-
-		bool acted = false;
-
-		if(hit & KEY_START)
-		{
-			new_game();
-			acted = false;
+		// Wait
+		if(!acted && key_hit(KEY_A)){
+			acted=true;
 		}
 
-		if(g_pHP <= 0)
-		{
-			// dead: only START matters
-			render_world();
-			render_ui();
-			continue;
+		// Movement
+		if(!acted){
+			int nx=g_pl.x, ny=g_pl.y;
+			if(key_hit(KEY_UP))    ny--;
+			else if(key_hit(KEY_DOWN))  ny++;
+			else if(key_hit(KEY_LEFT))  nx--;
+			else if(key_hit(KEY_RIGHT)) nx++;
+
+			if(nx!=g_pl.x || ny!=g_pl.y){
+				try_move_player(nx,ny);
+				acted=true;
+			}
 		}
 
-		if(hit & KEY_UP)    acted = player_move_or_attack(0,-1);
-		else if(hit & KEY_DOWN)  acted = player_move_or_attack(0, 1);
-		else if(hit & KEY_LEFT)  acted = player_move_or_attack(-1,0);
-		else if(hit & KEY_RIGHT) acted = player_move_or_attack(1, 0);
-		else if(hit & KEY_A)     { descend(); acted = true; }
-		else if(hit & KEY_B)     { set_msg("WAIT."); acted = true; }
-
-		if(acted)
-		{
-			compute_fov();
-			monster_turns();
-			compute_fov();
+		if(acted){
+			enemies_take_turn();
+			// If enemies killed you, next loop resets.
+			render_all();
 		}
-
-		render_world();
-		render_ui();
 	}
 
 	return 0;
