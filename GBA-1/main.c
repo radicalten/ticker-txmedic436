@@ -11,6 +11,8 @@
  * - Win condition: Find the stairs
  */
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // --- Constants ---
 #define MAP_WIDTH  32
 #define MAP_HEIGHT 32
@@ -55,14 +57,14 @@ const unsigned int tile_player[8] = {
 // Palette (16 colors)
 const unsigned short game_pal[16] = {
     CLR_BLACK,      // 0: Transparent/Background
-    RGB15(10,10,10),// 1: Dark Grey (Wall inner)
-    RGB15(5, 5, 5), // 2: Floor Grey
-    RGB15(15,10, 5),// 3: Brown (Wall border)
-    RGB15(31,31, 0),// 4: Yellow (Stairs)
-    RGB15(31, 0, 0),// 5: Red (Player Body)
-    RGB15(31,31,31),// 6: White
+    RGB15_C(10,10,10),// 1: Dark Grey (Wall inner)
+    RGB15_C(5, 5, 5), // 2: Floor Grey
+    RGB15_C(15,10, 5),// 3: Brown (Wall border)
+    RGB15_C(31,31, 0),// 4: Yellow (Stairs)
+    RGB15_C(31, 0, 0),// 5: Red (Player Body)
+    RGB15_C(31,31,31),// 6: White
     0,0,0,0,0,0,0,0, // Unused
-    RGB15(31,31,31) // 15: White (Debug/Text)
+    RGB15_C(31,31,31) // 15: White (Debug/Text)
 };
 
 // --- Game State ---
