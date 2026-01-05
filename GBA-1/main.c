@@ -227,7 +227,7 @@ int main() {
                     if (player.x == stairs.x && player.y == stairs.y) {
                         level++;
                         // Flash screen effect
-                        REG_MOSAIC = MOS_BG_H(15) | MOS_BG_V(15);
+                        REG_MOSAIC = MOS_BH(15) | MOS_BV(15);
                         REG_BG0CNT |= BG_MOSAIC;
                         for(int i=0; i<30; i++) VBlankIntrWait();
                         REG_BG0CNT &= ~BG_MOSAIC;
