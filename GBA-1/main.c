@@ -1,456 +1,275 @@
-// dungeon.c - simple Mystery Dungeon-like for GBA using tonc (single file)
-//
-// Build example (adjust paths as needed):
-// arm-none-eabi-gcc -mthumb -mthumb-interwork -O2 -Wall -I/path/to/tonc -c dungeon.c
-// arm-none-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs dungeon.o -L/path/to/tonc/lib -ltonc -o dungeon.elf
-// arm-none-eabi-objcopy -O binary dungeon.elf dungeon.gba
-//
-// Run on hardware/emu (mGBA, VBA, etc.)
-
 #include <tonc.h>
+#include <stdlib.h>
 
-#define SCREEN_WIDTH   240
-#define SCREEN_HEIGHT  160
+/* 
+ * MYSTERY DUNGEON GBA SINGLE FILE DEMO
+ * 
+ * Mechanics:
+ * - Procedural Map Generation (Rooms + Corridors)
+ * - Turn-based movement
+ * - Camera follows player
+ * - Win condition: Find the stairs
+ */
 
-#define TILE_SIZE      8
-#define MAP_W          28      // 28 * 8 = 224 px
-#define MAP_H          18      // 18 * 8 = 144 px
-                               // Leaves 16 px at bottom for UI
-#define MAX_MONSTERS   8
-#define PLAYER_MAX_HP  10
-#define MONSTER_MAX_HP 3
+// --- Constants ---
+#define MAP_WIDTH  32
+#define MAP_HEIGHT 32
+#define TILE_SIZE  8
 
-#define FB ((u16*)VRAM)
+// Tile IDs (Logic)
+#define TID_FLOOR  0
+#define TID_WALL   1
+#define TID_STAIRS 2
 
-typedef unsigned char bool;
-#define true  1
-#define false 0
+// Screen Block Base and Character Block Base
+#define BG0_SBB    30
+#define BG0_CBB    0
 
-enum { TILE_WALL=0, TILE_FLOOR=1 };
+// --- Embedded Graphics Data (4bpp Tiles) ---
+// 1 Tile = 8x8 pixels = 32 bytes = 8 integers
 
-typedef struct
-{
-    int x, y;      // tile coordinates
-    int hp;
-    bool alive;
+// 1. Floor (Dotted pattern)
+const unsigned int tile_floor[8] = {
+    0x22222222, 0x22222222, 0x22222222, 0x22222222,
+    0x22222222, 0x22222222, 0x22222222, 0x22222222
+};
+
+// 2. Wall (Bricks)
+const unsigned int tile_wall[8] = {
+    0x33333333, 0x31111113, 0x31111113, 0x33333333,
+    0x33333333, 0x31111113, 0x31111113, 0x33333333
+};
+
+// 3. Stairs (Stripes)
+const unsigned int tile_stairs[8] = {
+    0x00000000, 0x00004444, 0x00444444, 0x44444444,
+    0x44444444, 0x44444400, 0x44440000, 0x00000000
+};
+
+// 4. Player Sprite (Smiley Face)
+const unsigned int tile_player[8] = {
+    0x00055500, 0x05555550, 0x55055055, 0x55055055,
+    0x55555555, 0x55955955, 0x05599550, 0x00555500
+};
+
+// Palette (16 colors)
+const unsigned short game_pal[16] = {
+    CLR_BLACK,      // 0: Transparent/Background
+    RGB15(10,10,10),// 1: Dark Grey (Wall inner)
+    RGB15(5, 5, 5), // 2: Floor Grey
+    RGB15(15,10, 5),// 3: Brown (Wall border)
+    RGB15(31,31, 0),// 4: Yellow (Stairs)
+    RGB15(31, 0, 0),// 5: Red (Player Body)
+    RGB15(31,31,31),// 6: White
+    0,0,0,0,0,0,0,0, // Unused
+    RGB15(31,31,31) // 15: White (Debug/Text)
+};
+
+// --- Game State ---
+typedef struct {
+    int x, y;
 } Entity;
 
-// Global game state
-static u8     map_data[MAP_H][MAP_W];
-static Entity player;
-static Entity monsters[MAX_MONSTERS];
-static int    alive_monsters = 0;
+u8 map[MAP_WIDTH * MAP_HEIGHT];
+Entity player;
+Entity stairs;
+int level = 1;
 
-// --------------------------------------------------------------------
-// RNG (simple LCG)
-// --------------------------------------------------------------------
+// --- Helper Functions ---
 
-static u32 rng_state = 1;
-
-static u32 rand_u32(void)
-{
-    rng_state = 1664525 * rng_state + 1013904223;
-    return rng_state;
+// Simple Pseudo-Random Number Generator wrapper
+int rand_range(int min, int max) {
+    return min + (qran() % (max - min + 1));
 }
 
-static int rand_int(int max)
-{
-    return (int)(rand_u32() % (u32)max);
+// Draw a specific tile to the screen block
+void set_bg_tile(int x, int y, int tile_id) {
+    // Screen Block 30 is at se_mem[30]
+    se_mem[BG0_SBB][y * 32 + x] = tile_id;
 }
 
-// --------------------------------------------------------------------
-// Utility
-// --------------------------------------------------------------------
+// Initialize Graphics
+void init_graphics() {
+    // Load Palette
+    memcpy16(pal_bg_mem, game_pal, 16);
+    memcpy16(pal_obj_mem, game_pal, 16);
 
-static inline int iabs(int x) { return x < 0 ? -x : x; }
+    // Load Tiles into Character Block 0 (Backgrounds)
+    memcpy32(&tile_mem[BG0_CBB][0], tile_floor, 8);  // ID 0
+    memcpy32(&tile_mem[BG0_CBB][1], tile_wall, 8);   // ID 1
+    memcpy32(&tile_mem[BG0_CBB][2], tile_stairs, 8); // ID 2
 
-static inline void vsync(void)
-{
-    // Simple VBlank wait without using interrupts
-    while (REG_VCOUNT >= 160);
-    while (REG_VCOUNT < 160);
+    // Load Player Sprite into OBJ memory (start of tile_mem[4])
+    memcpy32(&tile_mem[4][0], tile_player, 8);
+
+    // Set up BG0
+    REG_BG0CNT = BG_CBB(BG0_CBB) | BG_SBB(BG0_SBB) | BG_4BPP | BG_REG_32x32;
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
 }
 
-// --------------------------------------------------------------------
-// Drawing helpers
-// --------------------------------------------------------------------
-
-static void fill_rect(int x, int y, int w, int h, u16 color)
-{
-    // Clip to screen bounds
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > SCREEN_WIDTH)  w = SCREEN_WIDTH  - x;
-    if (y + h > SCREEN_HEIGHT) h = SCREEN_HEIGHT - y;
-    if (w <= 0 || h <= 0) return;
-
-    for (int iy = 0; iy < h; iy++)
-    {
-        u16 *dst = FB + (y + iy) * SCREEN_WIDTH + x;
-        for (int ix = 0; ix < w; ix++)
-            dst[ix] = color;
-    }
-}
-
-static void draw_tile(int tx, int ty, u16 color)
-{
-    int px = tx * TILE_SIZE;
-    int py = ty * TILE_SIZE;
-    fill_rect(px, py, TILE_SIZE, TILE_SIZE, color);
-}
-
-// --------------------------------------------------------------------
-// Monsters helpers
-// --------------------------------------------------------------------
-
-static int find_monster_at(int x, int y)
-{
-    for (int i = 0; i < MAX_MONSTERS; i++)
-    {
-        if (monsters[i].alive &&
-            monsters[i].x == x &&
-            monsters[i].y == y)
-            return i;
-    }
-    return -1;
-}
-
-// --------------------------------------------------------------------
-// Level generation
-// --------------------------------------------------------------------
-
-static void generate_dungeon(void)
-{
-    // Fill with walls
-    for (int y = 0; y < MAP_H; y++)
-        for (int x = 0; x < MAP_W; x++)
-            map_data[y][x] = TILE_WALL;
-
-    // Simple random-walk "cave" carving
-    int x = MAP_W / 2;
-    int y = MAP_H / 2;
-    int steps = MAP_W * MAP_H * 5;
-
-    for (int i = 0; i < steps; i++)
-    {
-        map_data[y][x] = TILE_FLOOR;
-
-        int dir = rand_int(4);
-        switch (dir)
-        {
-        case 0: if (x > 1)         x--; break;
-        case 1: if (x < MAP_W-2)   x++; break;
-        case 2: if (y > 1)         y--; break;
-        case 3: if (y < MAP_H-2)   y++; break;
-        }
+// --- Dungeon Generation ---
+// Uses a simple "Rectangular Room Carving" algorithm
+void generate_dungeon() {
+    // 1. Fill map with walls
+    for(int i = 0; i < MAP_WIDTH * MAP_HEIGHT; i++) {
+        map[i] = TID_WALL;
     }
 
-    // Place player on a floor tile near center-bottom
-    bool placed = false;
-    for (int ty = MAP_H/2; ty < MAP_H-1 && !placed; ty++)
-    {
-        for (int tx = 1; tx < MAP_W-1; tx++)
-        {
-            if (map_data[ty][tx] == TILE_FLOOR)
-            {
-                player.x = tx;
-                player.y = ty;
-                placed = true;
-                break;
-            }
-        }
-    }
-    if (!placed)
-    {
-        // Fallback to center
-        player.x = MAP_W/2;
-        player.y = MAP_H/2;
-    }
+    int room_count = rand_range(5, 8);
+    int prev_x = 0, prev_y = 0;
 
-    player.hp    = PLAYER_MAX_HP;
-    player.alive = true;
+    for (int r = 0; r < room_count; r++) {
+        int w = rand_range(4, 8);
+        int h = rand_range(4, 8);
+        int x = rand_range(1, MAP_WIDTH - w - 1);
+        int y = rand_range(1, MAP_HEIGHT - h - 1);
 
-    // Clear monsters
-    for (int i = 0; i < MAX_MONSTERS; i++)
-        monsters[i].alive = false;
-
-    // Place monsters on random floor tiles
-    alive_monsters = 0;
-    for (int i = 0; i < MAX_MONSTERS; i++)
-    {
-        int tries = 0;
-        while (tries < 1000)
-        {
-            int mx = rand_int(MAP_W);
-            int my = rand_int(MAP_H);
-            tries++;
-
-            if (map_data[my][mx] != TILE_FLOOR) continue;
-            if (mx == player.x && my == player.y) continue;
-            if (find_monster_at(mx, my) >= 0) continue;
-
-            monsters[i].x     = mx;
-            monsters[i].y     = my;
-            monsters[i].hp    = MONSTER_MAX_HP;
-            monsters[i].alive = true;
-            alive_monsters++;
-            break;
-        }
-    }
-}
-
-// --------------------------------------------------------------------
-// Player & monsters turns
-// --------------------------------------------------------------------
-
-static void try_move_player(int dx, int dy)
-{
-    if (dx == 0 && dy == 0) return;
-
-    int nx = player.x + dx;
-    int ny = player.y + dy;
-
-    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H)
-        return;
-
-    if (map_data[ny][nx] == TILE_WALL)
-        return;
-
-    int mi = find_monster_at(nx, ny);
-    if (mi >= 0)
-    {
-        // Attack the monster instead of moving
-        Entity *m = &monsters[mi];
-        if (m->alive)
-        {
-            m->hp--;
-            if (m->hp <= 0)
-            {
-                m->alive = false;
-                if (alive_monsters > 0)
-                    alive_monsters--;
-            }
-        }
-    }
-    else
-    {
-        // Move into empty floor tile
-        player.x = nx;
-        player.y = ny;
-    }
-}
-
-static void monsters_turn(void)
-{
-    if (!player.alive)
-        return;
-
-    for (int i = 0; i < MAX_MONSTERS; i++)
-    {
-        Entity *m = &monsters[i];
-        if (!m->alive)
-            continue;
-
-        int dx = 0, dy = 0;
-
-        int distx = player.x - m->x;
-        int disty = player.y - m->y;
-        int adx   = iabs(distx);
-        int ady   = iabs(disty);
-
-        // Chase the player if fairly close, else wander randomly
-        if (adx + ady <= 6)
-        {
-            if (adx > ady)
-                dx = (distx > 0) ? 1 : -1;
-            else if (ady > 0)
-                dy = (disty > 0) ? 1 : -1;
-        }
-        else
-        {
-            int dir = rand_int(5);
-            switch (dir)
-            {
-            case 0: dx = -1; break;
-            case 1: dx =  1; break;
-            case 2: dy = -1; break;
-            case 3: dy =  1; break;
-            default: dx = dy = 0; break;  // stand still
+        // Carve Room
+        for (int iy = y; iy < y + h; iy++) {
+            for (int ix = x; ix < x + w; ix++) {
+                map[iy * MAP_WIDTH + ix] = TID_FLOOR;
             }
         }
 
-        if (dx == 0 && dy == 0)
-            continue;
+        int center_x = x + w / 2;
+        int center_y = y + h / 2;
 
-        int nx = m->x + dx;
-        int ny = m->y + dy;
-
-        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H)
-            continue;
-
-        if (map_data[ny][nx] == TILE_WALL)
-            continue;
-
-        // If tile has another monster (and not the player), don't move
-        if (find_monster_at(nx, ny) >= 0 &&
-            !(player.x == nx && player.y == ny))
-            continue;
-
-        // Attack player
-        if (player.alive && player.x == nx && player.y == ny)
-        {
-            if (player.hp > 0)
-                player.hp--;
-            if (player.hp <= 0)
-            {
-                player.hp    = 0;
-                player.alive = false;
+        if (r == 0) {
+            // Place player in first room
+            player.x = center_x;
+            player.y = center_y;
+        } else {
+            // Connect to previous room with corridor
+            // Horizontal then Vertical
+            int cx = prev_x;
+            int cy = prev_y;
+            
+            while(cx != center_x) {
+                map[cy * MAP_WIDTH + cx] = TID_FLOOR;
+                cx += (center_x > cx) ? 1 : -1;
             }
-            continue;
+            while(cy != center_y) {
+                map[cy * MAP_WIDTH + cx] = TID_FLOOR;
+                cy += (center_y > cy) ? 1 : -1;
+            }
         }
+        
+        prev_x = center_x;
+        prev_y = center_y;
 
-        // Move
-        m->x = nx;
-        m->y = ny;
-    }
-}
-
-// --------------------------------------------------------------------
-// UI & rendering
-// --------------------------------------------------------------------
-
-static void draw_ui(void)
-{
-    int ui_y = MAP_H * TILE_SIZE;
-    int ui_h = SCREEN_HEIGHT - ui_y;
-
-    // Clear UI region
-    fill_rect(0, ui_y, SCREEN_WIDTH, ui_h, RGB15(0, 0, 0));
-
-    // HP bar
-    u16 full_col  = RGB15(0, 28, 0);
-    u16 empty_col = RGB15(8,  0, 0);
-
-    int x0    = 4;
-    int y0    = ui_y + 4;
-    int box_w = 8;
-    int box_h = ui_h - 8;
-    if (box_h < 4) box_h = 4;
-
-    for (int i = 0; i < PLAYER_MAX_HP; i++)
-    {
-        u16 c  = (i < player.hp) ? full_col : empty_col;
-        int bx = x0 + i * (box_w + 2);
-        fill_rect(bx, y0, box_w, box_h, c);
-    }
-
-    // If dead, overlay a solid red banner as a simple "GAME OVER" cue
-    if (!player.alive)
-    {
-        fill_rect(0, ui_y, SCREEN_WIDTH, ui_h, RGB15(20, 0, 0));
-    }
-}
-
-static void draw_game(void)
-{
-    // Draw map
-    for (int y = 0; y < MAP_H; y++)
-    {
-        for (int x = 0; x < MAP_W; x++)
-        {
-            u16 col;
-            if (map_data[y][x] == TILE_WALL)
-                col = RGB15(6, 6, 6);   // walls: dark gray
-            else
-                col = RGB15(1, 1, 1);   // floor: almost black
-
-            draw_tile(x, y, col);
+        // Place stairs in the last room generated
+        if (r == room_count - 1) {
+            stairs.x = center_x;
+            stairs.y = center_y;
+            map[stairs.y * MAP_WIDTH + stairs.x] = TID_STAIRS;
         }
     }
 
-    // Draw monsters
-    for (int i = 0; i < MAX_MONSTERS; i++)
-    {
-        Entity *m = &monsters[i];
-        if (!m->alive)
-            continue;
-        u16 col = RGB15(28, 0, 0);     // red
-        draw_tile(m->x, m->y, col);
+    // Render Logic Map to VRAM
+    for(int y = 0; y < MAP_HEIGHT; y++) {
+        for(int x = 0; x < MAP_WIDTH; x++) {
+            set_bg_tile(x, y, map[y * MAP_WIDTH + x]);
+        }
     }
-
-    // Draw player
-    if (player.alive)
-    {
-        u16 col = RGB15(0, 28, 0);     // green
-        draw_tile(player.x, player.y, col);
-    }
-    else
-    {
-        u16 col = RGB15(8, 0, 8);      // purple-ish for corpse
-        draw_tile(player.x, player.y, col);
-    }
-
-    // UI at bottom
-    draw_ui();
 }
 
-// --------------------------------------------------------------------
-// Main
-// --------------------------------------------------------------------
+// --- Main Loop ---
 
-int main(void)
-{
-    // Mode 3, BG2 on
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2;
+int main() {
+    // Init Interrupts and Tonc
+    irq_init(NULL);
+    irq_enable(II_VBLANK);
+    
+    // Seed random (using a volatile register for entropy)
+    sqran(REG_VCOUNT); 
 
-    // Seed RNG (you can replace this with something more variable)
-    rng_state = 123456789;
-
+    init_graphics();
     generate_dungeon();
 
-    while (1)
-    {
-        vsync();
+    OBJ_ATTR *player_obj = &oam_mem[0];
+    int camera_x = 0;
+    int camera_y = 0;
+
+    while(1) {
+        VBlankIntrWait();
         key_poll();
 
-        if (!player.alive)
-        {
-            // Press START to restart after death
-            if (key_hit(KEY_START))
-            {
-                generate_dungeon();
+        int dx = 0;
+        int dy = 0;
+        bool moved = false;
+
+        // Input Handling (Turn Based: Only move on Key Hit, not held)
+        if(key_hit(KEY_UP))    dy = -1;
+        if(key_hit(KEY_DOWN))  dy = 1;
+        if(key_hit(KEY_LEFT))  dx = -1;
+        if(key_hit(KEY_RIGHT)) dx = 1;
+
+        // Logic Update
+        if (dx != 0 || dy != 0) {
+            int target_x = player.x + dx;
+            int target_y = player.y + dy;
+
+            // Bounds Check
+            if (target_x >= 0 && target_x < MAP_WIDTH && 
+                target_y >= 0 && target_y < MAP_HEIGHT) {
+                
+                u8 tile = map[target_y * MAP_WIDTH + target_x];
+
+                // Wall Collision
+                if (tile != TID_WALL) {
+                    player.x = target_x;
+                    player.y = target_y;
+                    moved = true;
+
+                    // Stair Collision (Next Level)
+                    if (player.x == stairs.x && player.y == stairs.y) {
+                        level++;
+                        // Flash screen effect
+                        REG_MOSAIC = MOS_BG_H(15) | MOS_BG_V(15);
+                        REG_BG0CNT |= BG_MOSAIC;
+                        for(int i=0; i<30; i++) VBlankIntrWait();
+                        REG_BG0CNT &= ~BG_MOSAIC;
+                        
+                        generate_dungeon();
+                        // Force camera update immediately
+                        moved = true; 
+                    }
+                }
             }
         }
-        else
-        {
-            int dx = 0, dy = 0;
 
-            if (key_hit(KEY_UP))       dy = -1;
-            else if (key_hit(KEY_DOWN))  dy =  1;
-            else if (key_hit(KEY_LEFT))  dx = -1;
-            else if (key_hit(KEY_RIGHT)) dx =  1;
+        // Camera Logic (Center on Player)
+        // Screen is 240x160. Player is at pixels p_x*8, p_y*8
+        // Desired TopLeft = Player - Screen/2
+        int target_cam_x = (player.x * 8) - (240 / 2) + 4;
+        int target_cam_y = (player.y * 8) - (160 / 2) + 4;
 
-            // Move & then monsters move
-            if (dx != 0 || dy != 0)
-            {
-                try_move_player(dx, dy);
-                monsters_turn();
-            }
+        // Clamp Camera to Map Bounds
+        if (target_cam_x < 0) target_cam_x = 0;
+        if (target_cam_y < 0) target_cam_y = 0;
+        if (target_cam_x > (MAP_WIDTH * 8) - 240) target_cam_x = (MAP_WIDTH * 8) - 240;
+        if (target_cam_y > (MAP_HEIGHT * 8) - 160) target_cam_y = (MAP_HEIGHT * 8) - 160;
 
-            // Wait a turn with A (monsters act, player doesn't move)
-            if (key_hit(KEY_A))
-            {
-                monsters_turn();
-            }
+        camera_x = target_cam_x;
+        camera_y = target_cam_y;
 
-            // New floor when all monsters are dead
-            if (player.alive && alive_monsters == 0)
-            {
-                generate_dungeon();
-            }
-        }
+        REG_BG0HOFS = camera_x;
+        REG_BG0VOFS = camera_y;
 
-        draw_game();
+        // Update Sprite (Relative to Camera)
+        int sprite_screen_x = (player.x * 8) - camera_x;
+        int sprite_screen_y = (player.y * 8) - camera_y;
+
+        // Set OBJ attributes
+        // Attr0: Y pos, Shape (Square), 4bpp
+        // Attr1: X pos, Size (8x8)
+        // Attr2: Tile Index (0), Priority, Palette
+        player_obj->attr0 = (sprite_screen_y & 0xFF) | ATTR0_SQUARE | ATTR0_4BPP;
+        player_obj->attr1 = (sprite_screen_x & 0x1FF) | ATTR1_SIZE_8;
+        player_obj->attr2 = 0 | ATTR2_PRIO(0); 
+
+        // Reroll random to prevent static patterns if player waits
+        qran(); 
     }
 
     return 0;
