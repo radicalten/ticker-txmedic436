@@ -341,7 +341,7 @@ int main(void) {
         render();
         render_hud();
         
-        oam_copy(oam_mem, obj_buffer, 128);
+        //oam_copy(oam_mem, obj_buffer, 128);
     }
     
     return 0;
@@ -371,7 +371,7 @@ void init_gfx(void) {
     memset(&se_mem[30][0], 0, 0x800);
     
     // Initialize OAM
-    oam_init(obj_buffer, 128);
+    //oam_init(obj_buffer, 128);
 }
 
 //----------------------------------------------------------------------
@@ -698,7 +698,7 @@ void render(void) {
     int px = player.x * 8 - cam_x;
     int py = player.y * 8 - cam_y;
     if (px >= -8 && px < 248 && py >= -8 && py < 168) {
-        obj_set_attr(&obj_buffer[obj_idx],
+        //obj_set_attr(&obj_buffer[obj_idx],
             ATTR0_Y(py) | ATTR0_SQUARE,
             ATTR1_X(px) | ATTR1_SIZE_8,
             ATTR2_ID(1) | ATTR2_PRIO(0));
