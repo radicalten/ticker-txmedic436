@@ -702,7 +702,7 @@ void render(void) {
         int ex = enemies[i].x * 8 - cam_x;
         int ey = enemies[i].y * 8 - cam_y;
         
-        if (ex >= -8 && ex < 248 && ey >= -8 && ey < 168 && obj_idx < 128)
+        if (ex >= -8 && ex < 248 && ey >= -8 && ey < 168 && obj_idx < 128){
             int tile_id = 2; // Default slime
             switch (enemies[i].type) {
                 case ENT_SLIME: tile_id = 2; break;
@@ -1113,4 +1113,5 @@ void update_message(void) {
     if (msg.timer > 0) {
         msg.timer--;
     }
+}
 }
