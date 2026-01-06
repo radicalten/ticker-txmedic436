@@ -711,7 +711,6 @@ void render(void) {
                 case ENT_SKELETON: tile_id = 5; break;
             }
             
-        }
     
     // Item sprites
     for (int i = 0; i < MAX_ITEMS; i++) {
@@ -730,11 +729,6 @@ void render(void) {
             }
     }
     
-    // Hide remaining sprites
-    for (int i = obj_idx; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
-}
 
 //----------------------------------------------------------------------
 // HUD rendering
