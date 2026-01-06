@@ -728,13 +728,6 @@ void render(void) {
                 case ITEM_APPLE: tile_id = 7; break;
                 case ITEM_ORB: tile_id = 8; break;
             }
-            
-            obj_set_attr(&obj_buffer[obj_idx],
-                ATTR0_Y(iy) | ATTR0_SQUARE,
-                ATTR1_X(ix) | ATTR1_SIZE_8,
-                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
-            obj_idx++;
-        }
     }
     
     // Hide remaining sprites
