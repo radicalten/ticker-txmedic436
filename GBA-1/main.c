@@ -748,15 +748,15 @@ void render(void) {
            // obj_set_attr(&obj_buffer[obj_idx],
                 ATTR0_Y(iy) | ATTR0_SQUARE,
                 ATTR1_X(ix) | ATTR1_SIZE_8,
-                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
+                ATTR2_ID(tile_id) | ATTR2_PRIO(0);
             obj_idx++;
         }
     }
     
     // Hide remaining sprites
-    for (int i = obj_idx; i < 128; i++) {
-        obj_hide(&obj_buffer[i]);
-    }
+    //for (int i = obj_idx; i < 128; i++) {
+        //obj_hide(&obj_buffer[i]);
+    //}
 }
 
 //----------------------------------------------------------------------
