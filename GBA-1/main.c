@@ -78,7 +78,7 @@ static void init_level_map(void)
     level_map[LEVEL_HEIGHT - 5][23] = 1;
 
     // Copy to BG0 map (64x32 tiles using screenblocks 28-29)
-    u16 *bg_map = (u16*)SCREEN_BASE_BLOCK(28);   // 2 consecutive SBBs (28,29)
+    //u16 *bg_map = (u16*)SCREEN_BASE_BLOCK(28);   // 2 consecutive SBBs (28,29)
     const int BG_MAP_W = 64;
     const int BG_MAP_H = 32;
 
@@ -106,7 +106,7 @@ static void init_background(void)
 
     // BG tiles in charblock 0
     // 4bpp tile is 32 bytes = 8 u32 words
-    u32 *bg_tiles = (u32*)CHAR_BASE_BLOCK(0);
+    //u32 *bg_tiles = (u32*)CHAR_BASE_BLOCK(0);
     const int WORDS_PER_TILE = 8;
 
     int i;
