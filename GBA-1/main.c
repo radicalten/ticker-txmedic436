@@ -5,8 +5,6 @@
 #include <tonc.h>
 #include <string.h>
 
-#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
-
 //----------------------------------------------------------------------
 // Constants
 //----------------------------------------------------------------------
@@ -175,42 +173,42 @@ const u32 tile_data[] ALIGN4 = {
 
 // Palette: 16 colors
 const u16 palette[] = {
-    RGB15_C(0, 0, 0),      // 0: Black
-    RGB15_C(12, 12, 14),   // 1: Dark gray (wall)
-    RGB15_C(8, 8, 10),     // 2: Darker gray (wall detail)
-    RGB15_C(20, 18, 10),   // 3: Brown (stairs)
-    RGB15_C(8, 12, 20),    // 4: Blue (water)
-    RGB15_C(12, 16, 24),   // 5: Light blue (water)
-    RGB15_C(0, 28, 0),     // 6: Green (player)
-    RGB15_C(20, 0, 28),    // 7: Purple (slime)
-    RGB15_C(16, 8, 0),     // 8: Brown (bat)
-    RGB15_C(28, 20, 0),    // 9: Yellow (goblin)
-    RGB15_C(28, 28, 28),   // A: White (skeleton)
-    RGB15_C(28, 0, 0),     // B: Red (potion/heart)
-    RGB15_C(0, 28, 8),     // C: Cyan (orb)
-    RGB15_C(31, 31, 31),   // D: Bright white
-    RGB15_C(31, 31, 0),    // E: Yellow (attack)
-    RGB15_C(16, 16, 16),   // F: Gray
+    RGB15(0, 0, 0),      // 0: Black
+    RGB15(12, 12, 14),   // 1: Dark gray (wall)
+    RGB15(8, 8, 10),     // 2: Darker gray (wall detail)
+    RGB15(20, 18, 10),   // 3: Brown (stairs)
+    RGB15(8, 12, 20),    // 4: Blue (water)
+    RGB15(12, 16, 24),   // 5: Light blue (water)
+    RGB15(0, 28, 0),     // 6: Green (player)
+    RGB15(20, 0, 28),    // 7: Purple (slime)
+    RGB15(16, 8, 0),     // 8: Brown (bat)
+    RGB15(28, 20, 0),    // 9: Yellow (goblin)
+    RGB15(28, 28, 28),   // A: White (skeleton)
+    RGB15(28, 0, 0),     // B: Red (potion/heart)
+    RGB15(0, 28, 8),     // C: Cyan (orb)
+    RGB15(31, 31, 31),   // D: Bright white
+    RGB15(31, 31, 0),    // E: Yellow (attack)
+    RGB15(16, 16, 16),   // F: Gray
 };
 
 // Sprite palette
 const u16 sprite_pal[] = {
-    RGB15_C(31, 0, 31),    // 0: Transparent (magenta)
-    RGB15_C(0, 28, 0),     // 1: Green (player)
-    RGB15_C(20, 0, 28),    // 2: Purple (slime)
-    RGB15_C(16, 8, 0),     // 3: Brown (bat)
-    RGB15_C(28, 20, 0),    // 4: Yellow (goblin)
-    RGB15_C(28, 28, 28),   // 5: White (skeleton)
-    RGB15_C(28, 0, 0),     // 6: Red
-    RGB15_C(0, 28, 8),     // 7: Cyan
-    RGB15_C(0, 0, 0),      // 8: Black (outline)
-    RGB15_C(31, 31, 31),   // 9: White
-    RGB15_C(28, 16, 0),    // A: Orange
-    RGB15_C(0, 20, 28),    // B: Blue
-    RGB15_C(28, 28, 0),    // C: Yellow
-    RGB15_C(20, 28, 20),   // D: Light green
-    RGB15_C(28, 20, 28),   // E: Pink
-    RGB15_C(16, 16, 16),   // F: Gray
+    RGB15(31, 0, 31),    // 0: Transparent (magenta)
+    RGB15(0, 28, 0),     // 1: Green (player)
+    RGB15(20, 0, 28),    // 2: Purple (slime)
+    RGB15(16, 8, 0),     // 3: Brown (bat)
+    RGB15(28, 20, 0),    // 4: Yellow (goblin)
+    RGB15(28, 28, 28),   // 5: White (skeleton)
+    RGB15(28, 0, 0),     // 6: Red
+    RGB15(0, 28, 8),     // 7: Cyan
+    RGB15(0, 0, 0),      // 8: Black (outline)
+    RGB15(31, 31, 31),   // 9: White
+    RGB15(28, 16, 0),    // A: Orange
+    RGB15(0, 20, 28),    // B: Blue
+    RGB15(28, 28, 0),    // C: Yellow
+    RGB15(20, 28, 20),   // D: Light green
+    RGB15(28, 20, 28),   // E: Pink
+    RGB15(16, 16, 16),   // F: Gray
 };
 
 // 8x8 sprite tiles
@@ -340,6 +338,7 @@ int main(void) {
         render();
         render_hud();
         
+        oam_copy(oam_mem, obj_buffer, 128);
     }
     
     return 0;
@@ -368,6 +367,8 @@ void init_gfx(void) {
     memset(&se_mem[28][0], 0, 0x1000);
     memset(&se_mem[30][0], 0, 0x800);
     
+    // Initialize OAM
+    oam_init(obj_buffer, 128);
 }
 
 //----------------------------------------------------------------------
@@ -693,7 +694,14 @@ void render(void) {
     // Player sprite
     int px = player.x * 8 - cam_x;
     int py = player.y * 8 - cam_y;
-
+    if (px >= -8 && px < 248 && py >= -8 && py < 168) {
+        obj_set_attr(&obj_buffer[obj_idx],
+            ATTR0_Y(py) | ATTR0_SQUARE,
+            ATTR1_X(px) | ATTR1_SIZE_8,
+            ATTR2_ID(1) | ATTR2_PRIO(0));
+        obj_idx++;
+    }
+    
     // Enemy sprites
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) continue;
@@ -702,7 +710,7 @@ void render(void) {
         int ex = enemies[i].x * 8 - cam_x;
         int ey = enemies[i].y * 8 - cam_y;
         
-        if (ex >= -8 && ex < 248 && ey >= -8 && ey < 168 && obj_idx < 128){
+        if (ex >= -8 && ex < 248 && ey >= -8 && ey < 168 && obj_idx < 128) {
             int tile_id = 2; // Default slime
             switch (enemies[i].type) {
                 case ENT_SLIME: tile_id = 2; break;
@@ -710,8 +718,14 @@ void render(void) {
                 case ENT_GOBLIN: tile_id = 4; break;
                 case ENT_SKELETON: tile_id = 5; break;
             }
-
             
+            obj_set_attr(&obj_buffer[obj_idx],
+                ATTR0_Y(ey) | ATTR0_SQUARE,
+                ATTR1_X(ex) | ATTR1_SIZE_8,
+                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
+            obj_idx++;
+        }
+    }
     
     // Item sprites
     for (int i = 0; i < MAX_ITEMS; i++) {
@@ -728,11 +742,20 @@ void render(void) {
                 case ITEM_APPLE: tile_id = 7; break;
                 case ITEM_ORB: tile_id = 8; break;
             }
+            
+            obj_set_attr(&obj_buffer[obj_idx],
+                ATTR0_Y(iy) | ATTR0_SQUARE,
+                ATTR1_X(ix) | ATTR1_SIZE_8,
+                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
+            obj_idx++;
+        }
     }
-
+    
+    // Hide remaining sprites
+    for (int i = obj_idx; i < 128; i++) {
+        obj_hide(&obj_buffer[i]);
     }
 }
-    
 
 //----------------------------------------------------------------------
 // HUD rendering
