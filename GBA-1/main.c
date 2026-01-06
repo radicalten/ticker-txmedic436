@@ -5,6 +5,8 @@
 #include <tonc.h>
 #include <string.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -77,41 +79,41 @@
 // Palette: 0=trans, 1=black, 2=red, 3=brown, 4=tan, 5=blue, 6=white, 7=green, 8=yellow, 9=orange, 10=pink
 
 const u16 bg_palette[16] = {
-    RGB15(12,20,31), // 0 - Sky blue (transparent for sprites)
-    RGB15(0,0,0),    // 1 - Black
-    RGB15(31,0,0),   // 2 - Red
-    RGB15(20,10,5),  // 3 - Brown
-    RGB15(28,22,12), // 4 - Tan/Beige
-    RGB15(0,0,31),   // 5 - Blue
-    RGB15(31,31,31), // 6 - White
-    RGB15(0,20,0),   // 7 - Green
-    RGB15(31,31,0),  // 8 - Yellow
-    RGB15(31,16,0),  // 9 - Orange
-    RGB15(31,20,20), // 10 - Pink
-    RGB15(16,8,0),   // 11 - Dark brown
-    RGB15(0,31,0),   // 12 - Bright green
-    RGB15(31,28,20), // 13 - Light tan
-    RGB15(8,24,8),   // 14 - Medium green
-    RGB15(24,16,8),  // 15 - Medium brown
+    RGB15_C(12,20,31), // 0 - Sky blue (transparent for sprites)
+    RGB15_C(0,0,0),    // 1 - Black
+    RGB15_C(31,0,0),   // 2 - Red
+    RGB15_C(20,10,5),  // 3 - Brown
+    RGB15_C(28,22,12), // 4 - Tan/Beige
+    RGB15_C(0,0,31),   // 5 - Blue
+    RGB15_C(31,31,31), // 6 - White
+    RGB15_C(0,20,0),   // 7 - Green
+    RGB15_C(31,31,0),  // 8 - Yellow
+    RGB15_C(31,16,0),  // 9 - Orange
+    RGB15_C(31,20,20), // 10 - Pink
+    RGB15_C(16,8,0),   // 11 - Dark brown
+    RGB15_C(0,31,0),   // 12 - Bright green
+    RGB15_C(31,28,20), // 13 - Light tan
+    RGB15_C(8,24,8),   // 14 - Medium green
+    RGB15_C(24,16,8),  // 15 - Medium brown
 };
 
 const u16 sprite_palette[16] = {
-    RGB15(31,0,31),  // 0 - Magenta (transparent)
-    RGB15(0,0,0),    // 1 - Black
-    RGB15(31,0,0),   // 2 - Red
-    RGB15(20,10,5),  // 3 - Brown
-    RGB15(28,22,12), // 4 - Tan/Skin
-    RGB15(0,0,31),   // 5 - Blue
-    RGB15(31,31,31), // 6 - White
-    RGB15(0,20,0),   // 7 - Green
-    RGB15(31,31,0),  // 8 - Yellow
-    RGB15(31,16,0),  // 9 - Orange
-    RGB15(31,20,20), // 10 - Pink
-    RGB15(16,8,0),   // 11 - Dark brown
-    RGB15(0,31,0),   // 12 - Bright green
-    RGB15(24,20,16), // 13 - Light skin
-    RGB15(8,24,8),   // 14 - Medium green
-    RGB15(12,12,12), // 15 - Gray
+    RGB15_C(31,0,31),  // 0 - Magenta (transparent)
+    RGB15_C(0,0,0),    // 1 - Black
+    RGB15_C(31,0,0),   // 2 - Red
+    RGB15_C(20,10,5),  // 3 - Brown
+    RGB15_C(28,22,12), // 4 - Tan/Skin
+    RGB15_C(0,0,31),   // 5 - Blue
+    RGB15_C(31,31,31), // 6 - White
+    RGB15_C(0,20,0),   // 7 - Green
+    RGB15_C(31,31,0),  // 8 - Yellow
+    RGB15_C(31,16,0),  // 9 - Orange
+    RGB15_C(31,20,20), // 10 - Pink
+    RGB15_C(16,8,0),   // 11 - Dark brown
+    RGB15_C(0,31,0),   // 12 - Bright green
+    RGB15_C(24,20,16), // 13 - Light skin
+    RGB15_C(8,24,8),   // 14 - Medium green
+    RGB15_C(12,12,12), // 15 - Gray
 };
 
 // 8x8 tile data (4bpp = 32 bytes per tile)
