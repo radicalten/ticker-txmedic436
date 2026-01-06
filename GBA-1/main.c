@@ -711,13 +711,7 @@ void render(void) {
                 case ENT_SKELETON: tile_id = 5; break;
             }
             
-            obj_set_attr(&obj_buffer[obj_idx],
-                ATTR0_Y(ey) | ATTR0_SQUARE,
-                ATTR1_X(ex) | ATTR1_SIZE_8,
-                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
-            obj_idx++;
         }
-    }
     
     // Item sprites
     for (int i = 0; i < MAX_ITEMS; i++) {
