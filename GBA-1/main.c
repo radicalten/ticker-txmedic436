@@ -91,7 +91,7 @@ static void init_level_map(void)
                 tile = level_map[y][x];   // 0 or 1
             else
                 tile = 0;
-            bg_map[y * BG_MAP_W + x] = tile;
+            //bg_map[y * BG_MAP_W + x] = tile;
         }
     }
 }
@@ -112,12 +112,12 @@ static void init_background(void)
     int i;
 
     // Tile 0: sky (color index 1)
-    for (i = 0; i < WORDS_PER_TILE; i++)
-        bg_tiles[0 * WORDS_PER_TILE + i] = 0x11111111;
+    //for (i = 0; i < WORDS_PER_TILE; i++)
+        //bg_tiles[0 * WORDS_PER_TILE + i] = 0x11111111;
 
     // Tile 1: solid ground (color index 2)
-    for (i = 0; i < WORDS_PER_TILE; i++)
-        bg_tiles[1 * WORDS_PER_TILE + i] = 0x22222222;
+    //for (i = 0; i < WORDS_PER_TILE; i++)
+        //bg_tiles[1 * WORDS_PER_TILE + i] = 0x22222222;
 
     // Set BG0: charblock 0, screenblock 28, 4bpp, size 64x32
     REG_BG0CNT = BG_CBB(0) | BG_SBB(28) | BG_4BPP | BG_REG_64x32 | BG_PRIO(1);
