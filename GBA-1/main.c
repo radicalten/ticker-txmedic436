@@ -1117,4 +1117,3 @@ void update_message(void) {
         msg.timer--;
     }
 }
-}
