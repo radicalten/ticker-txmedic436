@@ -700,7 +700,7 @@ void render(void) {
     if (px >= -8 && px < 248 && py >= -8 && py < 168) {
             ATTR0_Y(py) | ATTR0_SQUARE,  //obj_set_attr(&obj_buffer[obj_idx],
             ATTR1_X(px) | ATTR1_SIZE_8,
-            ATTR2_ID(1) | ATTR2_PRIO(0));
+            ATTR2_ID(1) | ATTR2_PRIO(0);
         obj_idx++;
     }
     
@@ -724,7 +724,7 @@ void render(void) {
             //obj_set_attr(&obj_buffer[obj_idx],
                 ATTR0_Y(ey) | ATTR0_SQUARE,
                 ATTR1_X(ex) | ATTR1_SIZE_8,
-                ATTR2_ID(tile_id) | ATTR2_PRIO(0));
+                ATTR2_ID(tile_id) | ATTR2_PRIO(0);
             obj_idx++;
         }
     }
@@ -745,7 +745,7 @@ void render(void) {
                 case ITEM_ORB: tile_id = 8; break;
             }
             
-            obj_set_attr(&obj_buffer[obj_idx],
+           // obj_set_attr(&obj_buffer[obj_idx],
                 ATTR0_Y(iy) | ATTR0_SQUARE,
                 ATTR1_X(ix) | ATTR1_SIZE_8,
                 ATTR2_ID(tile_id) | ATTR2_PRIO(0));
