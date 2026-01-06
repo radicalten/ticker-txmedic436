@@ -5,6 +5,9 @@
 #include <tonc.h>
 #include <string.h>
 
+
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 //----------------------------------------------------------------------
 // Constants
 //----------------------------------------------------------------------
@@ -173,42 +176,42 @@ const u32 tile_data[] ALIGN4 = {
 
 // Palette: 16 colors
 const u16 palette[] = {
-    RGB15(0, 0, 0),      // 0: Black
-    RGB15(12, 12, 14),   // 1: Dark gray (wall)
-    RGB15(8, 8, 10),     // 2: Darker gray (wall detail)
-    RGB15(20, 18, 10),   // 3: Brown (stairs)
-    RGB15(8, 12, 20),    // 4: Blue (water)
-    RGB15(12, 16, 24),   // 5: Light blue (water)
-    RGB15(0, 28, 0),     // 6: Green (player)
-    RGB15(20, 0, 28),    // 7: Purple (slime)
-    RGB15(16, 8, 0),     // 8: Brown (bat)
-    RGB15(28, 20, 0),    // 9: Yellow (goblin)
-    RGB15(28, 28, 28),   // A: White (skeleton)
-    RGB15(28, 0, 0),     // B: Red (potion/heart)
-    RGB15(0, 28, 8),     // C: Cyan (orb)
-    RGB15(31, 31, 31),   // D: Bright white
-    RGB15(31, 31, 0),    // E: Yellow (attack)
-    RGB15(16, 16, 16),   // F: Gray
+    RGB15_C(0, 0, 0),      // 0: Black
+    RGB15_C(12, 12, 14),   // 1: Dark gray (wall)
+    RGB15_C(8, 8, 10),     // 2: Darker gray (wall detail)
+    RGB15_C(20, 18, 10),   // 3: Brown (stairs)
+    RGB15_C(8, 12, 20),    // 4: Blue (water)
+    RGB15_C(12, 16, 24),   // 5: Light blue (water)
+    RGB15_C(0, 28, 0),     // 6: Green (player)
+    RGB15_C(20, 0, 28),    // 7: Purple (slime)
+    RGB15_C(16, 8, 0),     // 8: Brown (bat)
+    RGB15_C(28, 20, 0),    // 9: Yellow (goblin)
+    RGB15_C(28, 28, 28),   // A: White (skeleton)
+    RGB15_C(28, 0, 0),     // B: Red (potion/heart)
+    RGB15_C(0, 28, 8),     // C: Cyan (orb)
+    RGB15_C(31, 31, 31),   // D: Bright white
+    RGB15_C(31, 31, 0),    // E: Yellow (attack)
+    RGB15_C(16, 16, 16),   // F: Gray
 };
 
 // Sprite palette
 const u16 sprite_pal[] = {
-    RGB15(31, 0, 31),    // 0: Transparent (magenta)
-    RGB15(0, 28, 0),     // 1: Green (player)
-    RGB15(20, 0, 28),    // 2: Purple (slime)
-    RGB15(16, 8, 0),     // 3: Brown (bat)
-    RGB15(28, 20, 0),    // 4: Yellow (goblin)
-    RGB15(28, 28, 28),   // 5: White (skeleton)
-    RGB15(28, 0, 0),     // 6: Red
-    RGB15(0, 28, 8),     // 7: Cyan
-    RGB15(0, 0, 0),      // 8: Black (outline)
-    RGB15(31, 31, 31),   // 9: White
-    RGB15(28, 16, 0),    // A: Orange
-    RGB15(0, 20, 28),    // B: Blue
-    RGB15(28, 28, 0),    // C: Yellow
-    RGB15(20, 28, 20),   // D: Light green
-    RGB15(28, 20, 28),   // E: Pink
-    RGB15(16, 16, 16),   // F: Gray
+    RGB15_C(31, 0, 31),    // 0: Transparent (magenta)
+    RGB15_C(0, 28, 0),     // 1: Green (player)
+    RGB15_C(20, 0, 28),    // 2: Purple (slime)
+    RGB15_C(16, 8, 0),     // 3: Brown (bat)
+    RGB15_C(28, 20, 0),    // 4: Yellow (goblin)
+    RGB15_C(28, 28, 28),   // 5: White (skeleton)
+    RGB15_C(28, 0, 0),     // 6: Red
+    RGB15_C(0, 28, 8),     // 7: Cyan
+    RGB15_C(0, 0, 0),      // 8: Black (outline)
+    RGB15_C(31, 31, 31),   // 9: White
+    RGB15_C(28, 16, 0),    // A: Orange
+    RGB15_C(0, 20, 28),    // B: Blue
+    RGB15_C(28, 28, 0),    // C: Yellow
+    RGB15_C(20, 28, 20),   // D: Light green
+    RGB15_C(28, 20, 28),   // E: Pink
+    RGB15_C(16, 16, 16),   // F: Gray
 };
 
 // 8x8 sprite tiles
