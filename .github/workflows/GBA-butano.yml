@@ -14,7 +14,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        git clone --branch SDL2 --depth 1 https://github.com/libsdl-org/SDL.git
+        git clone --branch master --depth 1 https://github.com/GValiente/butano.git
         cmake sdl
         make
         sudo make install
