@@ -18,15 +18,10 @@ LDFLAGS := $(CXXFLAGS) \
 -L/opt/devkitpro/libgba/lib \
 -lmm -ltonc -lm
 TARGET  := myapp-butano
-BUILDDIR := build
 SRCDIR 	:= GBA-butano GBA-butano/common/src
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
-#OBJECTS = $(SOURCES:.cpp=.o)
-OBJECTS = $(patsubst %.cpp,$(BUILDDIR)/%.o,$(CXX_SOURCES))
-
-#$(info Sources found: $(CXX_SOURCES))
-#$(info Objects: $(OBJECTS))
+OBJECTS = $(SOURCES:.cpp=.o)
 
 all: $(TARGET).gba
 
@@ -39,7 +34,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	gbafix $(TARGET).elf $(TARGET).gba 
 
-$(BUILDDIR)/%.o: %.cpp
+%.o: %.cpp
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
 clean:
