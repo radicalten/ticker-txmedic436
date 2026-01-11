@@ -14,7 +14,10 @@ jobs:
       run: |
         git clone --branch master --depth 1 https://github.com/AntonioND/libugba
         cd libugba
-        sudo make 
+        mkdir build
+        cd build
+        cmake .. 
+        make
         git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
         cd agbabi
         sudo cmake -S . -B build
