@@ -17,7 +17,6 @@ LDFLAGS := $(CXXFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libgba/lib \
-
 -lmm -ltonc -lm -lgcc -lstdc++ 
 TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano \
