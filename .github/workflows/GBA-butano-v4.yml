@@ -10,18 +10,12 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
-    - name: Clone_Repos
-      run: |
-        git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
-        sudo cmake -S . -B build
-        cd .
-        git clone --branch master --depth 1 https://github.com/GValiente/butano.git /build
     - name: Install custom packages
       run: |
             sudo dkp-pacman -Ql 
     - name: Compile
       run: |
-        make -f Makefile-GBA-butano-2
+        make -f Makefile-GBA-butano-3
     - name: Upload
       uses: actions/upload-artifact@v5
       with:
