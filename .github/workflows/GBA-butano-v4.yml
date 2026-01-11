@@ -10,6 +10,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
+    - name: Install custom packages
+      run: |
+            sudo dkp-pacman -Ql 
     - name: Clone_Repos
       run: |
         git clone --branch master --depth 1 https://github.com/AntonioND/libugba
@@ -23,9 +26,6 @@ jobs:
         sudo cmake -S . -B build
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git 
         cd butano
-    - name: Install custom packages
-      run: |
-            sudo dkp-pacman -Ql 
     - name: Compile
       run: |
         make -f Makefile-GBA-butano-3
