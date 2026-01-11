@@ -1,8 +1,8 @@
-name: GBA-butano-v5
+name: GBA-butano-v4
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build-GBA-butano:
     runs-on: ubuntu-latest
@@ -12,7 +12,7 @@ jobs:
       uses: actions/checkout@v5
     - name: Install custom packages
       run: |
-            sudo dkp-pacman -Ql 
+        sudo dkp-pacman -Ql 
     - name: Clone_Repos
       run: |
         git clone --branch master --depth 1 https://github.com/AntonioND/libugba
