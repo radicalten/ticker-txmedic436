@@ -13,8 +13,9 @@ jobs:
     - name: Clone_Butano_Repo
       run: |
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git /butano
-    - name: Install custom packages
+   - name: Install custom packages
       run: |
+            sudo dkp-pacman -U --noconfirm gba-dev
             sudo dkp-pacman -Ql 
     - name: Compile
       run: |
