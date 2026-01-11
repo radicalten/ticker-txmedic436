@@ -39,7 +39,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	gbafix $(TARGET).elf $(TARGET).gba 
 
-%.o: %.cpp
+$(BUILDDIR)/%.o: %.cpp
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
 clean:
