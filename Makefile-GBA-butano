@@ -3,7 +3,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 #export LIBTONC 	:= $(DEVKITPRO)/libtonc
 include $(DEVKITARM)/gba_rules
-CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-g++
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include
 CFLAGS 	:= -O3 -flto \
