@@ -12,9 +12,6 @@ jobs:
       uses: actions/checkout@v5
     - name: Clone_Repos
       run: |
-        cd .
-        mkdir build
-        cd build
         git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git /build
         sudo cmake -S . -B build --toolchain=cross/agb.cmake
         sudo cmake --build build
