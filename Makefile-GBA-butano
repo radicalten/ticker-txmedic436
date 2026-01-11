@@ -26,6 +26,7 @@ OBJECTS = $(SOURCES:.cpp=.o)
 
 export VPATH	:= $(foreach dir,$(SRCDIR),$(CURDIR)/$(dir)) \
 				$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+export LD		:= $(CXX)
 
 all: $(TARGET).gba
 
