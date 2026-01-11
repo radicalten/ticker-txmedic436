@@ -12,7 +12,9 @@ jobs:
       uses: actions/checkout@v5
     - name: Clone_Repos
       run: |
-        git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git /build
+        mkdir build
+        cd build
+        git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
         sudo cmake --build build
         cd .
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git /butano
