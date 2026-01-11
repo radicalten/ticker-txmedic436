@@ -9,7 +9,7 @@ MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -f
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/hw -I./GBA-butano/src -I./GBA-butano/common
 CXXFLAGS 	:= -O3 -flto \
--std=c++20 \
+-std=c++23 \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
