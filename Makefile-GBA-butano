@@ -19,14 +19,9 @@ LDFLAGS := $(CXXFLAGS) \
 -lmm -ltonc -lm
 TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano GBA-butano/common/src
-#CXX_SOURCES := $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.cpp)))
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
 OBJECTS = $(SOURCES:.cpp=.o)
-
-export VPATH	:= $(foreach dir,$(SRCDIR),$(CURDIR)/$(dir)) \
-				$(foreach dir,$(DATA),$(CURDIR)/$(dir))
-export LD		:= $(CXX)
 
 all: $(TARGET).gba
 
