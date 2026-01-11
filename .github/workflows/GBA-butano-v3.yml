@@ -15,7 +15,7 @@ jobs:
         mkdir build
         cd build
         git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
-        sudo cmake --build build
+        sudo cmake 
         cd .
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git /butano
     - name: Install custom packages
