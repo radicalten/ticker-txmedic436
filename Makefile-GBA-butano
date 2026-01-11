@@ -24,8 +24,8 @@ CXX_SOURCES := $(foreach dir,$(SRCDIR),$(notdir $(wildcard $(dir)/*.cpp)))
 SOURCES = $(CXX_SOURCES) 
 OBJECTS = $(SOURCES:.cpp=.o)
 
-#export VPATH	:= $(foreach dir,$(SRCDIR),$(CURDIR)/$(dir)) \
-#				$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+export VPATH	:= $(foreach dir,$(SRCDIR),$(CURDIR)/$(dir)) \
+				$(foreach dir,$(DATA),$(CURDIR)/$(dir))
 
 all: $(TARGET).gba
 
