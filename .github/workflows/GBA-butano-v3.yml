@@ -10,7 +10,7 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v5
-    - name: Clone_Butano_Repo
+    - name: Clone_Repos
       run: |
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git /butano
     - name: Install custom packages
