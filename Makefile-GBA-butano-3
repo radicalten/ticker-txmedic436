@@ -18,7 +18,7 @@ LDFLAGS := $(CXXFLAGS) \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libgba/lib \
 -L/GBA-butano/lib \
--lagbabi -lmm -ltonc -lm 
+-lagbabi.a -lmm -ltonc -lm 
 TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano \
 GBA-butano/hw/src \
