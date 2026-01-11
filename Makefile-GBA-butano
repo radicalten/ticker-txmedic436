@@ -6,9 +6,9 @@ include $(DEVKITARM)/gba_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-g++
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include
-CFLAGS 	:= -O3 -flto \
+CXXFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP)
-LDFLAGS := $(CFLAGS) \
+LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
@@ -17,9 +17,9 @@ LDFLAGS := $(CFLAGS) \
 -lmm -ltonc -lm
 TARGET  := myapp
 SRCDIR 	:= GBA-butano
-C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
-SOURCES = $(C_SOURCES) 
-OBJECTS = $(SOURCES:.c=.o)
+CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
+SOURCES = $(CXX_SOURCES) 
+OBJECTS = $(SOURCES:.cpp=.o)
 
 all: $(TARGET).gba
 
@@ -33,7 +33,7 @@ $(TARGET).gba: $(TARGET).elf
 	gbafix $(TARGET).elf $(TARGET).gba 
 
 %.o: %.c
-	$(CC) -c $< -o $@ $(CFLAGS)
+	$(CC) -c $< -o $@ $(CXXFLAGS)
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
