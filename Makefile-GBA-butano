@@ -15,7 +15,7 @@ LDFLAGS := $(CXXFLAGS) \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libgba/lib \
 -lmm -ltonc -lm
-TARGET  := myapp
+TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
