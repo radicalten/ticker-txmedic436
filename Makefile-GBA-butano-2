@@ -8,6 +8,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./GBA-butano/include -I./GBA-butano/hw -I./GBA-butano/src -I./GBA-butano/common
 CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
+-DBN_CFG_PROFILER_ENABLED=1 \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
@@ -24,7 +25,6 @@ GBA-butano/common/src
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
 OBJECTS = $(SOURCES:.cpp=.o)
-USERCXXFLAGS += -DBN_CFG_PROFILER_ENABLED=1
 
 all: $(TARGET).gba
 
