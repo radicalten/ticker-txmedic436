@@ -26,6 +26,7 @@ GBA-butano/common/src
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
 OBJECTS = $(SOURCES:.cpp=.o)
+USERPROFILER := true
 
 all: $(TARGET).gba
 
