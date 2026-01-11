@@ -6,7 +6,7 @@ CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/hw -I./GBA-butano/src -I./GBA-butano/common/include -I./GBA-butano/hw/3rd_party/agbabi/include
-CXXFLAGS 	:= -O3 \
+CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=1 \
 -DBN_TOOLCHAIN_TAG="\"devkitARM\"" \
