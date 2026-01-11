@@ -14,7 +14,7 @@ jobs:
       run: |
         sudo dkp-pacman -Sy
         sudo dkp-pacman -S --noconfirm --ask 4 armv4t-zlib armv4t-libpng
-            sudo dkp-pacman -Ql 
+        sudo dkp-pacman -Ql 
     - name: Clone_Repos
       run: |
         git clone --branch master --depth 1 https://github.com/AntonioND/libugba
