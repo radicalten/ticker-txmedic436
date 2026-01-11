@@ -33,7 +33,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	gbafix $(TARGET).elf $(TARGET).gba 
 
-%.o: %.c
+%.o: %.cpp
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
 clean:
