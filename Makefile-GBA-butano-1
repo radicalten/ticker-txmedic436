@@ -21,7 +21,7 @@ TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano GBA-butano/common/src
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 SOURCES = $(CXX_SOURCES) 
-OBJECTS = $(notdir $(SOURCES:.cpp=.o))
+OBJECTS = $(SOURCES:.cpp=.o)
 export VPATH = $(SRCDIR)
 
 all: $(TARGET).gba
