@@ -15,6 +15,7 @@ jobs:
         mkdir build
         cd build
         git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
+        cd cross
         sudo cmake -S . -B build --toolchain=cross/agb.cmake
         sudo cmake --build build
         cd .
