@@ -13,7 +13,6 @@ jobs:
     - name: Clone_Repos
       run: |
         git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git /build
-        sudo cmake -S . -B build --toolchain=cross/agb.cmake
         sudo cmake --build build
         cd .
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git /butano
