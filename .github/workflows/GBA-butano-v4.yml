@@ -12,6 +12,8 @@ jobs:
       uses: actions/checkout@v5
     - name: Install custom packages
       run: |
+        sudo dkp-pacman -Sy
+        sudo dkp-pacman -S --noconfirm --ask 4 armv4t-zlib armv4t-libpng
             sudo dkp-pacman -Ql 
     - name: Clone_Repos
       run: |
