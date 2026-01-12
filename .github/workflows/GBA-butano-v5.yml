@@ -2,7 +2,7 @@ name: GBA-butano-v5
 on:
   push:
     branches:
-    - master
+    - main
 jobs:
   build-GBA-butano:
     runs-on: ubuntu-latest
