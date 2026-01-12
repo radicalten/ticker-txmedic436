@@ -31,7 +31,7 @@ jobs:
     - name: Debug paths
       run: |
         pwd
-        ls -la
+        ls -Rla
     - name: Compile
       run: |
         make -f Makefile-GBA-butano-3
