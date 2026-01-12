@@ -18,9 +18,6 @@ LDFLAGS := $(CXXFLAGS) \
 -L/opt/devkitpro/libtonc/lib \
 -L/opt/devkitpro/libgba/lib \
 -L./GBA-butano/lib \
--L. \
--L./build \
--L./build/lib \
 -L./libugba/build/lib \
 -lugba -lagbabi -lmm -ltonc -lm 
 TARGET  := myapp-butano
