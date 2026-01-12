@@ -21,7 +21,7 @@ LDFLAGS := $(CXXFLAGS) \
 -L. \
 -L./build \
 -L./build/lib \
--L./libugba/build \
+-L./libugba/build/lib \
 -lugba -lagbabi -lmm -ltonc -lm 
 TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano \
