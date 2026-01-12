@@ -28,6 +28,10 @@ jobs:
         sudo cmake -S . -B build
         git clone --branch master --depth 1 https://github.com/GValiente/butano.git 
         cd butano
+    - name: Debug paths
+      run: |
+        pwd
+        ls -la
     - name: Compile
       run: |
         make -f Makefile-GBA-butano-3
