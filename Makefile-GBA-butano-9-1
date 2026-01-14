@@ -14,7 +14,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=true \
--DBN_TOOLCHAIN_TAG="\"devkitARM\"" \
+-DBN_TOOLCHAIN_TAG=\"DKA\" \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
