@@ -30,8 +30,10 @@ GBA-butano/hw/src \
 GBA-butano/src \
 GBA-butano/common/src 
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
+S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
 SOURCES = $(CXX_SOURCES) 
 OBJECTS = $(SOURCES:.cpp=.o)
+OBJECTS = $(SOURCES:.s=.o)
 
 all: $(TARGET).gba
 
