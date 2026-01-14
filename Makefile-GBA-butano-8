@@ -9,7 +9,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./GBA-butano/common/include \
 -I./GBA-butano/hw/3rd_party/agbabi/include \
 -I./GBA-butano/hw/3rd_party/libtonc/include \
-GBA-butano/hw/3rd_party/libugba/include/ugba
+-I./GBA-butano/hw/3rd_party/libugba/include/ugba
 CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=true \
