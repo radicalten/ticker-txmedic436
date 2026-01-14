@@ -30,6 +30,7 @@ GBA-butano/hw/3rd_party/cult-of-gba-bios/src \
 GBA-butano/hw/3rd_party/libtonc/asm \
 GBA-butano/hw/3rd_party/libtonc/src \
 GBA-butano/hw/3rd_party/libtonc/src/tte \
+GBA-butano/hw/3rd_party/libtonc/src/font \
 GBA-butano/hw/3rd_party/libugba/src 
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
