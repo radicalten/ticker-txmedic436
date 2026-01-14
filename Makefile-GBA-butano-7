@@ -1,0 +1,59 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+export LIBBUTANO 	:= ./libugba/build/agbabi/butano/butano
+include $(DEVKITARM)/gba_rules
+CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
+MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
+INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
+-I./libugba/build/agbabi/butano/butano/include -I./libugba/build/agbabi/butano/butano/src \
+-I./libugba/build/agbabi/butano/common/include -I./libugba/build/agbabi/butano/common/src \
+-I./libugba/build/agbabi/butano/butano/hw/3rd_party/cult-of-gba-bios/include
+CXXFLAGS 	:= -O3 -flto \
+-std=c++23 \
+-DBN_CFG_PROFILER_ENABLED=1 \
+-DBN_TOOLCHAIN_TAG="\"devkitARM\"" \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS := $(CXXFLAGS) \
+-specs=gba.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libtonc/lib \
+-L/opt/devkitpro/libgba/lib \
+-L./GBA-butano/lib \
+-L./libugba/build/source/gba \
+-llibugba_gba -lagbabi -lmm -ltonc -lm 
+TARGET  := myapp-butano
+
+SRCDIR 	:= GBA-butano \
+GBA-butano/hw/src \
+GBA-butano/src \
+GBA-butano/common/src \
+GBA-butano/hw/3rd_party/cult-of-gba-bios/src
+CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
+S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
+SOURCES = $(CXX_SOURCES) 
+OBJECTS = $(SOURCES:.cpp=.o)
+OBJECTS = $(SOURCES:.s=.o)
+
+all: $(TARGET).gba
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into .gba (requires devkitPro tools)
+$(TARGET).gba: $(TARGET).elf 
+	$(OBJCOPY) -O binary $< $@
+	gbafix $(TARGET).elf $(TARGET).gba 
+
+%.o: %.cpp
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+%.o: %.s
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
+
+.PHONY: all clean
