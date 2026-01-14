@@ -1,14 +1,10 @@
 .SUFFIXES:
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
-export LIBBUTANO 	:= ./butano/butano
 include $(DEVKITARM)/gba_rules
 CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
 MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
--I./libugba/build/agbabi/butano/butano/include -I./libugba/build/agbabi/butano/butano/src \
--I./libugba/build/agbabi/butano/common/include -I./libugba/build/agbabi/butano/common/src \
--I./libugba/build/agbabi/butano/butano/hw/3rd_party/cult-of-gba-bios/include
 CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=true \
@@ -18,11 +14,7 @@ LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--L/opt/devkitpro/libtonc/lib \
--L/opt/devkitpro/libgba/lib \
--L./GBA-butano/lib \
--L./libugba/build/source/gba \
--llibugba_gba -lagbabi -lmm -ltonc -lm 
+-lmm -lm 
 TARGET  := myapp-butano
 
 SRCDIR 	:= GBA-butano \
