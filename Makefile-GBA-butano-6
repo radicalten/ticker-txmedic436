@@ -28,7 +28,8 @@ TARGET  := myapp-butano
 SRCDIR 	:= GBA-butano \
 GBA-butano/hw/src \
 GBA-butano/src \
-GBA-butano/common/src 
+GBA-butano/common/src \
+GBA-butano/hw/3rd_party/cult-of-gba-bios/src
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
 SOURCES = $(CXX_SOURCES) 
