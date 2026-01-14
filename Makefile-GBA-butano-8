@@ -23,9 +23,9 @@ LDFLAGS := $(CXXFLAGS) \
 TARGET  := myapp-butano
 
 SRCDIR 	:= GBA-butano \
-GBA-butano/hw/src \
 GBA-butano/src \
 GBA-butano/common/src \
+GBA-butano/hw/src \
 GBA-butano/hw/3rd_party/cult-of-gba-bios/src \
 GBA-butano/hw/3rd_party/libtonc/asm \
 GBA-butano/hw/3rd_party/libtonc/src \
