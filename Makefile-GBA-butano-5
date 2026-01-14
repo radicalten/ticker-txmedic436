@@ -8,7 +8,7 @@ MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -f
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/hw -I./GBA-butano/src -I./GBA-butano/common/include -I./GBA-butano/hw/3rd_party/agbabi/include \
 -I./libugba/build/agbabi/butano/butano/include -I./libugba/build/agbabi/butano/butano
-CXXFLAGS 	:= -O3 -flto \
+CXXFLAGS 	:= -O3 \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=1 \
 -DBN_TOOLCHAIN_TAG="\"devkitARM\"" \
