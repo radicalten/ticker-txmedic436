@@ -56,7 +56,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
 %.o: %.s
-	$(CXX) -c $< -o $@ $(CXXFLAGS)
+	$(CXX) -x assembler-with-cpp -c $< -o $@ $(CXXFLAGS)
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
