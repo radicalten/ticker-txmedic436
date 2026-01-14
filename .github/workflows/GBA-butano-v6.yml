@@ -13,9 +13,6 @@ jobs:
     - name: Install custom packages
       run: |
         sudo dkp-pacman -Ql 
-    - name: Clone_Repos
-      run: |
-        git clone --branch master --depth 1 https://github.com/GValiente/butano.git 
     - name: Debug paths
       run: |
         pwd
