@@ -1,0 +1,43 @@
+name: GBA-butano-v6
+on:
+  push:
+    branches:
+    - main
+jobs:
+  build-GBA-butano:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+    - name: Install custom packages
+      run: |
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libsdl2-dev liblua5.4-dev libpng-dev
+        sudo dkp-pacman -Ql 
+    - name: Clone_Repos
+      run: |
+        git clone --branch master --depth 1 https://github.com/AntonioND/libugba
+        cd libugba
+        mkdir build
+        cd build
+        cmake .. 
+        make
+        git clone --branch main --depth 1 https://github.com/felixjones/agbabi.git
+        cd agbabi
+        sudo cmake -S . -B build
+        git clone --branch master --depth 1 https://github.com/GValiente/butano.git 
+        cd butano
+    - name: Debug paths
+      run: |
+        pwd
+        ls -Rla
+    - name: Compile
+      run: |
+        make -f Makefile-GBA-butano-7
+    - name: Upload
+      uses: actions/upload-artifact@v5
+      with:
+        name: GBA-butano
+        path: |
+          *.gba
