@@ -34,7 +34,7 @@ jobs:
         ls -Rla
     - name: Compile
       run: |
-        make -f Makefile-GBA-butano-5
+        make -f Makefile-GBA-butano-6
     - name: Upload
       uses: actions/upload-artifact@v5
       with:
