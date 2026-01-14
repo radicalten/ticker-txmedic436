@@ -16,7 +16,7 @@ LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
--lmm -lm 
+-lm 
 TARGET  := myapp-butano
 
 SRCDIR 	:= GBA-butano \
