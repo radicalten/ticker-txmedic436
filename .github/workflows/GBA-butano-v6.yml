@@ -12,8 +12,9 @@ jobs:
       uses: actions/checkout@v5
     - name: Install custom packages
       run: |
-        sudo apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libsdl2-dev liblua5.4-dev libpng-dev
+        sudo dkp-pacman -S gba-dev
+        sudo dkp-pacman -S libtonc
+        sudo dkp-pacman -S maxmod
         sudo dkp-pacman -Ql 
     - name: Clone_Repos
       run: |
