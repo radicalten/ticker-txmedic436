@@ -15,6 +15,9 @@ CXXFLAGS 	:= -O3 -flto \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=true \
 -DBN_TOOLCHAIN_TAG=\"DKA\" \
+-DBN_EWRAM_BSS_SECTION=\".sbss\" -DBN_IWRAM_START=__iwram_start__ \
+-DBN_IWRAM_TOP=__iwram_top -DBN_IWRAM_END=__fini_array_end -DBN_ROM_START=__text_start \
+-DBN_ROM_END=__rom_end__ \
 $(INCLUDES) $(MACHDEP)
 LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
