@@ -12,6 +12,9 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./GBA-butano/hw/3rd_party/libtonc/include \
 -I./GBA-butano/hw/3rd_party/libugba/include/ugba \
 -I./GBA-butano/hw/3rd_party/posprintf/include
+-I./butano/butano/include -I./butano/butano/src \
+-I./butano/butano/hw/3rd_party/cult-of-gba-bios/includ
+-I./agbabi/butano/common/include -I./agbabi/butano/common/src 
 ASFLAGS 	:= $(MACHDEP) $(INCLUDES)
 CXXFLAGS 	:= -O3 -flto \
 -fomit-frame-pointer -ffast-math -funroll-loops \
@@ -29,6 +32,10 @@ LDFLAGS := $(CXXFLAGS) \
 -specs=gba.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libtonc/lib \
+-L/opt/devkitpro/libgba/lib \
+-L./GBA-butano/lib \
+-L./libugba/build/source/gba \
 -llibugba_gba -lagbabi -lmm -ltonc -lm
 TARGET  := myapp-butano
 
