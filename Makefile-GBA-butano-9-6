@@ -73,8 +73,8 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.o: %.bmp
-	$(AS) -c $< -o $@ $(CXXFLAGS)
+%.s %.h	: %.bmp %.png %.grit
+	grit $< -fts -o$*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
