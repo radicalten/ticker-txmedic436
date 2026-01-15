@@ -1,4 +1,6 @@
 .SUFFIXES:
+#Makefile-GBA-butano-9-5 is the first .gba rom to compile with GBA-butano-v7.yml, 
+#unfortunately the rom doesn't play anything its a blank black screen as of now
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
