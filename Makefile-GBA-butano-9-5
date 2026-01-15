@@ -11,7 +11,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./GBA-butano/hw/3rd_party/agbabi/include \
 -I./GBA-butano/hw/3rd_party/libtonc/include \
 -I./GBA-butano/hw/3rd_party/libugba/include/ugba \
--I./GBA-butano/hw/3rd_party/posprintf/include
+-I./GBA-butano/hw/3rd_party/posprintf/include \
 -I./butano/butano/include -I./butano/butano/src \
 -I./butano/butano/hw/3rd_party/cult-of-gba-bios/include \
 -I./agbabi/butano/common/include -I./agbabi/butano/common/src 
