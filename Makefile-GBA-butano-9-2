@@ -39,8 +39,6 @@ GBA-butano/hw/3rd_party/libugba/src \
 GBA-butano/hw/3rd_party/posprintf/src 
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
-SOURCES += $(CXX_SOURCES) 
-SOURCES += $(S_FILES) 
 OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o)
 
 all: $(TARGET).gba
