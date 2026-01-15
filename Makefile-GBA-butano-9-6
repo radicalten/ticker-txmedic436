@@ -50,9 +50,10 @@ GBA-butano/hw/3rd_party/libtonc/src/tte \
 GBA-butano/hw/3rd_party/libtonc/src/font \
 GBA-butano/hw/3rd_party/libugba/src \
 GBA-butano/hw/3rd_party/posprintf/src 
-GRAPHICS    	:=  graphics
+GRAPHICS =  GBA-butano/common/graphics 
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
+BMP_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.bmp))
 OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o)
 
 all: $(TARGET).gba
