@@ -3,8 +3,8 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
 CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
-AS 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc -x assembler-with-cpp
-MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi -fomit-frame-pointer -ffast-math -funroll-loops
+AS 					:= $(DEVKITARM)/bin/arm-none-eabi-as
+MACHDEP := -D__GBA__ -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
 -I./GBA-butano/common/include \
@@ -14,6 +14,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./GBA-butano/hw/3rd_party/posprintf/include
 ASFLAGS 	:= $(MACHDEP) $(INCLUDES)
 CXXFLAGS 	:= -O3 -flto \
+-fomit-frame-pointer -ffast-math -funroll-loops \
 -std=c++23 \
 -DBN_CFG_PROFILER_ENABLED=true \
 -DBN_TOOLCHAIN_TAG=\"DKA\" \
