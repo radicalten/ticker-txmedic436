@@ -59,7 +59,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(CXX) -c $< -o $@ $(CXXFLAGS)
 
 %.o: %.s
-	$(AS) -c $< -o $@ $(CXXFLAGS)
+	$(AS) -c $< -o $@ $(ASFLAGS)
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
