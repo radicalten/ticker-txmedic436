@@ -3,7 +3,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
 CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
-AS 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc -x assembler-with-cpp
+AS 					:= $(DEVKITARM)/bin/arm-none-eabi-g++ -x assembler-with-cpp
 MACHDEP := -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
