@@ -1,5 +1,4 @@
 .SUFFIXES:
-#9-8 is still a black screen, but at least it compiles
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
