@@ -61,7 +61,10 @@ CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
 BMP_FILES = $(foreach dir, $(GRAPHICS), $(wildcard $(dir)/*.bmp))
 JSON_FILES := $(BMP_FILES:.bmp=.json)
-OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o) $(BMP_FILES:.bmp=.o)
+GFX_S      := $(BMP_FILES:.bmp=.s)
+GFX_H      := $(BMP_FILES:.bmp=.h)
+GFX_O      := $(GFX_S:.s=.o)
+OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o) $(BMP_FILES:.bmp=.o) $(GFX_O)
 
 all: $(TARGET).gba
 
@@ -80,9 +83,9 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.s %.h: %.bmp %.json $(PY_DEPS)
+%.s %.h &: %.bmp %.json $(PY_DEPS)
 	python ./GBA-butano/tools/butano_graphics_tool.py $< $*.json
-	grit $*.bmp -fts -o $*
+	grit $< -fts -o $*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
