@@ -1,0 +1,90 @@
+.SUFFIXES:
+#9-6 also "works" as in compiles but only produces blank black screen.
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/gba_rules
+CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
+AS 					:= $(DEVKITARM)/bin/arm-none-eabi-g++ -x assembler-with-cpp
+GRIT				:=	grit
+PYTHON 				:= 	python
+PYSCRIPT 			:=  ./GBA-butano/tools/butano_graphics_tool.py
+PYDIR				:= 	./GBA-butano/tools
+PY_DEPS := $(wildcard $(PYDIR)/*.py)
+MACHDEP := -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
+INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
+-I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
+-I./GBA-butano/common/include \
+-I./GBA-butano/hw/3rd_party/agbabi/include \
+-I./GBA-butano/hw/3rd_party/libtonc/include \
+-I./GBA-butano/hw/3rd_party/libugba/include/ugba \
+-I./GBA-butano/hw/3rd_party/posprintf/include \
+-I./butano/butano/include -I./butano/butano/src \
+-I./butano/butano/hw/3rd_party/cult-of-gba-bios/include \
+-I./agbabi/butano/common/include -I./agbabi/butano/common/src 
+ASFLAGS 	:= $(MACHDEP) $(INCLUDES)
+CXXFLAGS 	:= -O3 -flto \
+-fomit-frame-pointer -ffast-math -funroll-loops \
+-D__GBA__ \
+-std=c++23 \
+-fno-rtti -fno-exceptions -fno-threadsafe-statics \
+-fuse-cxa-atexit \
+-DBN_CFG_PROFILER_ENABLED=true \
+-DBN_TOOLCHAIN_TAG=\"DKA\" \
+-DBN_EWRAM_BSS_SECTION=\".sbss\" -DBN_IWRAM_START=__iwram_start__ \
+-DBN_IWRAM_TOP=__iwram_top -DBN_IWRAM_END=__fini_array_end -DBN_ROM_START=__text_start \
+-DBN_ROM_END=__rom_end__ \
+$(INCLUDES) $(MACHDEP)
+LDFLAGS := $(CXXFLAGS) \
+-specs=gba.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libtonc/lib \
+-L/opt/devkitpro/libgba/lib \
+-L./GBA-butano/lib \
+-L./libugba/build/source/gba \
+-llibugba_gba -lagbabi -lmm -ltonc -lm
+TARGET  := myapp-butano
+
+SRCDIR 	:= GBA-butano \
+GBA-butano/src \
+GBA-butano/common/src \
+GBA-butano/hw/src \
+GBA-butano/hw/3rd_party/cult-of-gba-bios/src \
+GBA-butano/hw/3rd_party/libtonc/asm \
+GBA-butano/hw/3rd_party/libtonc/src \
+GBA-butano/hw/3rd_party/libtonc/src/tte \
+GBA-butano/hw/3rd_party/libtonc/src/font \
+GBA-butano/hw/3rd_party/libugba/src \
+GBA-butano/hw/3rd_party/posprintf/src 
+GRAPHICS =  GBA-butano/common/graphics 
+CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
+S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
+BMP_FILES = $(foreach dir, $(GRAPHICS), $(wildcard $(dir)/*.bmp))
+OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o) $(BMP_FILES:.bmp=.o)
+
+all: $(TARGET).gba
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into .gba (requires devkitPro tools)
+$(TARGET).gba: $(TARGET).elf 
+	$(OBJCOPY) -O binary $< $@
+	gbafix $(TARGET).elf $(TARGET).gba 
+
+%.o: %.cpp
+	$(CXX) -c $< -o $@ $(CXXFLAGS)
+
+%.o: %.s
+	$(AS) -c $< -o $@ $(CXXFLAGS)
+
+%.s %.h &: %.bmp %.json $(PY_DEPS)
+	@mkdir -p $(@D)
+	python ./GBA-butano/tools/butano_graphics_tool.py $< $(word 2,$^) -o $@
+	grit $*.bmp -fts -o $*
+
+clean:
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
+
+.PHONY: all clean
