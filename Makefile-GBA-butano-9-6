@@ -6,7 +6,9 @@ CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
 AS 					:= $(DEVKITARM)/bin/arm-none-eabi-g++ -x assembler-with-cpp
 GRIT				:=	grit
 PYTHON 				:= 	python
-PYTOOL				:= 	./GBA-butano/tools/bmp.py
+PYSCRIPT 			:=  ./GBA-butano/tools/butano_graphics_tool.py
+PYDIR				:= 	./GBA-butano/tools
+PY_DEPS := $(wildcard $(PYDIR)/*.py)
 MACHDEP := -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
@@ -76,11 +78,10 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.s %.h &: %.bmp %.json $(PYTOOL)
+%.s %.h &: %.bmp %.json $(PY_DEPS)
 	@mkdir -p $(@D)
-	$(PYTHON) $(PYTOOL) $< $(word 2,$^) -o $*.prep.bmp
-	$(GRIT) $*.prep.bmp -fts -o $*
-	@rm -f $*.prep.bmp
+	python ./GBA-butano/tools/butano_graphics_tool.py $< $(word 2,$^) -o $@
+	grit $*.bmp -fts -o $*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
