@@ -21,8 +21,8 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 -I./butano/butano/hw/3rd_party/cult-of-gba-bios/include \
 -I./agbabi/butano/common/include -I./agbabi/butano/common/src 
 ASFLAGS 	:= $(MACHDEP) $(INCLUDES)
-CXXFLAGS 	:= -O3 -flto \
--fomit-frame-pointer -ffast-math -funroll-loops \
+CXXFLAGS 	:= -O2 -flto \
+-fomit-frame-pointer -ffast-math \
 -ffunction-sections -fdata-sections \
 -D__GBA__ \
 -std=c++23 \
