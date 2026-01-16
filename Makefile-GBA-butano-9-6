@@ -4,9 +4,9 @@ export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
 CXX 				:= $(DEVKITARM)/bin/arm-none-eabi-g++
 AS 					:= $(DEVKITARM)/bin/arm-none-eabi-g++ -x assembler-with-cpp
-BN_GRIT				:=	grit
+GRIT				:=	grit
 PYTHON 				:= 	python
-PY_TOOL				:= 	./GBA-butano/tools/bmp.py
+PYTOOL				:= 	./GBA-butano/tools/bmp.py
 MACHDEP := -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
@@ -76,11 +76,11 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.prep.bmp: %.bmp %.json ./GBA-butano/tools/bmp.py
-	python ./GBA-butano/tools/bmp.py $< $(word 2,$^) -o $@
-
-%.s %.h: %.prep.bmp
-	grit $< -fts -o $*
+%.s %.h &: %.bmp %.json $(PYTOOL)
+	@mkdir -p $(@D)
+	$(PYTHON) $(PYTOOL) $< $(word 2,$^) -o $*.prep.bmp
+	$(GRIT) $*.prep.bmp -fts -o $*
+	@rm -f $*.prep.bmp
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
