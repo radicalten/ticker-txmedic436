@@ -76,10 +76,11 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.s %.h &: %.bmp %.json ./GBA-butano/tools/bmp.py
-	python ./GBA-butano/tools/bmp.py $(word 2,$^) -o $* .tmp.bmp
-	grit $*.tmp.bmp -fts -o $*
-	rm -f $*.tmp.bmp
+%.prep.bmp: %.bmp %.json ./GBA-butano/tools/bmp.py
+	python ./GBA-butano/tools/bmp.py $< $(word 2,$^) -o $@
+
+%.s %.h: %.prep.bmp
+	grit $< -fts -o $*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
