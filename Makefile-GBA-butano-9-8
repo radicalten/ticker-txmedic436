@@ -80,9 +80,9 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.s %.h: %.bmp %.json $(PY_DEPS)
-	python ./GBA-butano/tools/butano_graphics_tool.py $< $(word 2,$^) -o $@
-	grit $*.bmp -fts -o $*
+%.s %.h &: %.bmp %.json $(PY_DEPS)
+	python ./GBA-butano/tools/butano_graphics_tool.py $< $(word 2,$^) -o $*
+	grit $< -fts -o $*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
