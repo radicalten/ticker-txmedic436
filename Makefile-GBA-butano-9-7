@@ -1,5 +1,4 @@
 .SUFFIXES:
-#9-6 also "works" as in compiles but only produces blank black screen.
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/gba_rules
@@ -80,7 +79,6 @@ $(TARGET).gba: $(TARGET).elf
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
 %.s %.h &: %.bmp %.json $(PY_DEPS)
-	@mkdir -p $(@D)
 	python ./GBA-butano/tools/butano_graphics_tool.py $< $(word 2,$^) -o $@
 	grit $*.bmp -fts -o $*
 
