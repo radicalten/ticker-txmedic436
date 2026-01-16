@@ -60,6 +60,7 @@ GRAPHICS =  GBA-butano/common/graphics
 CXX_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.cpp))
 S_FILES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.s))
 BMP_FILES = $(foreach dir, $(GRAPHICS), $(wildcard $(dir)/*.bmp))
+JSON_FILES := $(BMP_FILES:.bmp=.json)
 OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o) $(BMP_FILES:.bmp=.o)
 
 all: $(TARGET).gba
