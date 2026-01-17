@@ -12,6 +12,9 @@ PY_DEPS := $(wildcard $(PYDIR)/*.py)
 MACHDEP := -mthumb -mthumb-interwork -mcpu=arm7tdmi -mtune=arm7tdmi 
 INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libtonc/include -I/opt/devkitpro/libgba/include \
 -I./GBA-butano/include -I./GBA-butano/src -I./GBA-butano/hw/include -I./GBA-butano/hw/src \
+-I./GBA-butano/profiler/src \
+-I./GBA-butano/profiler/graphics \
+-I./GBA-butano/common/graphics \
 -I./GBA-butano/common/include \
 -I./GBA-butano/hw/3rd_party/agbabi/include \
 -I./GBA-butano/hw/3rd_party/libtonc/include \
