@@ -84,8 +84,7 @@ $(TARGET).gba: $(TARGET).elf
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
 %.s %.h &: %.bmp %.json $(PY_DEPS)
-	python ./GBA-butano/tools/butano_graphics_tool.py $< $*.json
-	grit $< -fts -o $*
+	python ./GBA-butano/tools/butano_graphics_tool.py $< $*
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
