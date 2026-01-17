@@ -74,7 +74,6 @@ all: $(TARGET).gba
 # Build ELF
 $(TARGET).elf: $(OBJECTS)
 	$(CXX) $^ -o $@ $(LDFLAGS)
-	-include $(DEPENDS)
 
 # Package ELF into .gba (requires devkitPro tools)
 $(TARGET).gba: $(TARGET).elf 
