@@ -91,6 +91,6 @@ $(TARGET).gba: $(TARGET).elf
 	python ./GBA-butano/tools/butano_graphics_tool.py $< $*
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS) $(DEPENDS)
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS) $(DEPENDS) $(GFX_H) $(GFX_S)
 
 .PHONY: all clean
