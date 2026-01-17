@@ -24,8 +24,7 @@ INCLUDES += -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/lib
 ASFLAGS 	:= $(MACHDEP) $(INCLUDES)
 CXXFLAGS 	:= -O3 -flto \
 -fomit-frame-pointer -ffast-math -funroll-loops \
--ffunction-sections -fdata-sections \
--MMD -MP \ 
+-ffunction-sections -fdata-sections \ 
 -D__GBA__ \
 -std=c++23 \
 -fno-rtti -fno-exceptions -fno-threadsafe-statics \
