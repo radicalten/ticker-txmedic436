@@ -91,6 +91,6 @@ $(TARGET).gba: $(TARGET).elf
 	grit $< -fts -o $*
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS) $(DEPENDS)
 
 .PHONY: all clean
