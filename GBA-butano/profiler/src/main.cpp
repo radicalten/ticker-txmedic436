@@ -12,9 +12,9 @@
 #include "bn_seed_random.h"
 #include "bn_best_fit_allocator.h"
 
-#include "butano/hw/include/bn_hw_dma.h"
-#include "butano/hw/include/bn_hw_memory.h"
-#include "butano/hw/include/bn_hw_decompress.h"
+#include "bn_hw_dma.h"
+#include "bn_hw_memory.h"
+#include "bn_hw_decompress.h"
 
 #include "bn_regular_bg_items_butano_huge_rl.h"
 #include "bn_regular_bg_items_butano_huge_huff.h"
