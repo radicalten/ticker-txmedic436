@@ -45,7 +45,8 @@ LDFLAGS := $(CXXFLAGS) \
 -llibugba_gba -lagbabi -lmm -ltonc -lm
 TARGET  := myapp-butano
 
-SRCDIR 	:= GBA-butano/profiler
+SRCDIR 	:= GBA-butano/profiler/src \
+GBA-butano/profiler/graphics \
 GBA-butano/src \
 GBA-butano/common/src \
 GBA-butano/hw/src \
