@@ -83,8 +83,8 @@ $(TARGET).gba: $(TARGET).elf
 %.o: %.s
 	$(AS) -c $< -o $@ $(CXXFLAGS)
 
-%.s %.h: %.bmp %.json $(PY_DEPS)
-	python ./GBA-butano/tools/butano_graphics_tool.py $< $*
+%.s %.h &: %.bmp %.json $(PY_DEPS)
+	python ./GBA-butano/tools/butano_graphics_tool.py $< $*.json
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).gba $(TARGET).map $(OBJECTS)
