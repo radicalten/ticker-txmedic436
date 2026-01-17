@@ -66,12 +66,14 @@ GFX_S      := $(BMP_FILES:.bmp=.s)
 GFX_H      := $(BMP_FILES:.bmp=.h)
 GFX_O      := $(GFX_S:.s=.o)
 OBJECTS := $(CXX_SOURCES:.cpp=.o) $(S_FILES:.s=.o) $(BMP_FILES:.bmp=.o) $(GFX_O)
+DEPENDS := $(OBJECTS:.o=.d)
 
 all: $(TARGET).gba
 
 # Build ELF
 $(TARGET).elf: $(OBJECTS)
 	$(CXX) $^ -o $@ $(LDFLAGS)
+	-include $(DEPENDS)
 
 # Package ELF into .gba (requires devkitPro tools)
 $(TARGET).gba: $(TARGET).elf 
