@@ -1,4 +1,4 @@
-name: OSX-14-gpt5-ticker
+name: OSX-14-claude4pt6-ticker
 on:
   push:
     branches:
