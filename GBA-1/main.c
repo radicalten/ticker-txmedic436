@@ -1,1091 +1,1372 @@
-// Mario Bros 3 Style Platformer for GBA
-// Compile with: make (using tonc's template makefile)
-// Or: arm-none-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs mario.c -ltonc -o mario.gba
+// kirby_gba.c - A Kirby-like 2D side-scroller for GBA using tonc
+// Compile with: gcc -mthumb -mthumb-interwork -O2 -o kirby.gba kirby_gba.c -ltonc
+// Or use a Makefile with devkitARM
 
 #include <tonc.h>
 #include <string.h>
 
-#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
-
-// ============================================================================
+// ============================================================
 // CONSTANTS
-// ============================================================================
-
+// ============================================================
 #define FIXED_SHIFT     8
 #define FIXED_ONE       (1 << FIXED_SHIFT)
+#define INT2FX(x)       ((x) << FIXED_SHIFT)
+#define FX2INT(x)       ((x) >> FIXED_SHIFT)
+#define FLOAT2FX(x)     ((int)((x) * FIXED_SHIFT))
 
-#define GRAVITY         12
-#define MAX_FALL_SPEED  (6 * FIXED_ONE)
-#define JUMP_POWER      (48 * FIXED_ONE / 10)
-#define MOVE_SPEED      (18 * FIXED_ONE / 10)
-#define MAX_SPEED       (2 * FIXED_ONE)
-#define FRICTION        8
-
-#define PLAYER_WIDTH    14
-#define PLAYER_HEIGHT   16
-
-#define LEVEL_WIDTH     64
-#define LEVEL_HEIGHT    20
-
-#define SCREEN_WIDTH    240
-#define SCREEN_HEIGHT   160
+#define SCREEN_W        240
+#define SCREEN_H        160
 
 #define TILE_SIZE       8
+#define META_TILE_SIZE  16
+#define MAP_W           64
+#define MAP_H           20
 
-// Tile indices
-#define TILE_SKY        0
-#define TILE_GROUND     1
-#define TILE_BRICK      2
-#define TILE_QUESTION   3
-#define TILE_BLOCK      4
-#define TILE_PIPE_TL    5
-#define TILE_PIPE_TR    6
-#define TILE_PIPE_BL    7
-#define TILE_PIPE_BR    8
-#define TILE_COIN       9
-#define TILE_CLOUD      10
-#define TILE_BUSH       11
-#define TILE_HILL       12
-#define TILE_FLAG_TOP   13
-#define TILE_FLAG_POLE  14
-#define TILE_CASTLE     15
+#define GRAVITY         12
+#define JUMP_VEL        (-350)
+#define FLOAT_VEL       (-80)
+#define FLOAT_GRAVITY   4
+#define MOVE_SPEED      180
+#define MAX_FALL_SPEED  400
+#define FLOAT_MAX_FALL  60
 
-// Sprite indices
-#define SPR_MARIO_STAND     0
-#define SPR_MARIO_RUN1      1
-#define SPR_MARIO_RUN2      2
-#define SPR_MARIO_RUN3      3
-#define SPR_MARIO_JUMP      4
-#define SPR_GOOMBA1         5
-#define SPR_GOOMBA2         6
-#define SPR_GOOMBA_FLAT     7
-#define SPR_KOOPA1          8
-#define SPR_KOOPA2          9
-#define SPR_SHELL           10
-#define SPR_COIN_1          11
-#define SPR_COIN_2          12
-#define SPR_MUSHROOM        13
+#define MAX_ENEMIES     8
+#define ENEMY_SPEED     60
 
-// Game states
-#define STATE_TITLE     0
-#define STATE_PLAYING   1
-#define STATE_DEAD      2
-#define STATE_WIN       3
+#define PLAYER_W        14
+#define PLAYER_H        14
+#define ENEMY_W         12
+#define ENEMY_H         12
 
-// ============================================================================
-// TILE DATA (4bpp, 8x8 tiles)
-// ============================================================================
+#define KIRBY_HEALTH    6
+#define INHALE_RANGE    40
+#define INHALE_W        40
+#define INHALE_H        16
 
-// Palette: 0=trans, 1=black, 2=red, 3=brown, 4=tan, 5=blue, 6=white, 7=green, 8=yellow, 9=orange, 10=pink
+// Player states
+#define STATE_NORMAL    0
+#define STATE_FLOATING  1
+#define STATE_INHALE    2
+#define STATE_FULL      3  // has enemy in mouth
 
-const u16 bg_palette[16] = {
-    RGB15_C(12,20,31), // 0 - Sky blue (transparent for sprites)
-    RGB15_C(0,0,0),    // 1 - Black
-    RGB15_C(31,0,0),   // 2 - Red
-    RGB15_C(20,10,5),  // 3 - Brown
-    RGB15_C(28,22,12), // 4 - Tan/Beige
-    RGB15_C(0,0,31),   // 5 - Blue
-    RGB15_C(31,31,31), // 6 - White
-    RGB15_C(0,20,0),   // 7 - Green
-    RGB15_C(31,31,0),  // 8 - Yellow
-    RGB15_C(31,16,0),  // 9 - Orange
-    RGB15_C(31,20,20), // 10 - Pink
-    RGB15_C(16,8,0),   // 11 - Dark brown
-    RGB15_C(0,31,0),   // 12 - Bright green
-    RGB15_C(31,28,20), // 13 - Light tan
-    RGB15_C(8,24,8),   // 14 - Medium green
-    RGB15_C(24,16,8),  // 15 - Medium brown
+// Animation frames
+#define ANIM_IDLE       0
+#define ANIM_WALK1      1
+#define ANIM_WALK2      2
+#define ANIM_JUMP       3
+#define ANIM_FLOAT1     4
+#define ANIM_FLOAT2     5
+#define ANIM_INHALE     6
+#define ANIM_FULL       7
+
+// Sprite tile indices (each 16x16 = 4 tiles in 1D mapping)
+#define SPR_KIRBY_BASE  0
+#define SPR_ENEMY_BASE  32
+#define SPR_STAR_BASE   40
+#define SPR_HUD_BASE    44
+
+// BG tile indices
+#define BG_EMPTY        0
+#define BG_GROUND       1
+#define BG_GROUND_TOP   2
+#define BG_BRICK        3
+#define BG_PLATFORM     4
+#define BG_SKY          0
+#define BG_CLOUD1       5
+#define BG_CLOUD2       6
+#define BG_HILL         7
+
+// OAM
+#define OAM_KIRBY       0
+#define OAM_ENEMY_START 1
+#define OAM_STAR        9
+#define OAM_HUD_START   10
+
+// ============================================================
+// TILE DATA - hand-crafted pixel art (4bpp)
+// Each 8x8 tile = 32 bytes (8 rows * 4 bytes/row in 4bpp)
+// ============================================================
+
+// Color palette for sprites
+static const u16 sprite_pal[16] = {
+    0x0000,  // 0: transparent
+    0x7FFF,  // 1: white
+    0x001F,  // 2: red (BGR: red)
+    0x7C00,  // 3: blue
+    0x03E0,  // 4: green
+    0x0010,  // 5: dark red / pink core
+    0x5AD6,  // 6: light pink (kirby body)  - RGB(22,22,22) approx
+    0x7E1F,  // 7: bright pink (kirby main)
+    0x0000,  // 8: black (outline)
+    0x2D7F,  // 9: kirby pink  (actual pink in BGR555)
+    0x56BF,  // 10: lighter pink
+    0x7FFF,  // 11: white (eyes)
+    0x4210,  // 12: gray
+    0x03FF,  // 13: yellow (star)
+    0x7C1F,  // 14: magenta
+    0x0200,  // 15: dark green
 };
 
-const u16 sprite_palette[16] = {
-    RGB15_C(31,0,31),  // 0 - Magenta (transparent)
-    RGB15_C(0,0,0),    // 1 - Black
-    RGB15_C(31,0,0),   // 2 - Red
-    RGB15_C(20,10,5),  // 3 - Brown
-    RGB15_C(28,22,12), // 4 - Tan/Skin
-    RGB15_C(0,0,31),   // 5 - Blue
-    RGB15_C(31,31,31), // 6 - White
-    RGB15_C(0,20,0),   // 7 - Green
-    RGB15_C(31,31,0),  // 8 - Yellow
-    RGB15_C(31,16,0),  // 9 - Orange
-    RGB15_C(31,20,20), // 10 - Pink
-    RGB15_C(16,8,0),   // 11 - Dark brown
-    RGB15_C(0,31,0),   // 12 - Bright green
-    RGB15_C(24,20,16), // 13 - Light skin
-    RGB15_C(8,24,8),   // 14 - Medium green
-    RGB15_C(12,12,12), // 15 - Gray
+// Better Kirby pink palette
+static const u16 kirby_pal[16] = {
+    0x0000,  // 0: transparent
+    0x7FFF,  // 1: white
+    0x529F,  // 2: kirby pink (main body)
+    0x7FBF,  // 3: kirby light pink (highlights)
+    0x2D3F,  // 4: kirby dark pink (shadows/feet)
+    0x0000,  // 5: black (outline/eyes)
+    0x001F,  // 6: red (feet/blush)
+    0x03E0,  // 7: green (enemy)
+    0x7C00,  // 8: blue (sky stuff)
+    0x03FF,  // 9: yellow (star)
+    0x4210,  // 10: gray
+    0x294A,  // 11: dark gray
+    0x7FFF,  // 12: white (eye shine)
+    0x0014,  // 13: dark red
+    0x56B5,  // 14: light gray
+    0x7C1F,  // 15: magenta
 };
 
-// 8x8 tile data (4bpp = 32 bytes per tile)
-const u32 bg_tiles[] = {
-    // Tile 0: Sky (empty)
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    
-    // Tile 1: Ground block (brick pattern)
-    0x33333333, 0x33111113, 0x33111113, 0x33111113,
-    0x33333333, 0x11131113, 0x11131113, 0x11131113,
-    
-    // Tile 2: Brick
-    0x33333333, 0x34444443, 0x34444443, 0x33333333,
-    0x33333333, 0x44434443, 0x44434443, 0x33333333,
-    
-    // Tile 3: Question block
-    0x88888888, 0x89999998, 0x89188198, 0x89111198,
-    0x89911198, 0x89988198, 0x89911198, 0x88888888,
-    
-    // Tile 4: Solid block
-    0x11111111, 0x13333331, 0x13333331, 0x13333331,
-    0x13333331, 0x13333331, 0x13333331, 0x11111111,
-    
-    // Tile 5: Pipe top-left
-    0x77777777, 0x7CCCCCCC, 0x7C777777, 0x7C777777,
-    0x7C777777, 0x7C777777, 0x17777771, 0x17777771,
-    
-    // Tile 6: Pipe top-right
-    0x77777771, 0xCCCCCCC1, 0x77777771, 0x77777771,
-    0x77777771, 0x77777771, 0x17777771, 0x17777771,
-    
-    // Tile 7: Pipe body-left
-    0x17777771, 0x17777771, 0x17777771, 0x17777771,
-    0x17777771, 0x17777771, 0x17777771, 0x17777771,
-    
-    // Tile 8: Pipe body-right
-    0x17777771, 0x17777771, 0x17777771, 0x17777771,
-    0x17777771, 0x17777771, 0x17777771, 0x17777771,
-    
-    // Tile 9: Coin
-    0x00088000, 0x00899800, 0x08981980, 0x08988980,
-    0x08988980, 0x08981980, 0x00899800, 0x00088000,
-    
-    // Tile 10: Cloud
-    0x00066000, 0x06666660, 0x66666666, 0x66666666,
-    0x06666660, 0x00666600, 0x00000000, 0x00000000,
-    
-    // Tile 11: Bush
-    0x00077000, 0x07777770, 0x77777777, 0x77777777,
-    0x07777770, 0x00777700, 0x00000000, 0x00000000,
-    
-    // Tile 12: Hill
-    0x00007000, 0x00077700, 0x00777770, 0x07777777,
-    0x77777777, 0x77777777, 0x77777777, 0x77777777,
-    
-    // Tile 13: Flag top
-    0x00000011, 0x00022211, 0x00222211, 0x02222211,
-    0x00222211, 0x00022211, 0x00000011, 0x00000011,
-    
-    // Tile 14: Flag pole
-    0x00000011, 0x00000011, 0x00000011, 0x00000011,
-    0x00000011, 0x00000011, 0x00000011, 0x00000011,
-    
-    // Tile 15: Castle block
-    0x33333333, 0x34343434, 0x33333333, 0x43434343,
-    0x33333333, 0x34343434, 0x33333333, 0x43434343,
+// Kirby idle - 16x16 (4 tiles: TL, TR, BL, BR) - 4bpp
+// Each u32 = one row of an 8x8 tile (8 pixels, 4 bits each)
+// Pixel order: least significant nibble = leftmost pixel
+
+static const u32 kirby_idle_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00005500,
+    0x00052250,
+    0x00522220,
+    0x05222220,
+    0x52222120,
+    0x52221120,
+    0x52225520,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00550000,
+    0x05222000,
+    0x02222500,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02552250,
+    // Tile 2 - Bottom Left
+    0x52222220,
+    0x52222220,
+    0x05222250,
+    0x00522200,
+    0x00044500,
+    0x00044400,
+    0x00044400,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02222250,
+    0x02222250,
+    0x05222500,
+    0x00222500,
+    0x00544000,
+    0x00444000,
+    0x00444000,
+    0x00000000,
 };
 
-// Sprite tiles (16x16 = 4 8x8 tiles each, 4bpp)
-const u32 sprite_tiles[] = {
-    // Mario standing (tiles 0-3 for 16x16)
-    // Top-left
-    0x00000000, 0x00022200, 0x00222220, 0x00333140,
-    0x03314140, 0x03314440, 0x00344400, 0x00222220,
-    // Top-right
-    0x00000000, 0x00222000, 0x02222220, 0x04133300,
-    0x04143130, 0x04443130, 0x00044300, 0x02222200,
-    // Bottom-left
-    0x02242200, 0x22224220, 0x44422240, 0x44042040,
-    0x44002000, 0x00330300, 0x03333000, 0x03330000,
-    // Bottom-right
-    0x00242200, 0x02422220, 0x04222044, 0x04024044,
-    0x00020044, 0x00303300, 0x00033330, 0x00003330,
-    
-    // Mario running frame 1 (tiles 4-7)
-    0x00000000, 0x00022200, 0x00222220, 0x00333140,
-    0x03314140, 0x03314440, 0x00344400, 0x00222220,
-    0x00000000, 0x00222000, 0x02222220, 0x04133300,
-    0x04143130, 0x04443130, 0x00044300, 0x02222200,
-    0x02242200, 0x22224220, 0x44022040, 0x44002000,
-    0x00033040, 0x00333440, 0x03330440, 0x00000400,
-    0x00242200, 0x02422220, 0x04022044, 0x00020044,
-    0x04033000, 0x04433300, 0x04400330, 0x00400000,
-    
-    // Mario running frame 2 (tiles 8-11)
-    0x00000000, 0x00022200, 0x00222220, 0x00333140,
-    0x03314140, 0x03314440, 0x00344400, 0x00222220,
-    0x00000000, 0x00222000, 0x02222220, 0x04133300,
-    0x04143130, 0x04443130, 0x00044300, 0x02222200,
-    0x02242200, 0x22224220, 0x44022040, 0x00300000,
-    0x03304000, 0x33340000, 0x03344000, 0x00044000,
-    0x00242200, 0x02422220, 0x04022044, 0x00000300,
-    0x00004030, 0x00004330, 0x00004433, 0x00004400,
-    
-    // Mario running frame 3 (tiles 12-15)
-    0x00000000, 0x00022200, 0x00222220, 0x00333140,
-    0x03314140, 0x03314440, 0x00344400, 0x00222220,
-    0x00000000, 0x00222000, 0x02222220, 0x04133300,
-    0x04143130, 0x04443130, 0x00044300, 0x02222200,
-    0x02242200, 0x22224220, 0x44022040, 0x40302000,
-    0x43330000, 0x44330000, 0x00333000, 0x00033300,
-    0x00242200, 0x02422220, 0x04022044, 0x00020304,
-    0x00003344, 0x00003344, 0x00033300, 0x00330000,
-    
-    // Mario jumping (tiles 16-19)
-    0x00003000, 0x00033300, 0x00222200, 0x00222220,
-    0x00333140, 0x03314140, 0x03314440, 0x00344400,
-    0x00030000, 0x00333000, 0x00222200, 0x02222220,
-    0x04133300, 0x04143130, 0x04443130, 0x00044300,
-    0x00222220, 0x02242200, 0x22224220, 0x44422440,
-    0x40042000, 0x03042040, 0x33300440, 0x03300440,
-    0x02222200, 0x00242200, 0x02422220, 0x04422244,
-    0x00024004, 0x04024030, 0x04400330, 0x04400330,
-    
-    // Goomba frame 1 (tiles 20-23)
-    0x00000000, 0x00033000, 0x00333300, 0x03333330,
-    0x03316130, 0x03111130, 0x33366333, 0x33333333,
-    0x00000000, 0x00033000, 0x00333300, 0x03333330,
-    0x03163130, 0x03111130, 0x33366333, 0x33333333,
-    0x33333333, 0x33333333, 0x03333330, 0x00313300,
-    0x03131000, 0x33110000, 0x33100000, 0x00000000,
-    0x33333333, 0x33333333, 0x03333330, 0x00331300,
-    0x00013130, 0x00001133, 0x00000133, 0x00000000,
-    
-    // Goomba frame 2 (tiles 24-27)
-    0x00000000, 0x00033000, 0x00333300, 0x03333330,
-    0x03316130, 0x03111130, 0x33366333, 0x33333333,
-    0x00000000, 0x00033000, 0x00333300, 0x03333330,
-    0x03163130, 0x03111130, 0x33366333, 0x33333333,
-    0x33333333, 0x33333333, 0x03333330, 0x00313300,
-    0x00013100, 0x00001130, 0x00000330, 0x00000000,
-    0x33333333, 0x33333333, 0x03333330, 0x00331300,
-    0x00131000, 0x03110000, 0x03300000, 0x00000000,
-    
-    // Goomba flat (tiles 28-31)
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x33333333, 0x11111111,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x33333333, 0x11111111,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    
-    // Koopa frame 1 (tiles 32-35)
-    0x00000000, 0x00007000, 0x00077700, 0x00766670,
-    0x07661670, 0x07666670, 0x00777770, 0x00777700,
-    0x00000000, 0x00070000, 0x00777000, 0x07666700,
-    0x07616670, 0x07666670, 0x07777700, 0x00777700,
-    0x00777700, 0x07727770, 0x07772770, 0x07777700,
-    0x00707000, 0x00888000, 0x08888000, 0x08800000,
-    0x00777700, 0x07772770, 0x07727770, 0x00777700,
-    0x00070700, 0x00088800, 0x00088880, 0x00000880,
-    
-    // Koopa frame 2 (tiles 36-39)
-    0x00000000, 0x00007000, 0x00077700, 0x00766670,
-    0x07661670, 0x07666670, 0x00777770, 0x00777700,
-    0x00000000, 0x00070000, 0x00777000, 0x07666700,
-    0x07616670, 0x07666670, 0x07777700, 0x00777700,
-    0x00777700, 0x07727770, 0x07772770, 0x07777700,
-    0x00070700, 0x00088800, 0x00088880, 0x00000880,
-    0x00777700, 0x07772770, 0x07727770, 0x00777700,
-    0x00707000, 0x00888000, 0x08888000, 0x08800000,
-    
-    // Shell (tiles 40-43)
-    0x00000000, 0x00000000, 0x00077700, 0x00777770,
-    0x07777770, 0x07727770, 0x07772770, 0x07772770,
-    0x00000000, 0x00000000, 0x00777000, 0x07777700,
-    0x07777770, 0x07772770, 0x07727770, 0x07727770,
-    0x07777770, 0x07777770, 0x00777770, 0x00077700,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x07777770, 0x07777770, 0x07777700, 0x00777000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    
-    // Coin spinning 1 (tiles 44-47)
-    0x00000000, 0x00088000, 0x00899800, 0x08988980,
-    0x08988980, 0x08988980, 0x08988980, 0x08988980,
-    0x00000000, 0x00088000, 0x00899800, 0x08988980,
-    0x08988980, 0x08988980, 0x08988980, 0x08988980,
-    0x08988980, 0x08988980, 0x08988980, 0x08988980,
-    0x00899800, 0x00088000, 0x00000000, 0x00000000,
-    0x08988980, 0x08988980, 0x08988980, 0x08988980,
-    0x00899800, 0x00088000, 0x00000000, 0x00000000,
-    
-    // Coin spinning 2 (tiles 48-51)
-    0x00000000, 0x00008000, 0x00008800, 0x00088800,
-    0x00088800, 0x00088800, 0x00088800, 0x00088800,
-    0x00000000, 0x00008000, 0x00008800, 0x00088800,
-    0x00088800, 0x00088800, 0x00088800, 0x00088800,
-    0x00088800, 0x00088800, 0x00088800, 0x00088800,
-    0x00008800, 0x00008000, 0x00000000, 0x00000000,
-    0x00088800, 0x00088800, 0x00088800, 0x00088800,
-    0x00008800, 0x00008000, 0x00000000, 0x00000000,
-    
-    // Mushroom (tiles 52-55)
-    0x00000000, 0x00022200, 0x02222220, 0x22266222,
-    0x22666622, 0x22666622, 0x22266222, 0x02222220,
-    0x00000000, 0x00222000, 0x02222220, 0x22266222,
-    0x22666622, 0x22666622, 0x22266222, 0x02222220,
-    0x00444400, 0x04444440, 0x04414140, 0x04414140,
-    0x04444440, 0x00444400, 0x00000000, 0x00000000,
-    0x00444400, 0x04444440, 0x04141440, 0x04141440,
-    0x04444440, 0x00444400, 0x00000000, 0x00000000,
+// Kirby walk frame
+static const u32 kirby_walk_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00005500,
+    0x00052250,
+    0x00522220,
+    0x05222220,
+    0x52222120,
+    0x52221120,
+    0x52225520,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00550000,
+    0x05222000,
+    0x02222500,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02552250,
+    // Tile 2 - Bottom Left
+    0x52222220,
+    0x52222220,
+    0x05222250,
+    0x00522200,
+    0x00054500,
+    0x00004400,
+    0x00004400,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02222250,
+    0x02222250,
+    0x05222500,
+    0x00222500,
+    0x00544000,
+    0x00440000,
+    0x00440000,
+    0x00000000,
 };
 
-// ============================================================================
-// LEVEL DATA
-// ============================================================================
-
-// Level map (20 rows x 64 columns)
-const u8 level_data[LEVEL_HEIGHT * LEVEL_WIDTH] = {
-    // Row 0 (top - mostly sky)
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 1
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 2 - clouds
-    0,0,0,0,10,0,0,0,0,0,0,0,0,0,0,10,10,0,0,0,0,0,0,0,10,0,0,0,0,0,0,0,10,10,0,0,0,0,0,0,0,0,10,0,0,0,0,0,0,0,0,0,0,0,0,10,0,0,0,0,0,0,0,0,
-    // Row 3
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    // Row 4
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,13,0,0,0,0,0,0,
-    // Row 5
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,0,0,0,0,0,0,
-    // Row 6
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,0,0,0,0,0,0,
-    // Row 7
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,0,0,0,0,0,0,
-    // Row 8
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,0,0,0,0,0,0,
-    // Row 9 (question/brick blocks)
-    0,0,0,0,0,0,0,0,0,0,0,0,2,3,2,3,2,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,0,0,0,0,0,0,
-    // Row 10
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,15,15,15,15,0,0,
-    // Row 11
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,15,15,15,15,0,0,
-    // Row 12 - pipes top
-    0,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,14,15,15,15,15,0,0,
-    // Row 13 - pipes body
-    0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,14,15,15,15,15,0,0,
-    // Row 14 - pipes body
-    0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,8,0,0,0,0,14,15,15,15,15,0,0,
-    // Row 15 - ground with gaps
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 16 - underground
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 17
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 18
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    // Row 19 (bottom)
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+// Kirby jump
+static const u32 kirby_jump_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00005500,
+    0x00052250,
+    0x00522220,
+    0x05222220,
+    0x52222120,
+    0x52221120,
+    0x52225520,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00550000,
+    0x05222000,
+    0x02222500,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02552250,
+    // Tile 2 - Bottom Left
+    0x52222220,
+    0x05222220,
+    0x00522250,
+    0x40052200,
+    0x44005500,
+    0x44000000,
+    0x00000000,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02222250,
+    0x02222500,
+    0x05222500,
+    0x00225004,
+    0x00550044,
+    0x00000044,
+    0x00000000,
+    0x00000000,
 };
 
-// ============================================================================
+// Kirby float (puffed up)
+static const u32 kirby_float_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00055500,
+    0x00522250,
+    0x05222220,
+    0x52222220,
+    0x52222120,
+    0x52221120,
+    0x52222220,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00555000,
+    0x05222500,
+    0x02222250,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02222250,
+    // Tile 2 - Bottom Left
+    0x52222220,
+    0x52222220,
+    0x52222220,
+    0x05222250,
+    0x00522200,
+    0x00055500,
+    0x00000000,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02222250,
+    0x02222250,
+    0x02222250,
+    0x05222500,
+    0x00222500,
+    0x00555000,
+    0x00000000,
+    0x00000000,
+};
+
+// Kirby inhale (mouth open)
+static const u32 kirby_inhale_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00005500,
+    0x00052250,
+    0x00522220,
+    0x05222220,
+    0x52222120,
+    0x52221120,
+    0x52225520,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00550000,
+    0x05222000,
+    0x02222500,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02552250,
+    // Tile 2 - Bottom Left
+    0x52222220,
+    0x52255550,
+    0x05250050,
+    0x00525050,
+    0x00055500,
+    0x00044400,
+    0x00044400,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02222250,
+    0x05555250,
+    0x05005250,
+    0x05052500,
+    0x00555000,
+    0x00444000,
+    0x00444000,
+    0x00000000,
+};
+
+// Kirby full (with enemy - puffy cheeks)
+static const u32 kirby_full_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00055500,
+    0x00522250,
+    0x05222220,
+    0x52222220,
+    0x52222120,
+    0x52221120,
+    0x52222220,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00555000,
+    0x05222500,
+    0x02222250,
+    0x02222250,
+    0x02122250,
+    0x02115250,
+    0x02222250,
+    // Tile 2 - Bottom Left
+    0x52233220,
+    0x52233220,
+    0x05222250,
+    0x00522200,
+    0x00044500,
+    0x00044400,
+    0x00044400,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x02332250,
+    0x02332250,
+    0x05222500,
+    0x00222500,
+    0x00544000,
+    0x00444000,
+    0x00444000,
+    0x00000000,
+};
+
+// Enemy sprite (simple waddle-dee like blob)
+static const u32 enemy_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00000000,
+    0x00007700,
+    0x00077770,
+    0x00777770,
+    0x07757570,
+    0x07755570,
+    0x07777770,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00000000,
+    0x00770000,
+    0x07777000,
+    0x07777700,
+    0x07575700,
+    0x07555700,
+    0x07777700,
+    // Tile 2 - Bottom Left
+    0x07777770,
+    0x07777770,
+    0x00777700,
+    0x00077000,
+    0x00077000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x07777700,
+    0x07777700,
+    0x00777700,
+    0x00077000,
+    0x00077000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+};
+
+// Star projectile (8x8 single tile, we'll use 16x16 with one tile repeated or just small)
+static const u32 star_tiles[4 * 8] = {
+    // Tile 0 - Top Left
+    0x00000000,
+    0x00090000,
+    0x00099000,
+    0x09999900,
+    0x09999900,
+    0x00099000,
+    0x00090000,
+    0x00000000,
+    // Tile 1 - Top Right
+    0x00000000,
+    0x00009000,
+    0x00099000,
+    0x00999900,
+    0x00999900,
+    0x00099000,
+    0x00009000,
+    0x00000000,
+    // Tile 2 - Bottom Left
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    // Tile 3 - Bottom Right
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+    0x00000000,
+};
+
+// Heart (HUD health icon) - 8x8
+static const u32 heart_tile[8] = {
+    0x00000000,
+    0x06600660,
+    0x06660660,
+    0x06666660,
+    0x06666660,
+    0x00666600,
+    0x00066000,
+    0x00000000,
+};
+
+// ============================================================
+// BG TILE DATA
+// ============================================================
+
+static const u16 bg_pal[16] = {
+    0x7E18,  // 0: sky blue
+    0x7FFF,  // 1: white
+    0x0200,  // 2: dark green (ground)
+    0x02A0,  // 3: green (grass top)
+    0x0150,  // 4: brown  (dirt)
+    0x5294,  // 5: light gray (brick)
+    0x294A,  // 6: dark gray (brick shadow)
+    0x7F00,  // 7: light blue (cloud)
+    0x7FFF,  // 8: white (cloud)
+    0x03C0,  // 9: bright green (hill)
+    0x7E98,  // 10: lighter sky
+    0x01A0,  // 11: medium green
+    0x4210,  // 12: gray
+    0x7E52,  // 13: pale blue
+    0x02E0,  // 14: grass green
+    0x0000,  // 15: black
+};
+
+// Empty tile (sky)
+static const u32 bg_sky_tile[8] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+// Ground tile (dirt)
+static const u32 bg_ground_tile[8] = {
+    0x44444444, 0x44444444, 0x44244444, 0x44444424,
+    0x44444444, 0x42444444, 0x44444244, 0x44444444,
+};
+
+// Ground top tile (grass on top)
+static const u32 bg_ground_top_tile[8] = {
+    0x33333333, 0x33333333, 0x34343434, 0x44444444,
+    0x44444444, 0x44244444, 0x44444424, 0x44444444,
+};
+
+// Brick tile
+static const u32 bg_brick_tile[8] = {
+    0x55555556, 0x55555556, 0x55555556, 0x66666666,
+    0x55655555, 0x55655555, 0x55655555, 0x66666666,
+};
+
+// Platform tile (thin)
+static const u32 bg_platform_tile[8] = {
+    0x55555555, 0x56565656, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+
+// Cloud tile 1
+static const u32 bg_cloud1_tile[8] = {
+    0x00000000, 0x00088000, 0x00888800, 0x08888880,
+    0x88888888, 0x88888888, 0x08888880, 0x00000000,
+};
+
+// Cloud tile 2
+static const u32 bg_cloud2_tile[8] = {
+    0x00000000, 0x00000000, 0x00880000, 0x08888800,
+    0x88888888, 0x88888888, 0x08888880, 0x00000000,
+};
+
+// Hill tile (background decoration)
+static const u32 bg_hill_tile[8] = {
+    0x00000000, 0x00099000, 0x00999900, 0x09999990,
+    0x09999990, 0x99999999, 0x99999999, 0x99999999,
+};
+
+// ============================================================
+// LEVEL MAP DATA
+// ============================================================
+
+// Map uses meta-tile IDs that reference the bg tiles above
+// 0=sky, 1=ground, 2=ground_top, 3=brick, 4=platform, 5=cloud1, 6=cloud2, 7=hill
+static const u8 level_map[MAP_H][MAP_W] = {
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0,5,6,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {0,0,0,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {2,2,2,2,2,2,2,2,2,2,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0,0,2,2,2,2,2,2,2,2,2,2},
+    {1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1},
+};
+
+// ============================================================
 // GAME STRUCTURES
-// ============================================================================
+// ============================================================
 
 typedef struct {
-    int x, y;           // Fixed-point position
-    int vx, vy;         // Fixed-point velocity
-    int width, height;
+    int x, y;          // fixed point position
+    int vx, vy;        // fixed point velocity
+    int state;
+    int health;
+    int facing;        // 0=right, 1=left
     int on_ground;
-    int facing_right;
-    int frame;
-    int frame_timer;
-    int state;          // 0=small, 1=big, 2=fire
-    int invincible;
-    int inv_timer;
-    int dead;
+    int anim_frame;
+    int anim_timer;
+    int invincible;    // invincibility frames
+    int inhale_timer;
+    BOOL has_enemy;    // has swallowed enemy
+    BOOL alive;
 } Player;
 
 typedef struct {
     int x, y;
     int vx;
-    int type;           // 0=goomba, 1=koopa, 2=shell
-    int active;
-    int frame;
-    int frame_timer;
-    int stomped;
-    int stomp_timer;
+    int dir;       // 0=right, 1=left
+    int anim_timer;
+    int type;      // enemy type
+    BOOL alive;
+    BOOL active;   // on screen
+    int patrol_left, patrol_right;
 } Enemy;
 
 typedef struct {
     int x, y;
-    int active;
-    int collected;
-    int frame;
-} Coin;
+    int vx, vy;
+    BOOL active;
+    int life;
+} Star;
 
 typedef struct {
-    int x, y;
-    int active;
-    int vx, vy;
-} Item;
+    int cam_x, cam_y;
+    int scroll_x;
+    int score;
+    BOOL paused;
+    int frame_count;
+} GameState;
 
-#define MAX_ENEMIES 16
-#define MAX_COINS   32
-#define MAX_ITEMS   8
+// ============================================================
+// GLOBALS
+// ============================================================
 
-// ============================================================================
-// GLOBAL VARIABLES
-// ============================================================================
+static Player player;
+static Enemy enemies[MAX_ENEMIES];
+static Star star;
+static GameState game;
 
-Player player;
-Enemy enemies[MAX_ENEMIES];
-Coin coins[MAX_COINS];
-Item items[MAX_ITEMS];
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
 
-int camera_x = 0;
-int score = 0;
-int lives = 3;
-int game_coins = 0;
-int game_state = STATE_TITLE;
-int level_complete = 0;
-int death_timer = 0;
-
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-// Check if a tile is solid
-int is_solid_tile(int tile_x, int tile_y) {
-    if (tile_x < 0 || tile_x >= LEVEL_WIDTH || tile_y < 0 || tile_y >= LEVEL_HEIGHT)
-        return (tile_y >= LEVEL_HEIGHT - 5); // Below level is solid
-    
-    int tile = level_data[tile_y * LEVEL_WIDTH + tile_x];
-    return (tile == TILE_GROUND || tile == TILE_BRICK || tile == TILE_QUESTION ||
-            tile == TILE_BLOCK || tile == TILE_PIPE_TL || tile == TILE_PIPE_TR ||
-            tile == TILE_PIPE_BL || tile == TILE_PIPE_BR || tile == TILE_CASTLE);
+// Check if a tile at map position (tx, ty) is solid
+static int is_solid(int tx, int ty) {
+    if (tx < 0 || tx >= MAP_W || ty < 0) return 0;
+    if (ty >= MAP_H) return 1; // below map is solid
+    u8 t = level_map[ty][tx];
+    return (t == BG_GROUND || t == BG_GROUND_TOP || t == BG_BRICK);
 }
 
-// Check collision between player and tilemap
-int check_tile_collision(int px, int py, int pw, int ph) {
-    int left_tile = px / TILE_SIZE;
-    int right_tile = (px + pw - 1) / TILE_SIZE;
-    int top_tile = py / TILE_SIZE;
-    int bottom_tile = (py + ph - 1) / TILE_SIZE;
-    
-    for (int ty = top_tile; ty <= bottom_tile; ty++) {
-        for (int tx = left_tile; tx <= right_tile; tx++) {
-            if (is_solid_tile(tx, ty))
-                return 1;
+// Check if tile is a platform (can stand on top but pass through from below)
+static int is_platform(int tx, int ty) {
+    if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return 0;
+    return level_map[ty][tx] == BG_PLATFORM;
+}
+
+// Get tile at pixel position
+static int tile_at_px(int px, int py) {
+    int tx = px / TILE_SIZE;
+    int ty = py / TILE_SIZE;
+    if (tx < 0 || tx >= MAP_W || ty < 0 || ty >= MAP_H) return 0;
+    return level_map[ty][tx];
+}
+
+// AABB collision
+static int aabb_check(int x1, int y1, int w1, int h1,
+                       int x2, int y2, int w2, int h2) {
+    return (x1 < x2 + w2 && x1 + w1 > x2 &&
+            y1 < y2 + h2 && y1 + h1 > y2);
+}
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+
+static void load_sprite_tiles(void) {
+    // Copy Kirby frames into OBJ VRAM
+    // Using 1D tile mapping, each 16x16 sprite uses 4 consecutive 8x8 tiles
+    // In 4bpp: each tile = 32 bytes = 8 u32s
+
+    // Kirby idle (tiles 0-3)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 0], kirby_idle_tiles, 4 * 32);
+
+    // Kirby walk (tiles 4-7)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 4], kirby_walk_tiles, 4 * 32);
+
+    // Kirby walk2 = idle (reuse) (tiles 8-11)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 8], kirby_idle_tiles, 4 * 32);
+
+    // Kirby jump (tiles 12-15)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 12], kirby_jump_tiles, 4 * 32);
+
+    // Kirby float1 (tiles 16-19)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 16], kirby_float_tiles, 4 * 32);
+
+    // Kirby float2 (tiles 20-23) - reuse float
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 20], kirby_float_tiles, 4 * 32);
+
+    // Kirby inhale (tiles 24-27)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 24], kirby_inhale_tiles, 4 * 32);
+
+    // Kirby full (tiles 28-31)
+    memcpy(&tile_mem[4][SPR_KIRBY_BASE + 28], kirby_full_tiles, 4 * 32);
+
+    // Enemy (tiles 32-35)
+    memcpy(&tile_mem[4][SPR_ENEMY_BASE], enemy_tiles, 4 * 32);
+
+    // Star (tiles 40-43)
+    memcpy(&tile_mem[4][SPR_STAR_BASE], star_tiles, 4 * 32);
+
+    // Heart for HUD (single 8x8 tile at tile 44)
+    memcpy(&tile_mem[4][SPR_HUD_BASE], heart_tile, 32);
+}
+
+static void load_bg_tiles(void) {
+    // Load BG tiles into charblock 0
+    memcpy(&tile_mem[0][BG_SKY],         bg_sky_tile,         32);
+    memcpy(&tile_mem[0][BG_GROUND],      bg_ground_tile,      32);
+    memcpy(&tile_mem[0][BG_GROUND_TOP],  bg_ground_top_tile,  32);
+    memcpy(&tile_mem[0][BG_BRICK],       bg_brick_tile,       32);
+    memcpy(&tile_mem[0][BG_PLATFORM],    bg_platform_tile,    32);
+    memcpy(&tile_mem[0][BG_CLOUD1],      bg_cloud1_tile,      32);
+    memcpy(&tile_mem[0][BG_CLOUD2],      bg_cloud2_tile,      32);
+    memcpy(&tile_mem[0][BG_HILL],        bg_hill_tile,        32);
+}
+
+static void build_bg_map(void) {
+    // Fill screenblock 31 with map data
+    // BG0 uses 8x8 tiles, our map is in 8x8 tile units
+    SCR_ENTRY *map = se_mem[31];
+
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 64; x++) {  // 64 tiles wide (512px, we use 2 screenblocks)
+            int tile_id = BG_SKY;
+            if (y < MAP_H && x < MAP_W) {
+                tile_id = level_map[y][x];
+            }
+            // For 64-wide map, we need to handle screenblock layout
+            // 64x32 map uses screenblocks 31 and next
+            if (x < 32) {
+                se_mem[30][y * 32 + x] = tile_id;
+            } else {
+                se_mem[31][y * 32 + (x - 32)] = tile_id;
+            }
         }
     }
-    return 0;
 }
 
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
+static void init_gfx(void) {
+    // Set display mode
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_OBJ | DCNT_OBJ_1D;
 
-void init_graphics(void) {
-    // Set video mode 0 with BG0 and sprites
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
-    
-    // Setup BG0 - 64x32 tiles, 4bpp
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(28) | BG_4BPP | BG_REG_64x32 | BG_PRIO(1);
-    
-    // Copy palettes
-    memcpy(pal_bg_mem, bg_palette, sizeof(bg_palette));
-    memcpy(pal_obj_mem, sprite_palette, sizeof(sprite_palette));
-    
-    // Copy tile data
-    memcpy(&tile_mem[0][0], bg_tiles, sizeof(bg_tiles));
-    memcpy(&tile_mem[4][0], sprite_tiles, sizeof(sprite_tiles));
-    
-    // Clear all sprites
+    // BG0: main level tilemap (64x32 tiles)
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_SIZE(1) | BG_PRIO(1) | BG_4BPP;
+
+    // BG1: parallax background (not used for now, but set up)
+    REG_BG1CNT = BG_CBB(0) | BG_SBB(28) | BG_SIZE(0) | BG_PRIO(2) | BG_4BPP;
+
+    // Load palettes
+    memcpy(pal_obj_mem, kirby_pal, 16 * sizeof(u16));
+    memcpy(pal_bg_mem, bg_pal, 16 * sizeof(u16));
+
+    // Load tile graphics
+    load_bg_tiles();
+    load_sprite_tiles();
+    build_bg_map();
+
+    // Clear OAM
     oam_init(obj_mem, 128);
 }
 
-void init_level(void) {
-    // Copy level to screen entry buffer
-    u16 *map = (u16*)se_mem[28];
-    
-    for (int y = 0; y < 32; y++) {
-        for (int x = 0; x < 64; x++) {
-            int tile = 0;
-            if (y < LEVEL_HEIGHT && x < LEVEL_WIDTH) {
-                tile = level_data[y * LEVEL_WIDTH + x];
-            }
-            map[y * 64 + x] = tile;
-        }
-    }
-}
-
-void init_player(void) {
-    player.x = 24 * FIXED_ONE;
-    player.y = 112 * FIXED_ONE;
+static void init_player(void) {
+    player.x = INT2FX(24);
+    player.y = INT2FX(120);
     player.vx = 0;
     player.vy = 0;
-    player.width = PLAYER_WIDTH;
-    player.height = PLAYER_HEIGHT;
+    player.state = STATE_NORMAL;
+    player.health = KIRBY_HEALTH;
+    player.facing = 0;
     player.on_ground = 0;
-    player.facing_right = 1;
-    player.frame = 0;
-    player.frame_timer = 0;
-    player.state = 0;
+    player.anim_frame = 0;
+    player.anim_timer = 0;
     player.invincible = 0;
-    player.inv_timer = 0;
-    player.dead = 0;
+    player.inhale_timer = 0;
+    player.has_enemy = FALSE;
+    player.alive = TRUE;
 }
 
-void init_enemies(void) {
-    // Clear all enemies
+static void init_enemies(void) {
+    // Place enemies throughout the level
+    int enemy_positions[][2] = {
+        {100, 128}, {180, 128}, {280, 80}, {350, 128},
+        {420, 128}, {500, 80},  {580, 128}, {700, 128},
+    };
+
     for (int i = 0; i < MAX_ENEMIES; i++) {
-        enemies[i].active = 0;
-    }
-    
-    // Spawn some goombas
-    enemies[0] = (Enemy){.x = 180*FIXED_ONE, .y = 112*FIXED_ONE, .vx = -FIXED_ONE/2, .type = 0, .active = 1};
-    enemies[1] = (Enemy){.x = 280*FIXED_ONE, .y = 112*FIXED_ONE, .vx = -FIXED_ONE/2, .type = 0, .active = 1};
-    enemies[2] = (Enemy){.x = 320*FIXED_ONE, .y = 112*FIXED_ONE, .vx = -FIXED_ONE/2, .type = 1, .active = 1};
-    enemies[3] = (Enemy){.x = 400*FIXED_ONE, .y = 112*FIXED_ONE, .vx = -FIXED_ONE/2, .type = 0, .active = 1};
-    enemies[4] = (Enemy){.x = 430*FIXED_ONE, .y = 112*FIXED_ONE, .vx = -FIXED_ONE/2, .type = 0, .active = 1};
-}
-
-void init_coins(void) {
-    for (int i = 0; i < MAX_COINS; i++) {
-        coins[i].active = 0;
-    }
-    
-    // Spawn some floating coins
-    int coin_idx = 0;
-    coins[coin_idx++] = (Coin){.x = 100, .y = 96, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 112, .y = 96, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 124, .y = 96, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 200, .y = 80, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 240, .y = 64, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 350, .y = 88, .active = 1};
-    coins[coin_idx++] = (Coin){.x = 362, .y = 88, .active = 1};
-}
-
-void init_items(void) {
-    for (int i = 0; i < MAX_ITEMS; i++) {
-        items[i].active = 0;
+        enemies[i].x = INT2FX(enemy_positions[i][0]);
+        enemies[i].y = INT2FX(enemy_positions[i][1]);
+        enemies[i].vx = ENEMY_SPEED;
+        enemies[i].dir = 0;
+        enemies[i].alive = TRUE;
+        enemies[i].active = TRUE;
+        enemies[i].anim_timer = 0;
+        enemies[i].type = 0;
+        enemies[i].patrol_left = enemy_positions[i][0] - 30;
+        enemies[i].patrol_right = enemy_positions[i][0] + 30;
     }
 }
 
-void init_game(void) {
-    init_graphics();
-    init_level();
+static void init_star(void) {
+    star.active = FALSE;
+    star.x = 0;
+    star.y = 0;
+    star.vx = 0;
+    star.vy = 0;
+    star.life = 0;
+}
+
+static void init_game(void) {
+    game.cam_x = 0;
+    game.cam_y = 0;
+    game.scroll_x = 0;
+    game.score = 0;
+    game.paused = FALSE;
+    game.frame_count = 0;
+
     init_player();
     init_enemies();
-    init_coins();
-    init_items();
-    camera_x = 0;
-    score = 0;
-    game_coins = 0;
-    level_complete = 0;
+    init_star();
 }
 
-// ============================================================================
-// PLAYER UPDATE
-// ============================================================================
+// ============================================================
+// COLLISION WITH TILEMAP
+// ============================================================
 
-void update_player(void) {
-    if (player.dead) {
-        player.vy += GRAVITY;
-        player.y += player.vy;
-        
-        if (player.y > 200 * FIXED_ONE) {
-            death_timer++;
-            if (death_timer > 120) {
-                lives--;
-                if (lives > 0) {
-                    init_player();
-                    camera_x = 0;
-                    init_enemies();
-                    death_timer = 0;
-                } else {
-                    game_state = STATE_TITLE;
-                    lives = 3;
-                }
-            }
-        }
-        return;
-    }
-    
-    // Input handling
-    int moving = 0;
-    
-    if (key_is_down(KEY_LEFT)) {
-        player.vx -= MOVE_SPEED;
-        if (player.vx < -MAX_SPEED) player.vx = -MAX_SPEED;
-        player.facing_right = 0;
-        moving = 1;
-    }
-    
-    if (key_is_down(KEY_RIGHT)) {
-        player.vx += MOVE_SPEED;
-        if (player.vx > MAX_SPEED) player.vx = MAX_SPEED;
-        player.facing_right = 1;
-        moving = 1;
-    }
-    
-    // Friction when not moving
-    if (!moving) {
-        if (player.vx > 0) {
-            player.vx -= FRICTION;
-            if (player.vx < 0) player.vx = 0;
-        } else if (player.vx < 0) {
-            player.vx += FRICTION;
-            if (player.vx > 0) player.vx = 0;
-        }
-    }
-    
-    // Jumping
-    if (key_hit(KEY_A) && player.on_ground) {
-        player.vy = -JUMP_POWER;
-        player.on_ground = 0;
-    }
-    
-    // Variable jump height
-    if (!key_is_down(KEY_A) && player.vy < 0) {
-        player.vy += GRAVITY;
-    }
-    
-    // Apply gravity
-    player.vy += GRAVITY;
-    if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
-    
+static void collide_player_map(void) {
+    int px = FX2INT(player.x);
+    int py = FX2INT(player.y);
+
     // Horizontal collision
-    int new_x = player.x + player.vx;
-    int px = new_x >> FIXED_SHIFT;
-    int py = player.y >> FIXED_SHIFT;
-    
-    if (new_x < 0) {
-        new_x = 0;
-        player.vx = 0;
-    }
-    
-    if (!check_tile_collision(px, py, player.width, player.height)) {
-        player.x = new_x;
-    } else {
-        player.vx = 0;
-        // Align to tile
-        if (player.vx > 0) {
-            player.x = ((px / TILE_SIZE) * TILE_SIZE - player.width) * FIXED_ONE;
+    if (player.vx > 0) {
+        // Moving right - check right edge
+        int right = px + PLAYER_W;
+        int tx = right / TILE_SIZE;
+        int ty_top = py / TILE_SIZE;
+        int ty_bot = (py + PLAYER_H - 1) / TILE_SIZE;
+        for (int ty = ty_top; ty <= ty_bot; ty++) {
+            if (is_solid(tx, ty)) {
+                player.x = INT2FX(tx * TILE_SIZE - PLAYER_W);
+                player.vx = 0;
+                break;
+            }
+        }
+    } else if (player.vx < 0) {
+        // Moving left - check left edge
+        int left = px;
+        int tx = (left - 1) / TILE_SIZE;
+        int ty_top = py / TILE_SIZE;
+        int ty_bot = (py + PLAYER_H - 1) / TILE_SIZE;
+        for (int ty = ty_top; ty <= ty_bot; ty++) {
+            if (is_solid(tx, ty)) {
+                player.x = INT2FX((tx + 1) * TILE_SIZE);
+                player.vx = 0;
+                break;
+            }
         }
     }
-    
+
+    // Update position after horizontal correction
+    px = FX2INT(player.x);
+    py = FX2INT(player.y);
+
     // Vertical collision
-    int new_y = player.y + player.vy;
-    px = player.x >> FIXED_SHIFT;
-    py = new_y >> FIXED_SHIFT;
-    
     player.on_ground = 0;
-    
-    if (!check_tile_collision(px, py, player.width, player.height)) {
-        player.y = new_y;
-    } else {
-        if (player.vy > 0) {
-            // Landing
-            player.on_ground = 1;
-            player.y = ((py / TILE_SIZE) * TILE_SIZE - player.height) * FIXED_ONE;
-        } else {
-            // Hit ceiling
-            player.y = (((py + player.height) / TILE_SIZE + 1) * TILE_SIZE) * FIXED_ONE;
+
+    if (player.vy > 0) {
+        // Falling - check bottom edge
+        int bottom = py + PLAYER_H;
+        int ty = bottom / TILE_SIZE;
+        int tx_left = px / TILE_SIZE;
+        int tx_right = (px + PLAYER_W - 1) / TILE_SIZE;
+
+        for (int tx = tx_left; tx <= tx_right; tx++) {
+            if (is_solid(tx, ty)) {
+                player.y = INT2FX(ty * TILE_SIZE - PLAYER_H);
+                player.vy = 0;
+                player.on_ground = 1;
+                if (player.state == STATE_FLOATING) {
+                    player.state = player.has_enemy ? STATE_FULL : STATE_NORMAL;
+                }
+                break;
+            }
+            // Platform collision (only from above)
+            if (is_platform(tx, ty) && (py + PLAYER_H - FX2INT(player.vy)) <= ty * TILE_SIZE) {
+                player.y = INT2FX(ty * TILE_SIZE - PLAYER_H);
+                player.vy = 0;
+                player.on_ground = 1;
+                if (player.state == STATE_FLOATING) {
+                    player.state = player.has_enemy ? STATE_FULL : STATE_NORMAL;
+                }
+                break;
+            }
         }
-        player.vy = 0;
-    }
-    
-    // Animation
-    if (!player.on_ground) {
-        player.frame = 4; // Jump frame
-    } else if (player.vx != 0) {
-        player.frame_timer++;
-        if (player.frame_timer >= 6) {
-            player.frame_timer = 0;
-            player.frame++;
-            if (player.frame > 3) player.frame = 1;
-        }
-    } else {
-        player.frame = 0;
-        player.frame_timer = 0;
-    }
-    
-    // Invincibility timer
-    if (player.invincible) {
-        player.inv_timer--;
-        if (player.inv_timer <= 0) {
-            player.invincible = 0;
+    } else if (player.vy < 0) {
+        // Jumping - check top edge
+        int top = py;
+        int ty = (top - 1) / TILE_SIZE;
+        int tx_left = px / TILE_SIZE;
+        int tx_right = (px + PLAYER_W - 1) / TILE_SIZE;
+
+        for (int tx = tx_left; tx <= tx_right; tx++) {
+            if (is_solid(tx, ty)) {
+                player.y = INT2FX((ty + 1) * TILE_SIZE);
+                player.vy = 0;
+                break;
+            }
         }
     }
-    
-    // Death by falling
-    if ((player.y >> FIXED_SHIFT) > 180) {
-        player.dead = 1;
-        player.vy = -JUMP_POWER;
-        death_timer = 0;
+
+    // Check if fallen into pit
+    if (FX2INT(player.y) > MAP_H * TILE_SIZE) {
+        player.health = 0;
+        player.alive = FALSE;
     }
-    
-    // Win condition - reach flag pole
-    if ((player.x >> FIXED_SHIFT) >= 57 * 8) {
-        game_state = STATE_WIN;
+
+    // Clamp to level bounds
+    if (player.x < 0) {
+        player.x = 0;
+        player.vx = 0;
+    }
+    if (FX2INT(player.x) > MAP_W * TILE_SIZE - PLAYER_W) {
+        player.x = INT2FX(MAP_W * TILE_SIZE - PLAYER_W);
+        player.vx = 0;
     }
 }
 
-// ============================================================================
-// ENEMY UPDATE
-// ============================================================================
+// Simple enemy-map collision
+static void collide_enemy_map(Enemy *e) {
+    int px = FX2INT(e->x);
+    int py = FX2INT(e->y);
 
-void update_enemies(void) {
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        if (!enemies[i].active) continue;
-        
-        Enemy *e = &enemies[i];
-        
-        // Off-screen check
-        int ex = e->x >> FIXED_SHIFT;
-        if (ex < camera_x - 32 || ex > camera_x + SCREEN_WIDTH + 32) continue;
-        
-        if (e->stomped) {
-            e->stomp_timer--;
-            if (e->stomp_timer <= 0) {
-                e->active = 0;
-            }
-            continue;
+    // Check ground beneath
+    int bottom = py + ENEMY_H;
+    int ty = bottom / TILE_SIZE;
+    int tx = (px + ENEMY_W / 2) / TILE_SIZE;
+
+    if (is_solid(tx, ty) || is_platform(tx, ty)) {
+        e->y = INT2FX(ty * TILE_SIZE - ENEMY_H);
+    }
+
+    // Check walls for direction reversal
+    if (e->vx > 0) {
+        int right = px + ENEMY_W;
+        int wtx = right / TILE_SIZE;
+        int wty = py / TILE_SIZE;
+        if (is_solid(wtx, wty)) {
+            e->dir = 1;
+            e->vx = -ENEMY_SPEED;
         }
-        
-        // Movement
-        e->x += e->vx;
-        
-        // Gravity
-        e->y += GRAVITY * 2;
-        
-        // Ground check
-        int tile_x = ex / TILE_SIZE;
-        int tile_y = ((e->y >> FIXED_SHIFT) + 16) / TILE_SIZE;
-        if (is_solid_tile(tile_x, tile_y)) {
-            e->y = ((tile_y * TILE_SIZE) - 16) * FIXED_ONE;
+    } else {
+        int left = px;
+        int wtx = (left - 1) / TILE_SIZE;
+        int wty = py / TILE_SIZE;
+        if (is_solid(wtx, wty)) {
+            e->dir = 0;
+            e->vx = ENEMY_SPEED;
         }
-        
-        // Wall collision - reverse direction
-        int left_tile = ex / TILE_SIZE;
-        int right_tile = (ex + 14) / TILE_SIZE;
-        int mid_tile = ((e->y >> FIXED_SHIFT) + 8) / TILE_SIZE;
-        
-        if (is_solid_tile(left_tile - 1, mid_tile) || is_solid_tile(right_tile + 1, mid_tile)) {
-            e->vx = -e->vx;
-        }
-        
-        // Edge detection for koopas
-        if (e->type == 1) {
-            int below_left = ((e->y >> FIXED_SHIFT) + 20) / TILE_SIZE;
-            if (!is_solid_tile(ex / TILE_SIZE, below_left)) {
-                e->vx = -e->vx;
-            }
-        }
-        
-        // Animation
-        e->frame_timer++;
-        if (e->frame_timer >= 10) {
-            e->frame_timer = 0;
-            e->frame = !e->frame;
-        }
-        
-        // Player collision
-        if (!player.dead && !player.invincible) {
-            int px = player.x >> FIXED_SHIFT;
-            int py = player.y >> FIXED_SHIFT;
-            
-            // Check collision
-            if (px < ex + 14 && px + player.width > ex &&
-                py < (e->y >> FIXED_SHIFT) + 16 && py + player.height > (e->y >> FIXED_SHIFT)) {
-                
-                // Check if stomping (player falling onto enemy)
-                if (player.vy > 0 && py + player.height < (e->y >> FIXED_SHIFT) + 10) {
-                    // Stomp!
-                    if (e->type == 1) {
-                        // Koopa turns into shell
-                        e->type = 2;
-                        e->vx = 0;
-                    } else if (e->type == 2) {
-                        // Kick shell
-                        e->vx = (px < ex) ? 4 * FIXED_ONE : -4 * FIXED_ONE;
-                    } else {
-                        // Goomba flattened
-                        e->stomped = 1;
-                        e->stomp_timer = 30;
-                    }
-                    player.vy = -JUMP_POWER / 2;
-                    score += 100;
+    }
+
+    // Check if at edge of platform (turn around)
+    int ftx = (e->vx > 0) ? (px + ENEMY_W + 2) / TILE_SIZE : (px - 2) / TILE_SIZE;
+    int fty = (py + ENEMY_H + 2) / TILE_SIZE;
+    if (!is_solid(ftx, fty) && !is_platform(ftx, fty)) {
+        e->dir = !e->dir;
+        e->vx = e->dir ? -ENEMY_SPEED : ENEMY_SPEED;
+    }
+}
+
+// ============================================================
+// UPDATE FUNCTIONS
+// ============================================================
+
+static void update_player(void) {
+    if (!player.alive) return;
+
+    // Read input
+    key_poll();
+
+    // Horizontal movement
+    player.vx = 0;
+    if (key_is_down(KEY_LEFT)) {
+        player.vx = -MOVE_SPEED;
+        player.facing = 1;
+    }
+    if (key_is_down(KEY_RIGHT)) {
+        player.vx = MOVE_SPEED;
+        player.facing = 0;
+    }
+
+    // Jumping / Floating
+    switch (player.state) {
+        case STATE_NORMAL:
+        case STATE_FULL:
+            if (key_hit(KEY_A)) {
+                if (player.on_ground) {
+                    player.vy = JUMP_VEL;
+                    player.on_ground = 0;
                 } else {
-                    // Hit by enemy
-                    if (e->type != 2 || e->vx != 0) {
-                        player.dead = 1;
-                        player.vy = -JUMP_POWER;
-                        death_timer = 0;
-                    } else {
-                        // Kick stationary shell
-                        e->vx = (px < ex) ? 4 * FIXED_ONE : -4 * FIXED_ONE;
-                    }
+                    // Start floating
+                    player.state = STATE_FLOATING;
+                    player.vy = FLOAT_VEL;
                 }
             }
+            break;
+        case STATE_FLOATING:
+            if (key_hit(KEY_A)) {
+                player.vy = FLOAT_VEL;
+            }
+            // B to stop floating
+            if (key_hit(KEY_B)) {
+                player.state = player.has_enemy ? STATE_FULL : STATE_NORMAL;
+            }
+            break;
+        case STATE_INHALE:
+            break;
+    }
+
+    // Inhale (B button, only in normal state on ground or air)
+    if (player.state == STATE_NORMAL) {
+        if (key_is_down(KEY_B)) {
+            player.state = STATE_INHALE;
+            player.inhale_timer = 30; // inhale duration
+        }
+    }
+
+    // Spit star (B when full)
+    if (player.state == STATE_FULL && key_hit(KEY_B)) {
+        // Shoot star
+        if (!star.active) {
+            star.active = TRUE;
+            star.x = player.x + (player.facing ? INT2FX(-8) : INT2FX(16));
+            star.y = player.y + INT2FX(4);
+            star.vx = player.facing ? -600 : 600;
+            star.vy = 0;
+            star.life = 45;
+        }
+        player.has_enemy = FALSE;
+        player.state = STATE_NORMAL;
+    }
+
+    // Swallow (Down when full)
+    if (player.state == STATE_FULL && key_hit(KEY_DOWN)) {
+        player.has_enemy = FALSE;
+        player.state = STATE_NORMAL;
+        // Could gain ability here
+    }
+
+    // Update inhale timer
+    if (player.state == STATE_INHALE) {
+        player.inhale_timer--;
+        if (player.inhale_timer <= 0 || !key_is_down(KEY_B)) {
+            player.state = player.has_enemy ? STATE_FULL : STATE_NORMAL;
+        }
+    }
+
+    // Apply gravity
+    if (player.state == STATE_FLOATING) {
+        player.vy += FLOAT_GRAVITY;
+        if (player.vy > FLOAT_MAX_FALL) player.vy = FLOAT_MAX_FALL;
+    } else {
+        player.vy += GRAVITY;
+        if (player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+    }
+
+    // Update position
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Tilemap collision
+    collide_player_map();
+
+    // Update invincibility
+    if (player.invincible > 0) {
+        player.invincible--;
+    }
+
+    // Animation
+    player.anim_timer++;
+    if (player.state == STATE_FLOATING) {
+        player.anim_frame = (player.anim_timer / 8) % 2 ? ANIM_FLOAT1 : ANIM_FLOAT2;
+    } else if (player.state == STATE_INHALE) {
+        player.anim_frame = ANIM_INHALE;
+    } else if (player.state == STATE_FULL) {
+        player.anim_frame = ANIM_FULL;
+    } else if (!player.on_ground) {
+        player.anim_frame = ANIM_JUMP;
+    } else if (player.vx != 0) {
+        player.anim_frame = (player.anim_timer / 6) % 2 ? ANIM_WALK1 : ANIM_WALK2;
+    } else {
+        player.anim_frame = ANIM_IDLE;
+    }
+}
+
+static void update_enemies(void) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].alive) continue;
+
+        // Simple patrol AI
+        int ex = FX2INT(enemies[i].x);
+
+        // Patrol range
+        if (ex <= enemies[i].patrol_left) {
+            enemies[i].dir = 0;
+            enemies[i].vx = ENEMY_SPEED;
+        } else if (ex >= enemies[i].patrol_right) {
+            enemies[i].dir = 1;
+            enemies[i].vx = -ENEMY_SPEED;
+        }
+
+        // Apply simple gravity
+        int bottom = FX2INT(enemies[i].y) + ENEMY_H;
+        int ty = bottom / TILE_SIZE;
+        int tx = (FX2INT(enemies[i].x) + ENEMY_W / 2) / TILE_SIZE;
+        if (!is_solid(tx, ty) && !is_platform(tx, ty)) {
+            enemies[i].y += INT2FX(1); // fall slowly
+        }
+
+        enemies[i].x += enemies[i].vx;
+
+        collide_enemy_map(&enemies[i]);
+
+        enemies[i].anim_timer++;
+    }
+}
+
+static void update_star(void) {
+    if (!star.active) return;
+
+    star.x += star.vx;
+    star.y += star.vy;
+    star.life--;
+
+    if (star.life <= 0) {
+        star.active = FALSE;
+        return;
+    }
+
+    // Check collision with walls
+    int sx = FX2INT(star.x);
+    int sy = FX2INT(star.y);
+    int tx = sx / TILE_SIZE;
+    int ty = sy / TILE_SIZE;
+    if (is_solid(tx, ty)) {
+        star.active = FALSE;
+        return;
+    }
+
+    // Check collision with enemies
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].alive) continue;
+        int ex = FX2INT(enemies[i].x);
+        int ey = FX2INT(enemies[i].y);
+        if (aabb_check(sx, sy, 8, 8, ex, ey, ENEMY_W, ENEMY_H)) {
+            enemies[i].alive = FALSE;
+            star.active = FALSE;
+            game.score += 100;
+            break;
         }
     }
 }
 
-// ============================================================================
-// COIN UPDATE
-// ============================================================================
+static void check_player_enemy_collision(void) {
+    if (player.invincible > 0 || !player.alive) return;
 
-void update_coins(void) {
-    for (int i = 0; i < MAX_COINS; i++) {
-        if (!coins[i].active) continue;
-        
-        Coin *c = &coins[i];
-        
-        // Animation
-        c->frame = (c->frame + 1) % 16;
-        
-        // Player collection
-        int px = player.x >> FIXED_SHIFT;
-        int py = player.y >> FIXED_SHIFT;
-        
-        if (px < c->x + 8 && px + player.width > c->x &&
-            py < c->y + 8 && py + player.height > c->y) {
-            c->active = 0;
-            game_coins++;
-            score += 200;
-            
-            // Extra life at 100 coins
-            if (game_coins >= 100) {
-                game_coins -= 100;
-                lives++;
+    int px = FX2INT(player.x);
+    int py = FX2INT(player.y);
+
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].alive) continue;
+
+        int ex = FX2INT(enemies[i].x);
+        int ey = FX2INT(enemies[i].y);
+
+        // Inhale check
+        if (player.state == STATE_INHALE) {
+            int inhale_x = player.facing ? (px - INHALE_RANGE) : (px + PLAYER_W);
+            int inhale_y = py;
+            if (aabb_check(inhale_x, inhale_y, INHALE_W, INHALE_H,
+                          ex, ey, ENEMY_W, ENEMY_H)) {
+                // Suck enemy toward player
+                int pull = player.facing ? 200 : -200;
+                enemies[i].x -= pull;
+
+                // Check if close enough to swallow
+                int edx = FX2INT(enemies[i].x) - px;
+                if (edx < 0) edx = -edx;
+                if (edx < 12) {
+                    enemies[i].alive = FALSE;
+                    player.has_enemy = TRUE;
+                    player.state = STATE_FULL;
+                    game.score += 50;
+                }
+                continue;
+            }
+        }
+
+        // Regular collision (damage)
+        if (aabb_check(px, py, PLAYER_W, PLAYER_H,
+                      ex, ey, ENEMY_W, ENEMY_H)) {
+            player.health--;
+            player.invincible = 60; // 1 second of invincibility
+            player.vy = JUMP_VEL / 2; // knockback
+
+            if (player.health <= 0) {
+                player.alive = FALSE;
             }
         }
     }
 }
 
-// ============================================================================
-// CAMERA UPDATE
-// ============================================================================
+static void update_camera(void) {
+    // Camera follows player with some smoothing
+    int target_x = FX2INT(player.x) - SCREEN_W / 2 + PLAYER_W / 2;
+    int target_y = FX2INT(player.y) - SCREEN_H / 2 + PLAYER_H / 2;
 
-void update_camera(void) {
-    int target_x = (player.x >> FIXED_SHIFT) - SCREEN_WIDTH / 3;
-    
-    // Smooth camera follow
-    camera_x += (target_x - camera_x) / 8;
-    
     // Clamp camera
-    if (camera_x < 0) camera_x = 0;
-    if (camera_x > (LEVEL_WIDTH * TILE_SIZE) - SCREEN_WIDTH)
-        camera_x = (LEVEL_WIDTH * TILE_SIZE) - SCREEN_WIDTH;
-    
-    // Update background scroll
-    REG_BG0HOFS = camera_x;
-    REG_BG0VOFS = 0;
+    if (target_x < 0) target_x = 0;
+    if (target_x > MAP_W * TILE_SIZE - SCREEN_W)
+        target_x = MAP_W * TILE_SIZE - SCREEN_W;
+    if (target_y < 0) target_y = 0;
+    if (target_y > MAP_H * TILE_SIZE - SCREEN_H)
+        target_y = MAP_H * TILE_SIZE - SCREEN_H;
+
+    // Smooth scrolling
+    game.cam_x += (target_x - game.cam_x) / 4;
+    game.cam_y += (target_y - game.cam_y) / 4;
+
+    // Set BG scroll
+    REG_BG0HOFS = game.cam_x;
+    REG_BG0VOFS = game.cam_y;
+
+    // Parallax for BG1 (half speed)
+    REG_BG1HOFS = game.cam_x / 2;
+    REG_BG1VOFS = game.cam_y / 2;
 }
 
-// ============================================================================
+// ============================================================
 // RENDERING
-// ============================================================================
+// ============================================================
 
-void draw_player(void) {
-    int screen_x = (player.x >> FIXED_SHIFT) - camera_x;
-    int screen_y = (player.y >> FIXED_SHIFT);
-    
-    // Blink when invincible
-    if (player.invincible && (player.inv_timer & 4)) {
-        obj_hide(&obj_mem[0]);
+static void render_player(void) {
+    if (!player.alive) {
+        obj_hide(&obj_mem[OAM_KIRBY]);
         return;
     }
-    
-    // 16x16 sprite (4 tiles)
-    int tile = player.frame * 4;
-    int attr1_flip = player.facing_right ? 0 : ATTR1_HFLIP;
-    
-    obj_set_attr(&obj_mem[0],
-        ATTR0_SQUARE | ATTR0_4BPP,
-        ATTR1_SIZE_16 | attr1_flip,
-        ATTR2_ID(tile) | ATTR2_PRIO(0));
-    
-    obj_set_pos(&obj_mem[0], screen_x, screen_y);
+
+    int screen_x = FX2INT(player.x) - game.cam_x;
+    int screen_y = FX2INT(player.y) - game.cam_y;
+
+    // Blinking when invincible
+    if (player.invincible > 0 && (player.invincible & 2)) {
+        obj_hide(&obj_mem[OAM_KIRBY]);
+        return;
+    }
+
+    // Calculate tile index based on animation frame
+    int tile_id = SPR_KIRBY_BASE + (player.anim_frame * 4);
+
+    OBJ_ATTR *obj = &obj_mem[OAM_KIRBY];
+
+    obj_set_attr(obj,
+        ATTR0_SQUARE | ATTR0_4BPP | ((screen_y & 0xFF)),
+        ATTR1_SIZE_16 | ((player.facing) ? ATTR1_HFLIP : 0) | ((screen_x & 0x1FF)),
+        ATTR2_ID(tile_id) | ATTR2_PRIO(0) | ATTR2_PALBANK(0));
 }
 
-void draw_enemies(void) {
-    int sprite_id = 1;
-    
-    for (int i = 0; i < MAX_ENEMIES && sprite_id < 32; i++) {
-        if (!enemies[i].active) continue;
-        
-        Enemy *e = &enemies[i];
-        int screen_x = (e->x >> FIXED_SHIFT) - camera_x;
-        int screen_y = (e->y >> FIXED_SHIFT);
-        
-        // Skip off-screen
-        if (screen_x < -16 || screen_x > SCREEN_WIDTH + 16) {
-            obj_hide(&obj_mem[sprite_id]);
-            sprite_id++;
+static void render_enemies(void) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        OBJ_ATTR *obj = &obj_mem[OAM_ENEMY_START + i];
+
+        if (!enemies[i].alive) {
+            obj_hide(obj);
             continue;
         }
-        
-        int tile;
-        int attr1 = ATTR1_SIZE_16;
-        
-        if (e->stomped) {
-            tile = 28; // Flat goomba
-        } else if (e->type == 0) {
-            // Goomba
-            tile = 20 + (e->frame ? 4 : 0);
-        } else if (e->type == 1) {
-            // Koopa
-            tile = 32 + (e->frame ? 4 : 0);
-            if (e->vx > 0) attr1 |= ATTR1_HFLIP;
+
+        int screen_x = FX2INT(enemies[i].x) - game.cam_x;
+        int screen_y = FX2INT(enemies[i].y) - game.cam_y;
+
+        // Off screen check
+        if (screen_x < -16 || screen_x > SCREEN_W + 16 ||
+            screen_y < -16 || screen_y > SCREEN_H + 16) {
+            obj_hide(obj);
+            continue;
+        }
+
+        obj_set_attr(obj,
+            ATTR0_SQUARE | ATTR0_4BPP | ((screen_y & 0xFF)),
+            ATTR1_SIZE_16 | ((enemies[i].dir) ? ATTR1_HFLIP : 0) | ((screen_x & 0x1FF)),
+            ATTR2_ID(SPR_ENEMY_BASE) | ATTR2_PRIO(0) | ATTR2_PALBANK(0));
+    }
+}
+
+static void render_star(void) {
+    OBJ_ATTR *obj = &obj_mem[OAM_STAR];
+
+    if (!star.active) {
+        obj_hide(obj);
+        return;
+    }
+
+    int screen_x = FX2INT(star.x) - game.cam_x;
+    int screen_y = FX2INT(star.y) - game.cam_y;
+
+    if (screen_x < -16 || screen_x > SCREEN_W + 16) {
+        obj_hide(obj);
+        return;
+    }
+
+    obj_set_attr(obj,
+        ATTR0_SQUARE | ATTR0_4BPP | ((screen_y & 0xFF)),
+        ATTR1_SIZE_16 | ((screen_x & 0x1FF)),
+        ATTR2_ID(SPR_STAR_BASE) | ATTR2_PRIO(0) | ATTR2_PALBANK(0));
+}
+
+static void render_hud(void) {
+    // Draw health hearts using sprites
+    for (int i = 0; i < KIRBY_HEALTH; i++) {
+        OBJ_ATTR *obj = &obj_mem[OAM_HUD_START + i];
+
+        if (i < player.health) {
+            obj_set_attr(obj,
+                ATTR0_SQUARE | ATTR0_4BPP | (4),  // y=4
+                ATTR1_SIZE_8 | ((4 + i * 10) & 0x1FF),  // x spaced
+                ATTR2_ID(SPR_HUD_BASE) | ATTR2_PRIO(0) | ATTR2_PALBANK(0));
         } else {
-            // Shell
-            tile = 40;
+            obj_hide(obj);
         }
-        
-        obj_set_attr(&obj_mem[sprite_id],
-            ATTR0_SQUARE | ATTR0_4BPP,
-            attr1,
-            ATTR2_ID(tile) | ATTR2_PRIO(0));
-        
-        obj_set_pos(&obj_mem[sprite_id], screen_x, screen_y);
-        sprite_id++;
-    }
-    
-    // Hide unused enemy sprites
-    while (sprite_id < 32) {
-        obj_hide(&obj_mem[sprite_id]);
-        sprite_id++;
     }
 }
 
-void draw_coins_sprites(void) {
-    int sprite_id = 32;
-    
-    for (int i = 0; i < MAX_COINS && sprite_id < 64; i++) {
-        if (!coins[i].active) {
-            continue;
-        }
-        
-        Coin *c = &coins[i];
-        int screen_x = c->x - camera_x;
-        int screen_y = c->y;
-        
-        if (screen_x < -16 || screen_x > SCREEN_WIDTH + 16) {
-            obj_hide(&obj_mem[sprite_id]);
-            sprite_id++;
-            continue;
-        }
-        
-        int tile = (c->frame < 8) ? 44 : 48;
-        
-        obj_set_attr(&obj_mem[sprite_id],
-            ATTR0_SQUARE | ATTR0_4BPP,
-            ATTR1_SIZE_16,
-            ATTR2_ID(tile) | ATTR2_PRIO(0));
-        
-        obj_set_pos(&obj_mem[sprite_id], screen_x, screen_y);
-        sprite_id++;
-    }
-    
-    // Hide unused coin sprites  
-    while (sprite_id < 64) {
-        obj_hide(&obj_mem[sprite_id]);
-        sprite_id++;
-    }
-}
-
-// Simple number drawing using sprites (reusing coin tiles as digits placeholder)
-void draw_hud(void) {
-    // For a proper implementation, you'd have digit tiles
-    // This is simplified - just showing the concept
-    
-    // Lives indicator in top-left
-    obj_set_attr(&obj_mem[64],
-        ATTR0_SQUARE | ATTR0_4BPP,
-        ATTR1_SIZE_16,
-        ATTR2_ID(0) | ATTR2_PRIO(0));
-    obj_set_pos(&obj_mem[64], 8, 8);
-    
-    // Coin counter icon
-    obj_set_attr(&obj_mem[65],
-        ATTR0_SQUARE | ATTR0_4BPP,
-        ATTR1_SIZE_16,
-        ATTR2_ID(44) | ATTR2_PRIO(0));
-    obj_set_pos(&obj_mem[65], SCREEN_WIDTH - 40, 8);
-}
-
-void draw_title_screen(void) {
-    // Hide all sprites except title elements
-    for (int i = 0; i < 128; i++) {
-        obj_hide(&obj_mem[i]);
-    }
-    
-    // You could draw "PRESS START" using sprites
-    // For simplicity, we'll just show Mario sprite in center
-    obj_set_attr(&obj_mem[0],
-        ATTR0_SQUARE | ATTR0_4BPP,
-        ATTR1_SIZE_16,
-        ATTR2_ID(0) | ATTR2_PRIO(0));
-    obj_set_pos(&obj_mem[0], SCREEN_WIDTH/2 - 8, SCREEN_HEIGHT/2 - 8);
-}
-
-void draw_win_screen(void) {
-    // Simple win indication
-    for (int i = 0; i < 128; i++) {
-        obj_hide(&obj_mem[i]);
-    }
-    
-    // Show Mario at flag
-    obj_set_attr(&obj_mem[0],
-        ATTR0_SQUARE | ATTR0_4BPP,
-        ATTR1_SIZE_16,
-        ATTR2_ID(0) | ATTR2_PRIO(0));
-    obj_set_pos(&obj_mem[0], SCREEN_WIDTH/2 - 8, SCREEN_HEIGHT/2 - 16);
-}
-
-// ============================================================================
+// ============================================================
 // MAIN GAME LOOP
-// ============================================================================
+// ============================================================
 
 int main(void) {
     // Initialize
     irq_init(NULL);
     irq_enable(II_VBLANK);
-    
+
+    init_gfx();
     init_game();
-    game_state = STATE_TITLE;
-    
+
+    // Main loop
     while (1) {
-        vid_vsync();
+        // Wait for VBlank
+        VBlankIntrWait();
+
+        // Update
+        game.frame_count++;
+
         key_poll();
-        
-        switch (game_state) {
-            case STATE_TITLE:
-                draw_title_screen();
-                if (key_hit(KEY_START)) {
-                    init_game();
-                    game_state = STATE_PLAYING;
-                }
-                break;
-                
-            case STATE_PLAYING:
-                update_player();
-                update_enemies();
-                update_coins();
-                update_camera();
-                
-                draw_player();
-                draw_enemies();
-                draw_coins_sprites();
-                draw_hud();
-                break;
-                
-            case STATE_DEAD:
-                // Handled in update_player death sequence
-                break;
-                
-            case STATE_WIN:
-                draw_win_screen();
-                if (key_hit(KEY_START)) {
-                    game_state = STATE_TITLE;
-                }
-                break;
+
+        // Reset game on start
+        if (key_hit(KEY_START)) {
+            if (!player.alive) {
+                init_game();
+                build_bg_map();
+                continue;
+            }
+            game.paused = !game.paused;
         }
+
+        if (!game.paused && player.alive) {
+            update_player();
+            update_enemies();
+            update_star();
+            check_player_enemy_collision();
+            update_camera();
+        }
+
+        // Render
+        render_player();
+        render_enemies();
+        render_star();
+        render_hud();
+
+        // Copy OAM
+        oam_copy(oam_mem, obj_mem, 128);
     }
-    
+
     return 0;
 }
