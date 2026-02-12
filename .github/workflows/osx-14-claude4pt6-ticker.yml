@@ -2,7 +2,7 @@ name: OSX-14-claude4pt6-ticker
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build:
     runs-on: macos-14
