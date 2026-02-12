@@ -374,40 +374,40 @@ static const u8 enemy_spawns[][3] = {
 // ============================================================
 static const u16 sprite_pal[] = {
     CLR_MAG,        // 0: transparent (magenta key)
-    RGB15(31,20,25),    // 1: Kirby pink
-    RGB15(5,5,20),      // 2: Kirby eye (dark blue)
-    RGB15(31,10,10),    // 3: Kirby mouth/feet (red)
-    RGB15(31,31,15),    // 4: Inhale effect (yellow)
-    RGB15(25,15,5),     // 5: Waddle Dee orange
-    RGB15(28,15,28),    // 6: Bronto purple
-    RGB15(31,31,0),     // 7: Star yellow
-    RGB15(20,20,20),    // 8: gray
-    RGB15(31,31,31),    // 9: white
-    RGB15(0,0,31),      // A: blue
-    RGB15(15,31,15),    // B: green
-    RGB15(20,25,31),    // C: sky blue
-    RGB15(22,12,5),     // D: door brown
-    RGB15(31,15,0),     // E: orange/fire
-    RGB15(0,31,31),     // F: cyan/spark
+    RGB15_C(31,20,25),    // 1: Kirby pink
+    RGB15_C(5,5,20),      // 2: Kirby eye (dark blue)
+    RGB15_C(31,10,10),    // 3: Kirby mouth/feet (red)
+    RGB15_C(31,31,15),    // 4: Inhale effect (yellow)
+    RGB15_C(25,15,5),     // 5: Waddle Dee orange
+    RGB15_C(28,15,28),    // 6: Bronto purple
+    RGB15_C(31,31,0),     // 7: Star yellow
+    RGB15_C(20,20,20),    // 8: gray
+    RGB15_C(31,31,31),    // 9: white
+    RGB15_C(0,0,31),      // A: blue
+    RGB15_C(15,31,15),    // B: green
+    RGB15_C(20,25,31),    // C: sky blue
+    RGB15_C(22,12,5),     // D: door brown
+    RGB15_C(31,15,0),     // E: orange/fire
+    RGB15_C(0,31,31),     // F: cyan/spark
 };
 
 static const u16 bg_pal[] = {
-    RGB15(12,20,31),    // 0: sky blue bg
-    RGB15(0,0,0),       // 1: unused
-    RGB15(0,0,0),       // 2: unused
-    RGB15(10,25,5),     // 3: grass green
-    RGB15(0,0,0),       // 4: unused
-    RGB15(0,0,0),       // 5: unused
-    RGB15(0,0,0),       // 6: unused
-    RGB15(20,15,10),    // 7: platform brown
-    RGB15(15,10,5),     // 8: dirt dark
-    RGB15(18,13,8),     // 9: dirt medium
-    RGB15(22,17,12),    // A: dirt light
-    RGB15(12,30,8),     // B: grass light
-    RGB15(20,25,31),    // C: sky
-    RGB15(22,12,5),     // D: door brown
-    RGB15(31,15,0),     // E: unused
-    RGB15(31,31,31),    // F: cloud white
+    RGB15_C(12,20,31),    // 0: sky blue bg
+    RGB15_C(0,0,0),       // 1: unused
+    RGB15_C(0,0,0),       // 2: unused
+    RGB15_C(10,25,5),     // 3: grass green
+    RGB15_C(0,0,0),       // 4: unused
+    RGB15_C(0,0,0),       // 5: unused
+    RGB15_C(0,0,0),       // 6: unused
+    RGB15_C(20,15,10),    // 7: platform brown
+    RGB15_C(15,10,5),     // 8: dirt dark
+    RGB15_C(18,13,8),     // 9: dirt medium
+    RGB15_C(22,17,12),    // A: dirt light
+    RGB15_C(12,30,8),     // B: grass light
+    RGB15_C(20,25,31),    // C: sky
+    RGB15_C(22,12,5),     // D: door brown
+    RGB15_C(31,15,0),     // E: unused
+    RGB15_C(31,31,31),    // F: cloud white
 };
 
 // ============================================================
@@ -737,7 +737,7 @@ void update_player(void) {
                     FIXED_TO_INT(kirby.x) + kirby.w/2,
                     FIXED_TO_INT(kirby.y) + kirby.h + 4,
                     0, FLOAT_TO_FIXED(1.0),
-                    RGB15(31,31,31), 15
+                    RGB15_C(31,31,31), 15
                 );
             }
         }
@@ -772,7 +772,7 @@ void update_player(void) {
                     FIXED_TO_INT(kirby.y) + kirby.h/2,
                     FLOAT_TO_FIXED((qran() % 30 - 15) / 10.0),
                     FLOAT_TO_FIXED(-(qran() % 20) / 10.0),
-                    RGB15(31,31,0), 20
+                    RGB15_C(31,31,0), 20
                 );
             }
         }
@@ -798,7 +798,7 @@ void update_player(void) {
                     FIXED_TO_INT(kirby.y) + kirby.h/2,
                     FLOAT_TO_FIXED((qran() % 40 - 20) / 10.0),
                     FLOAT_TO_FIXED(-(qran() % 30) / 10.0),
-                    RGB15(31,31,0), 25
+                    RGB15_C(31,31,0), 25
                 );
             }
         }
@@ -1005,9 +1005,9 @@ void use_ability(void) {
             kirby.attack_timer = 8;
             // Fire particles
             spawn_particle(sx, sy, FLOAT_TO_FIXED(dir * 2.0),
-                          FLOAT_TO_FIXED(-0.5), RGB15(31,15,0), 10);
+                          FLOAT_TO_FIXED(-0.5), RGB15_C(31,15,0), 10);
             spawn_particle(sx, sy + 4, FLOAT_TO_FIXED(dir * 1.5),
-                          FLOAT_TO_FIXED(0.5), RGB15(31,31,0), 8);
+                          FLOAT_TO_FIXED(0.5), RGB15_C(31,31,0), 8);
             break;
         case ABILITY_SPARK:
             // Spark aura - damage all nearby enemies
@@ -1033,7 +1033,7 @@ void use_ability(void) {
                     spawn_particle(kx, ky,
                         FLOAT_TO_FIXED(lu_cos(angle * 256) / 8192.0),
                         FLOAT_TO_FIXED(lu_sin(angle * 256) / 8192.0),
-                        RGB15(0,31,31), 12);
+                        RGB15_C(0,31,31), 12);
                 }
             }
             break;
@@ -1058,7 +1058,7 @@ void use_ability(void) {
                 for (j = 0; j < 4; j++) {
                     spawn_particle(slash_x + (kirby.facing ? 0 : 10), slash_y + j*4,
                         FLOAT_TO_FIXED(dir * 3.0), FLOAT_TO_FIXED((j-2)*0.3),
-                        RGB15(31,31,31), 8);
+                        RGB15_C(31,31,31), 8);
                 }
             }
             break;
@@ -1103,7 +1103,7 @@ void damage_player(void) {
             FIXED_TO_INT(kirby.y) + kirby.h/2,
             FLOAT_TO_FIXED((qran() % 40 - 20) / 10.0),
             FLOAT_TO_FIXED(-(qran() % 20) / 10.0),
-            RGB15(31,0,0), 20
+            RGB15_C(31,0,0), 20
         );
     }
 }
@@ -1280,7 +1280,7 @@ void kill_enemy(int i) {
         spawn_particle(ex, ey,
             FLOAT_TO_FIXED((qran() % 40 - 20) / 10.0),
             FLOAT_TO_FIXED(-(qran() % 30) / 10.0),
-            RGB15(31,31,0), 20);
+            RGB15_C(31,31,0), 20);
     }
 }
 
@@ -1327,7 +1327,7 @@ void update_projectiles(void) {
             stars[i].active = 0;
             // Impact particles
             spawn_particle(sx + 4, sy + 4, 0, FLOAT_TO_FIXED(-1.0),
-                          RGB15(31,31,0), 10);
+                          RGB15_C(31,31,0), 10);
             continue;
         }
 
@@ -1596,7 +1596,7 @@ void game_title(void) {
     VBlankIntrWait();
 
     // Clear screen with sky color
-    pal_bg_mem[0] = RGB15(8,16,31);
+    pal_bg_mem[0] = RGB15_C(8,16,31);
 
     // Wait for start button
     key_poll();
@@ -1665,7 +1665,7 @@ void game_over(void) {
     VBlankIntrWait();
     key_poll();
 
-    pal_bg_mem[0] = RGB15(0, 0, 0);
+    pal_bg_mem[0] = RGB15_C(0, 0, 0);
 
     // Show Kirby falling
     int sy = 80 + (frame_count % 60);
@@ -1693,7 +1693,7 @@ void game_win(void) {
     VBlankIntrWait();
     key_poll();
 
-    pal_bg_mem[0] = RGB15(20, 25, 31);
+    pal_bg_mem[0] = RGB15_C(20, 25, 31);
 
     // Kirby victory dance!
     int bounce_y = 80 + (lu_sin(frame_count * 1024) >> 13) * 2;
