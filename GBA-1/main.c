@@ -5,6 +5,8 @@
 #include <tonc.h>
 #include <string.h>
 
+#define RGB15_C(r,g,b)  ((r) | ((g) << 5) | ((b) << 10))
+
 // ============================================================
 // CONSTANTS
 // ============================================================
@@ -371,7 +373,7 @@ static const u8 enemy_spawns[][3] = {
 // PALETTE DATA
 // ============================================================
 static const u16 sprite_pal[] = {
-    CLR_MAGENTA,        // 0: transparent (magenta key)
+    CLR_MAG,        // 0: transparent (magenta key)
     RGB15(31,20,25),    // 1: Kirby pink
     RGB15(5,5,20),      // 2: Kirby eye (dark blue)
     RGB15(31,10,10),    // 3: Kirby mouth/feet (red)
