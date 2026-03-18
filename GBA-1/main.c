@@ -49,7 +49,7 @@ static Player player;
 // Utility
 // -----------------------------------------------------------------------------
 
-static INLINE int clampi(int v, int lo, int hi)
+INLINE int clampi(int v, int lo, int hi)
 {
     if(v < lo) return lo;
     if(v > hi) return hi;
