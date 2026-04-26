@@ -1,10 +1,11 @@
 // kirby_scroller.c - A Kirby Superstar-inspired 2D side scroller for GBA using TONC
-// Compile with: gcc -o kirby_scroller.elf kirby_scroller.c -I/path/to/tonc/include -lm
-// Then convert to .gba using objcopy
+// Compile with: arm-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs -I/opt/devkitpro/libtonc/include kirby_scroller.c -o kirby_scroller.elf -lm
+// Then convert: arm-eabi-objcopy -O binary kirby_scroller.elf kirby_scroller.gba
 
 #include <tonc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 // ============================================================================
 // Constants and Macros
@@ -72,9 +73,8 @@ typedef struct {
 OBJ_ATTR obj_buffer[128];
 OBJ_AFFINE *obj_aff_buffer = (OBJ_AFFINE*)obj_buffer;
 
-// Sprites
-TILE *tile_mem = (TILE*)MEM_VRAM;
-TILE *tile8_mem = (TILE*)&MEM_VRAM[0x10000];
+// Level map
+MapTile level_map[MAP_WIDTH / TILE_SIZE][MAP_HEIGHT / TILE_SIZE];
 
 // Objects
 GameObject player;
@@ -84,9 +84,6 @@ GameObject collectibles[10];
 int score = 0;
 int lives = 3;
 
-// Level map
-MapTile level_map[MAP_WIDTH / TILE_SIZE][MAP_HEIGHT / TILE_SIZE];
-
 // Camera
 int camera_x = 0;
 int camera_y = 0;
@@ -94,18 +91,29 @@ int camera_y = 0;
 // Input
 int prev_keys = 0;
 
+// Tile indices for sprites
+#define TILE_KIRBY1     0
+#define TILE_KIRBY2     4
+#define TILE_WADDLE1    8
+#define TILE_WADDLE2    12
+#define TILE_STAR       16
+#define TILE_COLLECT    18
+
 // ============================================================================
 // Simple Sprite Graphics (Generated programmatically)
 // ============================================================================
 
-// Create a simple Kirby-like sprite (16x16 pixels)
+// Create a simple Kirby-like sprite (16x16 pixels, 4bpp)
 void draw_kirby_sprite(int tile_start, int frame) {
-    u32 *tile_data = (u32*)&tile8_mem[tile_start];
+    TILE *tiles = (TILE*)tile_mem;
+    u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
+    
+    // Clear tile first
+    memset(tile_data, 0, 32); // 16x16 at 4bpp = 32 bytes per tile
     
     // Simple circular character
     for(y = 0; y < 16; y++) {
-        u32 row = 0;
         for(x = 0; x < 16; x++) {
             int dx = x - 8;
             int dy = y - 8;
@@ -113,39 +121,45 @@ void draw_kirby_sprite(int tile_start, int frame) {
             
             u8 color;
             if(dist < 36) { // Body
-                color = 0xFF; // Pink (index 255)
+                color = 0x0F; // Color index 15 (will map to pink in palette)
             } else if(dist < 49) { // Outline
-                color = 0x01; // Black
+                color = 0x01; // Color index 1 (black)
             } else {
                 color = 0x00; // Transparent
             }
             
             // Pack 2 pixels per byte for 4bpp
-            int shift = (x % 2) * 4;
-            row |= (color & 0xF) << shift;
+            int byte_index = y * 8 + x / 2;
+            if(x % 2 == 0) {
+                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
+            } else {
+                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
+            }
         }
-        tile_data[y] = row;
     }
     
-    // Add eyes based on frame
+    // Add eyes for frame 0
     if(frame == 0) {
-        // Normal eyes
-        tile_data[5] |= 0x00FF0000; // Left eye
-        tile_data[5] |= 0x0000FF00; // Right eye
-    } else {
-        // Blinking/action eyes
-        tile_data[5] |= 0x00AA0000;
-        tile_data[5] |= 0x0000AA00;
+        // Left eye at position (5, 5)
+        int byte_index = 5 * 8 + 5 / 2;
+        tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | 0x01; // Black pixel
+        
+        // Right eye at position (10, 5)
+        byte_index = 5 * 8 + 10 / 2;
+        tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | 0x10; // Black pixel
     }
 }
 
-// Create a simple Waddle Dee sprite
+// Create a simple Waddle Dee sprite (16x16 pixels, 4bpp)
 void draw_waddle_dee_sprite(int tile_start, int frame) {
-    u32 *tile_data = (u32*)&tile8_mem[tile_start];
+    TILE *tiles = (TILE*)tile_mem;
+    u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
     
+    // Clear tile first
+    memset(tile_data, 0, 32);
+    
     for(y = 0; y < 16; y++) {
-        u32 row = 0;
         for(x = 0; x < 16; x++) {
             int dx = x - 8;
             int dy = y - 10;
@@ -153,47 +167,56 @@ void draw_waddle_dee_sprite(int tile_start, int frame) {
             
             u8 color;
             if(dist < 25) { // Body
-                color = 0xDD; // Orange
+                color = 0x0E; // Color index 14 (orange)
             } else if(dist < 36 && y > 8) { // Feet
-                color = 0xBB; // Darker orange
+                color = 0x0D; // Color index 13 (darker orange)
             } else if(dist < 36) { // Outline
                 color = 0x01;
             } else {
                 color = 0x00;
             }
             
-            int shift = (x % 2) * 4;
-            row |= (color & 0xF) << shift;
+            int byte_index = y * 8 + x / 2;
+            if(x % 2 == 0) {
+                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
+            } else {
+                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
+            }
         }
-        tile_data[y] = row;
     }
 }
 
-// Create a simple star sprite
+// Create a simple star sprite (8x8 pixels, 4bpp)
 void draw_star_sprite(int tile_start) {
-    u32 *tile_data = (u32*)&tile8_mem[tile_start];
+    TILE *tiles = (TILE*)tile_mem;
+    u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
     
+    // Clear tile first
+    memset(tile_data, 0, 32);
+    
     for(y = 0; y < 8; y++) {
-        u32 row = 0;
         for(x = 0; x < 8; x++) {
-            int dx = abs(x - 4);
-            int dy = abs(y - 4);
+            int dx = abs(x - 3);
+            int dy = abs(y - 3);
             int dist = dx + dy;
             
             u8 color;
-            if(dist < 4) {
-                color = 0xEE; // Yellow
-            } else if(dist < 5) {
+            if(dist < 3) {
+                color = 0x0C; // Color index 12 (yellow)
+            } else if(dist < 4) {
                 color = 0x01; // Outline
             } else {
                 color = 0x00;
             }
             
-            int shift = (x % 2) * 4;
-            row |= (color & 0xF) << shift;
+            int byte_index = y * 4 + x / 2;
+            if(x % 2 == 0) {
+                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
+            } else {
+                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
+            }
         }
-        tile_data[y] = row;
     }
 }
 
@@ -588,8 +611,15 @@ void update_collectibles() {
 }
 
 void draw_background() {
-    // Clear background to sky blue
-    memset(MEM_VRAM, 0x78, 0x9600); // Mode 3 background
+    // Draw sky gradient background
+    u16 *vram = (u16*)MEM_VRAM;
+    for(int y = 0; y < SCREEN_HEIGHT; y++) {
+        u16 *dst = &vram[y * SCREEN_WIDTH];
+        u16 sky_color = RGB15(10 + y/10, 15 + y/8, 25 + y/6);
+        for(int x = 0; x < SCREEN_WIDTH; x++) {
+            dst[x] = sky_color;
+        }
+    }
     
     // Draw ground tiles
     for(int ty = 0; ty < MAP_HEIGHT / TILE_SIZE; ty++) {
@@ -600,13 +630,17 @@ void draw_background() {
             int screen_y = ty * TILE_SIZE - camera_y;
             
             if(level_map[tx][ty].solid) {
-                // Draw tile as colored rectangle
-                u16 color = level_map[tx][ty].tile_id == 1 ? RGB15(10, 20, 5) : 
-                                                             RGB15(15, 12, 8);
-                for(int y = 0; y < TILE_SIZE && screen_y + y < SCREEN_HEIGHT; y++) {
+                u16 color;
+                if(level_map[tx][ty].tile_id == 1) {
+                    color = RGB15(10, 20, 5); // Green ground
+                } else {
+                    color = RGB15(15, 12, 8); // Brown platform
+                }
+                
+                for(int y = 0; y < TILE_SIZE && (screen_y + y) < SCREEN_HEIGHT; y++) {
                     if(screen_y + y < 0) continue;
-                    u16 *dst = &((u16*)MEM_VRAM)[(screen_y + y) * SCREEN_WIDTH + screen_x];
-                    for(int x = 0; x < TILE_SIZE && screen_x + x < SCREEN_WIDTH; x++) {
+                    u16 *dst = &vram[(screen_y + y) * SCREEN_WIDTH + screen_x];
+                    for(int x = 0; x < TILE_SIZE && (screen_x + x) < SCREEN_WIDTH; x++) {
                         if(screen_x + x >= 0) {
                             dst[x] = color;
                         }
@@ -623,10 +657,12 @@ void draw_sprites() {
     
     // Draw player (Kirby)
     if(player.invincible_timer % 4 < 2) { // Flash when invincible
+        int tile_index = player.floating ? TILE_KIRBY2 : 
+                        (player.anim_frame ? TILE_KIRBY1 : TILE_KIRBY2);
         obj_set_attr(&obj_buffer[obj_id],
             ATTR0_SQUARE | ATTR0_Y((int)(player.y - camera_y)),
             ATTR1_SIZE_16 | ATTR1_X((int)(player.x - camera_x)),
-            ATTR2_PALBANK(0) | (player.floating ? 2 : player.anim_frame));
+            ATTR2_PALBANK(0) | tile_index);
         if(!player.facing_right) {
             obj_buffer[obj_id].attr1 |= ATTR1_HFLIP;
         }
@@ -638,7 +674,7 @@ void draw_sprites() {
         if(!enemies[i].active) continue;
         if(obj_id >= 128) break;
         
-        int tile_offset = 4 + enemies[i].subtype * 4;
+        int tile_offset = (enemies[i].subtype == ENEMY_WADDLE_DEE) ? TILE_WADDLE1 : TILE_WADDLE2;
         obj_set_attr(&obj_buffer[obj_id],
             ATTR0_SQUARE | ATTR0_Y((int)(enemies[i].y - camera_y)),
             ATTR1_SIZE_16 | ATTR1_X((int)(enemies[i].x - camera_x)),
@@ -654,7 +690,7 @@ void draw_sprites() {
         obj_set_attr(&obj_buffer[obj_id],
             ATTR0_SQUARE | ATTR0_Y((int)(stars[i].y - camera_y)),
             ATTR1_SIZE_8 | ATTR1_X((int)(stars[i].x - camera_x)),
-            ATTR2_PALBANK(0) | 12);
+            ATTR2_PALBANK(0) | TILE_STAR);
         obj_id++;
     }
     
@@ -666,7 +702,7 @@ void draw_sprites() {
         obj_set_attr(&obj_buffer[obj_id],
             ATTR0_SQUARE | ATTR0_Y((int)(collectibles[i].y - camera_y)),
             ATTR1_SIZE_8 | ATTR1_X((int)(collectibles[i].x - camera_x)),
-            ATTR2_PALBANK(0) | 13);
+            ATTR2_PALBANK(0) | TILE_COLLECT);
         obj_id++;
     }
     
@@ -675,35 +711,36 @@ void draw_sprites() {
         obj_buffer[i].attr0 = ATTR0_HIDE;
     }
     
-    oam_copy(MEM_OAM, obj_buffer, 128);
+    // Copy to OAM with proper cast
+    oam_copy((OBJ_ATTR*)MEM_OAM, obj_buffer, 128);
 }
 
 void init_palette() {
-    // Set up a simple palette
-    u16 *pal = (u16*)MEM_PALETTE;
+    // Set up object palette (16 colors per palette, 16 palettes available)
+    u16 *pal_obj = (u16*)pal_obj_mem; // TONC provides pal_obj_mem
     
-    // Transparent (color 0)
-    pal[0] = 0;
-    
-    // Basic colors
-    pal[1] = RGB15(0, 0, 0);     // Black
-    pal[2] = RGB15(31, 31, 31);  // White
-    pal[3] = RGB15(31, 0, 0);    // Red
-    pal[4] = RGB15(0, 31, 0);    // Green
-    pal[5] = RGB15(0, 0, 31);    // Blue
-    pal[6] = RGB15(31, 31, 0);   // Yellow
-    pal[7] = RGB15(31, 0, 31);   // Magenta
-    pal[8] = RGB15(0, 31, 31);   // Cyan
-    
-    // Kirby colors
-    pal[0xFF] = RGB15(31, 20, 25); // Pink
-    pal[0xDD] = RGB15(31, 15, 5);  // Orange
-    pal[0xEE] = RGB15(31, 31, 0);  // Yellow
+    // Palette 0 (Sprites)
+    pal_obj[0] = 0;                    // Transparent
+    pal_obj[1] = RGB15(0, 0, 0);      // Black (outline)
+    pal_obj[2] = RGB15(31, 31, 31);   // White
+    pal_obj[3] = RGB15(31, 0, 0);     // Red
+    pal_obj[4] = RGB15(0, 31, 0);     // Green
+    pal_obj[5] = RGB15(0, 0, 31);     // Blue
+    pal_obj[6] = RGB15(31, 31, 0);    // Yellow
+    pal_obj[7] = RGB15(31, 0, 31);    // Magenta
+    pal_obj[8] = RGB15(0, 31, 31);    // Cyan
+    pal_obj[9] = RGB15(16, 16, 16);   // Dark gray
+    pal_obj[10] = RGB15(24, 24, 24);  // Light gray
+    pal_obj[11] = RGB15(20, 10, 5);   // Brown
+    pal_obj[12] = RGB15(31, 31, 0);   // Bright Yellow (stars)
+    pal_obj[13] = RGB15(31, 15, 5);   // Dark Orange
+    pal_obj[14] = RGB15(31, 20, 10);  // Orange (Waddle Dee)
+    pal_obj[15] = RGB15(31, 20, 25);  // Pink (Kirby)
 }
 
 void draw_hud() {
-    // Simple text-based HUD using background tiles
-    tte_init_chr4c(0, BG_CBB(0) | BG_SBB(31), 0xF000, CLR_WHITE, 0, NULL, NULL);
+    // Initialize text engine for HUD
+    tte_init_chr4c(1, BG_CBB(1) | BG_SBB(31), 0xF000, CLR_WHITE, 14, NULL, NULL);
     
     // Position text
     tte_set_pos(8, 8);
@@ -737,30 +774,29 @@ int main() {
     irq_init(NULL);
     irq_enable(II_VBLANK);
     
-    // Set video mode 0 (tiled with objects)
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_OBJ | DCNT_OBJ_1D;
+    // Set video mode 3 (bitmap background) with objects
+    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D;
     
-    // Initialize background control
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_4BPP | BG_REG_32x32;
-    REG_BG1CNT = BG_CBB(1) | BG_SBB(29) | BG_4BPP | BG_REG_32x32;
+    // Initialize background control for bitmap mode
+    //REG_BG2CNT = BG_BMP16_240x160;
     
     // Initialize palette
     init_palette();
     
     // Draw sprites to tile memory
-    draw_kirby_sprite(0, 0);    // Kirby frame 0
-    draw_kirby_sprite(4, 1);    // Kirby frame 1
-    draw_waddle_dee_sprite(8, 0);  // Waddle Dee
-    draw_waddle_dee_sprite(12, 1); // Waddle Dee frame 2
-    draw_star_sprite(16);       // Star
-    draw_star_sprite(18);       // Collectible star
+    draw_kirby_sprite(TILE_KIRBY1, 0);    // Kirby frame 0
+    draw_kirby_sprite(TILE_KIRBY2, 1);    // Kirby frame 1
+    draw_waddle_dee_sprite(TILE_WADDLE1, 0);  // Waddle Dee
+    draw_waddle_dee_sprite(TILE_WADDLE2, 1);  // Waddle Dee frame 2
+    draw_star_sprite(TILE_STAR);           // Star
+    draw_star_sprite(TILE_COLLECT);        // Collectible star
     
     // Initialize game
     init_level();
     init_objects();
     
     // Initialize text engine for HUD
-    tte_init_chr4c(1, BG_CBB(1) | BG_SBB(29), 0, CLR_WHITE, 0, NULL, NULL);
+    tte_init_chr4c(1, BG_CBB(1) | BG_SBB(31), 0xF000, CLR_WHITE, 14, NULL, NULL);
     
     // Game loop
     while(1) {
@@ -778,12 +814,6 @@ int main() {
         draw_background();
         draw_sprites();
         draw_hud();
-        
-        // Scroll background
-        REG_BG0HOFS = camera_x;
-        REG_BG0VOFS = camera_y;
-        REG_BG1HOFS = camera_x / 2; // Parallax scrolling for background
-        REG_BG1VOFS = camera_y / 2;
         
         // Game over check
         if(lives <= 0) {
