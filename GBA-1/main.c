@@ -778,7 +778,7 @@ int main() {
     REG_DISPCNT = DCNT_MODE3 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D;
     
     // Initialize background control for bitmap mode
-    REG_BG2CNT = BG_BMP16_240x160;
+    //REG_BG2CNT = BG_BMP16_240x160;
     
     // Initialize palette
     init_palette();
