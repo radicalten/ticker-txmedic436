@@ -1,5 +1,5 @@
 // kirby_scroller.c - A Kirby Superstar-inspired 2D side scroller for GBA using TONC
-// Compile with: arm-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs kirby_scroller.c -o kirby_scroller.elf
+// Compile with: arm-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs -I/opt/devkitpro/libtonc/include kirby_scroller.c -o kirby_scroller.elf -lm
 // Then convert: arm-eabi-objcopy -O binary kirby_scroller.elf kirby_scroller.gba
 
 #include <tonc.h>
@@ -109,6 +109,9 @@ void draw_kirby_sprite(int tile_start, int frame) {
     u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
     
+    // Clear tile first
+    memset(tile_data, 0, 32); // 16x16 at 4bpp = 32 bytes per tile
+    
     // Simple circular character
     for(y = 0; y < 16; y++) {
         for(x = 0; x < 16; x++) {
@@ -135,27 +138,15 @@ void draw_kirby_sprite(int tile_start, int frame) {
         }
     }
     
-    // Add eyes based on frame
-    // Left eye at position (5, 5)
+    // Add eyes for frame 0
     if(frame == 0) {
-        int eye_x = 5;
-        int eye_y = 5;
-        int byte_index = eye_y * 8 + eye_x / 2;
-        if(eye_x % 2 == 0) {
-            tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | 0x01; // Black pixel
-        } else {
-            tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | 0x10; // Black pixel
-        }
+        // Left eye at position (5, 5)
+        int byte_index = 5 * 8 + 5 / 2;
+        tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | 0x01; // Black pixel
         
         // Right eye at position (10, 5)
-        eye_x = 10;
-        eye_y = 5;
-        byte_index = eye_y * 8 + eye_x / 2;
-        if(eye_x % 2 == 0) {
-            tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | 0x01;
-        } else {
-            tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | 0x10;
-        }
+        byte_index = 5 * 8 + 10 / 2;
+        tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | 0x10; // Black pixel
     }
 }
 
@@ -164,6 +155,9 @@ void draw_waddle_dee_sprite(int tile_start, int frame) {
     TILE *tiles = (TILE*)tile_mem;
     u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
+    
+    // Clear tile first
+    memset(tile_data, 0, 32);
     
     for(y = 0; y < 16; y++) {
         for(x = 0; x < 16; x++) {
@@ -197,6 +191,9 @@ void draw_star_sprite(int tile_start) {
     TILE *tiles = (TILE*)tile_mem;
     u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
+    
+    // Clear tile first
+    memset(tile_data, 0, 32);
     
     for(y = 0; y < 8; y++) {
         for(x = 0; x < 8; x++) {
@@ -615,8 +612,9 @@ void update_collectibles() {
 
 void draw_background() {
     // Draw sky gradient background
+    u16 *vram = (u16*)MEM_VRAM;
     for(int y = 0; y < SCREEN_HEIGHT; y++) {
-        u16 *dst = &((u16*)MEM_VRAM)[y * SCREEN_WIDTH];
+        u16 *dst = &vram[y * SCREEN_WIDTH];
         u16 sky_color = RGB15(10 + y/10, 15 + y/8, 25 + y/6);
         for(int x = 0; x < SCREEN_WIDTH; x++) {
             dst[x] = sky_color;
@@ -641,7 +639,7 @@ void draw_background() {
                 
                 for(int y = 0; y < TILE_SIZE && (screen_y + y) < SCREEN_HEIGHT; y++) {
                     if(screen_y + y < 0) continue;
-                    u16 *dst = &((u16*)MEM_VRAM)[(screen_y + y) * SCREEN_WIDTH + screen_x];
+                    u16 *dst = &vram[(screen_y + y) * SCREEN_WIDTH + screen_x];
                     for(int x = 0; x < TILE_SIZE && (screen_x + x) < SCREEN_WIDTH; x++) {
                         if(screen_x + x >= 0) {
                             dst[x] = color;
@@ -713,12 +711,13 @@ void draw_sprites() {
         obj_buffer[i].attr0 = ATTR0_HIDE;
     }
     
-    oam_copy(MEM_OAM, obj_buffer, 128);
+    // Copy to OAM with proper cast
+    oam_copy((OBJ_ATTR*)MEM_OAM, obj_buffer, 128);
 }
 
 void init_palette() {
     // Set up object palette (16 colors per palette, 16 palettes available)
-    u16 *pal_obj = (u16*)&MEM_PALETTE[0x100]; // Object palette starts at 0x100
+    u16 *pal_obj = (u16*)pal_obj_mem; // TONC provides pal_obj_mem
     
     // Palette 0 (Sprites)
     pal_obj[0] = 0;                    // Transparent
