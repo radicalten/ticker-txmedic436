@@ -1,831 +1,521 @@
-// kirby_scroller.c - A Kirby Superstar-inspired 2D side scroller for GBA using TONC
-// Compile with: arm-eabi-gcc -mthumb -mthumb-interwork -specs=gba.specs -I/opt/devkitpro/libtonc/include kirby_scroller.c -o kirby_scroller.elf -lm
-// Then convert: arm-eabi-objcopy -O binary kirby_scroller.elf kirby_scroller.gba
+// main.c — Minimal 2D side-scroller starter for GBA using Tonc
+// Build with devkitARM + Tonc (libtonc.a)
+//
+// Features:
+// - Mode 0, 1 scrolling background (tilemap)
+// - Simple metatile collision (8x8 or 16x16)
+// - Player physics: gravity, jump, walk, ground detection
+// - Camera follows player with clamping
+// - Basic enemies (patrol) with simple sprite rendering
+// - Single-file, easy to extend
 
 #include <tonc.h>
-#include <stdlib.h>
 #include <string.h>
-#include <math.h>
+#include <stdlib.h>
 
-// ============================================================================
-// Constants and Macros
-// ============================================================================
+// ------------------------------
+// Constants / tuning
+// ------------------------------
+#define SCREEN_W        240
+#define SCREEN_H        160
 
-#define SCREEN_WIDTH    240
-#define SCREEN_HEIGHT   160
-#define MAP_WIDTH       1024  // Scrolling level width
-#define MAP_HEIGHT      256
-#define TILE_SIZE       16
-#define GRAVITY         0.3f
-#define JUMP_FORCE      -4.5f
-#define MOVE_SPEED      1.5f
-#define MAX_FALL_SPEED  6.0f
-#define FLOAT_FORCE     -0.2f  // Kirby's float ability
+// World / tilemap
+#define TILE_W          8
+#define TILE_H          8
+#define MAP_W           64   // tiles wide
+#define MAP_H           32   // tiles high
+#define WORLD_W_PIX     (MAP_W * TILE_W)
+#define WORLD_H_PIX     (MAP_H * TILE_H)
 
-// Object types
-#define OBJ_PLAYER      0
-#define OBJ_ENEMY       1
-#define OBJ_STAR        2  // Star projectile
-#define OBJ_COLLECTIBLE 3
+// Collision: use 16x16 metatiles for simplicity
+#define MT_W            2    // tiles per metatile width
+#define MT_H            2    // tiles per metatile height
+#define C_MAP_W         (MAP_W / MT_W)
+#define C_MAP_H         (MAP_H / MT_H)
 
-// Enemy types
-#define ENEMY_WADDLE_DEE  0
-#define ENEMY_BLADE_KNIGHT 1
+// Physics
+#define GRAV            0x0280  // fixed-point 8.8
+#define MAX_FALL        0x3000
+#define JUMP_FORCE      0x3800
+#define MOVE_ACC        0x0120
+#define MOVE_DEC        0x0100
+#define MOVE_MAX        0x1800
+#define FRICTION        0x0090
 
-// ============================================================================
-// Data Structures
-// ============================================================================
+// Sprite/object limits
+#define MAX_ENEMIES     8
+
+// ------------------------------
+// Types
+// ------------------------------
+typedef struct {
+    int x, y;        // world position (fixed 8.8 optional, but ints fine here)
+    int vx, vy;
+    int w, h;
+    int on_ground;
+    int facing;      // 1 right, -1 left
+    int anim_frame;
+    int anim_timer;
+} Player;
 
 typedef struct {
-    float x, y;          // Position (sub-pixel precision)
-    float vx, vy;        // Velocity
-    int width, height;   // Bounding box
-    int type;            // Object type
-    int subtype;         // Enemy type, etc.
-    bool active;         // Is object active?
-    bool on_ground;      // Is on ground?
-    bool facing_right;   // Facing direction
-    int health;          // Health/hit points
-    int anim_frame;      // Animation frame
-    int anim_timer;      // Animation timer
-    int invincible_timer; // Invincibility frames after hit
-    
-    // Kirby-specific
-    bool floating;       // Is Kirby floating?
-    bool has_star;       // Does Kirby have a star?
-    float float_vy;      // Floating vertical velocity
-    
-    // Enemy-specific
-    int patrol_dir;      // Patrol direction for enemies
-    int patrol_timer;    // Patrol timer
-} GameObject;
-
-typedef struct {
-    int tile_id;         // Tile ID in tileset
-    bool solid;          // Is tile solid?
-} MapTile;
-
-// ============================================================================
-// Global Variables
-// ============================================================================
-
-// Screen block entries for background
-OBJ_ATTR obj_buffer[128];
-OBJ_AFFINE *obj_aff_buffer = (OBJ_AFFINE*)obj_buffer;
-
-// Level map
-MapTile level_map[MAP_WIDTH / TILE_SIZE][MAP_HEIGHT / TILE_SIZE];
-
-// Objects
-GameObject player;
-GameObject enemies[10];
-GameObject stars[5];
-GameObject collectibles[10];
-int score = 0;
-int lives = 3;
-
-// Camera
-int camera_x = 0;
-int camera_y = 0;
-
-// Input
-int prev_keys = 0;
-
-// Tile indices for sprites
-#define TILE_KIRBY1     0
-#define TILE_KIRBY2     4
-#define TILE_WADDLE1    8
-#define TILE_WADDLE2    12
-#define TILE_STAR       16
-#define TILE_COLLECT    18
-
-// ============================================================================
-// Simple Sprite Graphics (Generated programmatically)
-// ============================================================================
-
-// Create a simple Kirby-like sprite (16x16 pixels, 4bpp)
-void draw_kirby_sprite(int tile_start, int frame) {
-    TILE *tiles = (TILE*)tile_mem;
-    u8 *tile_data = (u8*)&tiles[tile_start];
     int x, y;
-    
-    // Clear tile first
-    memset(tile_data, 0, 32); // 16x16 at 4bpp = 32 bytes per tile
-    
-    // Simple circular character
-    for(y = 0; y < 16; y++) {
-        for(x = 0; x < 16; x++) {
-            int dx = x - 8;
-            int dy = y - 8;
-            int dist = dx*dx + dy*dy;
-            
-            u8 color;
-            if(dist < 36) { // Body
-                color = 0x0F; // Color index 15 (will map to pink in palette)
-            } else if(dist < 49) { // Outline
-                color = 0x01; // Color index 1 (black)
-            } else {
-                color = 0x00; // Transparent
-            }
-            
-            // Pack 2 pixels per byte for 4bpp
-            int byte_index = y * 8 + x / 2;
-            if(x % 2 == 0) {
-                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
-            } else {
-                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
-            }
+    int vx, vy;
+    int w, h;
+    int alive;
+    int type;        // 0 = walker
+    int dir;         // -1 left, 1 right
+} Enemy;
+
+// ------------------------------
+// Assets (tiny placeholders — replace with your own)
+// ------------------------------
+
+// --- Background tileset (8x8, 16-color) ---
+// Simple checker/ground tiles to get you running
+static const u32 s_bgTiles[64*8/4] = {
+    // Tile 0: empty
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+    // Tile 1: ground block (solid)
+    0x11111111, 0x12222221, 0x12333321, 0x12344321,
+    0x12344321, 0x12333321, 0x12222221, 0x11111111,
+    // Tile 2: decoration
+    0x00000000, 0x00011000, 0x00122100, 0x01233210,
+    0x01233210, 0x00122100, 0x00011000, 0x00000000,
+};
+static const u16 s_bgPal[16] = {
+    RGB15(0,0,0),      // 0
+    RGB15(12,8,4),     // 1 brown
+    RGB15(24,16,8),    // 2
+    RGB15(20,28,12),   // 3 green
+    RGB15(16,20,28),   // 4 blue
+    RGB15(31,31,31),   // 5 white
+    RGB15(31,20,10),   // 6 orange
+    0,0,0,0,0,0,0,0,0
+};
+
+// --- Tilemap (64x32) using tile indices 0/1/2 ---
+// Make a simple level: ground line + some platforms
+static u16 s_tilemap[MAP_W * MAP_H];
+
+// --- Sprite tiles (16-color, 4bpp) — small player + enemy placeholders ---
+static const u32 s_playerTiles[16*8/4] = {
+    // 8x8 player dot (right-facing)
+    0x00000000, 0x00033000, 0x00333300, 0x03333330,
+    0x03333330, 0x00333300, 0x00033000, 0x00000000,
+};
+static const u32 s_enemyTiles[16*8/4] = {
+    // 8x8 enemy
+    0x00000000, 0x00066000, 0x00666600, 0x06666660,
+    0x06666660, 0x00666600, 0x00066000, 0x00000000,
+};
+static const u16 s_spritePal[16] = {
+    0,
+    RGB15(31,20,20),   // player
+    RGB15(20,31,20),   // enemy
+    0,0,0,0,0,0,0,0,0,0,0,0
+};
+
+// ------------------------------
+// Collision map (metatile-based)
+// ------------------------------
+// 0 = empty, 1 = solid
+static u8 s_cmap[C_MAP_W * C_MAP_H];
+
+// ------------------------------
+// Game state
+// ------------------------------
+static Player s_player;
+static Enemy  s_enemies[MAX_ENEMIES];
+static int    s_camX = 0, s_camY = 0;
+
+// ------------------------------
+// Prototypes
+// ------------------------------
+static void init_level(void);
+static void init_player(void);
+static void init_enemies(void);
+static void update_player(void);
+static void update_enemies(void);
+static void update_camera(void);
+static void draw_player(void);
+static void draw_enemies(void);
+static inline int tile_is_solid(int tx, int ty);
+static inline int metatile_is_solid(int mx, int my);
+static void set_bg(void);
+static void set_sprites(void);
+
+// ------------------------------
+// Helpers: collision queries
+// ------------------------------
+static inline int metatile_is_solid(int mx, int my) {
+    if (mx < 0 || my < 0 || mx >= C_MAP_W || my >= C_MAP_H) return 1; // solid out of bounds
+    return s_cmap[my * C_MAP_W + mx] != 0;
+}
+
+static inline int tile_is_solid(int tx, int ty) {
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return 1;
+    // derive metatile
+    int mx = tx / MT_W;
+    int my = ty / MT_H;
+    return metatile_is_solid(mx, my);
+}
+
+// Axis-aligned rectangle vs world (metatile) collision test helper
+static int rect_vs_solid(int rx, int ry, int rw, int rh) {
+    // test corners + inner points for efficiency (coarse but fine for 8/16)
+    // sample edges
+    int left   = rx / TILE_W;
+    int right  = (rx + rw - 1) / TILE_W;
+    int top    = ry / TILE_H;
+    int bottom = (ry + rh - 1) / TILE_H;
+    for (int ty = top; ty <= bottom; ++ty) {
+        for (int tx = left; tx <= right; ++tx) {
+            if (tile_is_solid(tx, ty)) return 1;
         }
     }
-    
-    // Add eyes for frame 0
-    if(frame == 0) {
-        // Left eye at position (5, 5)
-        int byte_index = 5 * 8 + 5 / 2;
-        tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | 0x01; // Black pixel
-        
-        // Right eye at position (10, 5)
-        byte_index = 5 * 8 + 10 / 2;
-        tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | 0x10; // Black pixel
-    }
+    return 0;
 }
 
-// Create a simple Waddle Dee sprite (16x16 pixels, 4bpp)
-void draw_waddle_dee_sprite(int tile_start, int frame) {
-    TILE *tiles = (TILE*)tile_mem;
-    u8 *tile_data = (u8*)&tiles[tile_start];
-    int x, y;
-    
-    // Clear tile first
-    memset(tile_data, 0, 32);
-    
-    for(y = 0; y < 16; y++) {
-        for(x = 0; x < 16; x++) {
-            int dx = x - 8;
-            int dy = y - 10;
-            int dist = dx*dx + dy*dy;
-            
-            u8 color;
-            if(dist < 25) { // Body
-                color = 0x0E; // Color index 14 (orange)
-            } else if(dist < 36 && y > 8) { // Feet
-                color = 0x0D; // Color index 13 (darker orange)
-            } else if(dist < 36) { // Outline
-                color = 0x01;
-            } else {
-                color = 0x00;
+// ------------------------------
+// Init
+// ------------------------------
+static void init_level(void) {
+    // Fill tilemap with empty
+    memset(s_tilemap, 0, sizeof(s_tilemap));
+
+    // Build a simple level: floor + a few platforms
+    // Floor: bottom rows
+    for (int tx = 0; tx < MAP_W; ++tx) {
+        for (int ty = MAP_H - 4; ty < MAP_H; ++ty) {
+            s_tilemap[ty * MAP_W + tx] = 1; // ground tile
+        }
+    }
+    // Platforms
+    for (int tx = 10; tx < 18; ++tx) {
+        s_tilemap[(MAP_H - 10) * MAP_W + tx] = 1;
+    }
+    for (int tx = 25; tx < 33; ++tx) {
+        s_tilemap[(MAP_H - 14) * MAP_W + tx] = 1;
+    }
+    for (int tx = 40; tx < 48; ++tx) {
+        s_tilemap[(MAP_H - 8)  * MAP_W + tx] = 1;
+    }
+
+    // Decoration dots
+    for (int i = 0; i < 20; ++i) {
+        int tx = 5 + i*2;
+        int ty = MAP_H - 6;
+        if (tx < MAP_W) s_tilemap[ty * MAP_W + tx] = 2;
+    }
+
+    // Build collision map from tilemap (metatile solid if any tile != 0)
+    memset(s_cmap, 0, sizeof(s_cmap));
+    for (int my = 0; my < C_MAP_H; ++my) {
+        for (int mx = 0; mx < C_MAP_W; ++mx) {
+            // check 2x2 tiles
+            int solid = 0;
+            for (int ty = 0; ty < MT_H && !solid; ++ty) {
+                for (int tx = 0; tx < MT_W && !solid; ++tx) {
+                    int t = s_tilemap[(my*MT_H + ty) * MAP_W + (mx*MT_W + tx)];
+                    if (t != 0) solid = 1;
+                }
             }
-            
-            int byte_index = y * 8 + x / 2;
-            if(x % 2 == 0) {
-                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
-            } else {
-                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
-            }
+            s_cmap[my * C_MAP_W + mx] = solid ? 1 : 0;
         }
     }
 }
 
-// Create a simple star sprite (8x8 pixels, 4bpp)
-void draw_star_sprite(int tile_start) {
-    TILE *tiles = (TILE*)tile_mem;
-    u8 *tile_data = (u8*)&tiles[tile_start];
-    int x, y;
-    
-    // Clear tile first
-    memset(tile_data, 0, 32);
-    
-    for(y = 0; y < 8; y++) {
-        for(x = 0; x < 8; x++) {
-            int dx = abs(x - 3);
-            int dy = abs(y - 3);
-            int dist = dx + dy;
-            
-            u8 color;
-            if(dist < 3) {
-                color = 0x0C; // Color index 12 (yellow)
-            } else if(dist < 4) {
-                color = 0x01; // Outline
-            } else {
-                color = 0x00;
-            }
-            
-            int byte_index = y * 4 + x / 2;
-            if(x % 2 == 0) {
-                tile_data[byte_index] = (tile_data[byte_index] & 0xF0) | (color & 0x0F);
-            } else {
-                tile_data[byte_index] = (tile_data[byte_index] & 0x0F) | ((color & 0x0F) << 4);
-            }
-        }
+static void init_player(void) {
+    s_player.x = 32 << 0;  // pixel units (integer coords for simplicity)
+    s_player.y = 32 << 0;
+    s_player.vx = 0; s_player.vy = 0;
+    s_player.w = 12; s_player.h = 12;
+    s_player.on_ground = 0;
+    s_player.facing = 1;
+    s_player.anim_frame = 0; s_player.anim_timer = 0;
+}
+
+static void init_enemies(void) {
+    for (int i = 0; i < MAX_ENEMIES; ++i) {
+        s_enemies[i].alive = 0;
     }
+    // Spawn a couple
+    s_enemies[0] = (Enemy){ .x=160, .y=(MAP_H*8 - 40), .vx=0, .vy=0, .w=10, .h=10, .alive=1, .type=0, .dir=-1 };
+    s_enemies[1] = (Enemy){ .x=300, .y=(MAP_H*8 - 40), .vx=0, .vy=0, .w=10, .h=10, .alive=1, .type=0, .dir=1  };
 }
 
-// ============================================================================
-// Game Functions
-// ============================================================================
+// ------------------------------
+// Video setup
+// ------------------------------
+static void set_bg(void) {
+    // Load tiles + pal
+    memcpy(pal_bg_mem, s_bgPal, sizeof(s_bgPal));
+    memcpy(&tile_mem[0][0], s_bgTiles, sizeof(s_bgTiles));
 
-void init_level() {
-    // Generate a simple level with platforms
-    int tile_x, tile_y;
-    
-    for(tile_y = 0; tile_y < MAP_HEIGHT / TILE_SIZE; tile_y++) {
-        for(tile_x = 0; tile_x < MAP_WIDTH / TILE_SIZE; tile_x++) {
-            level_map[tile_x][tile_y].tile_id = 0;
-            level_map[tile_x][tile_y].solid = false;
-            
-            // Ground
-            if(tile_y >= 14) {
-                level_map[tile_x][tile_y].tile_id = 1;
-                level_map[tile_x][tile_y].solid = true;
-            }
-            
-            // Platforms
-            if(tile_y == 10 && (tile_x % 8) < 4) {
-                level_map[tile_x][tile_y].tile_id = 2;
-                level_map[tile_x][tile_y].solid = true;
-            }
-            
-            if(tile_y == 7 && (tile_x % 12) < 6 && tile_x > 10) {
-                level_map[tile_x][tile_y].tile_id = 2;
-                level_map[tile_x][tile_y].solid = true;
-            }
-        }
-    }
+    // Setup BG0 as tilemap
+    REG_BG0CNT = BG_CBB(0) | BG_SBB(30) | BG_8BPP | BG_REG_64x32;
+    // Fill screenblock 30 with tilemap
+    memcpy(&se_mem[30][0], s_tilemap, sizeof(s_tilemap));
+
+    // Enable BG0 + sprites
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
 }
 
-void init_objects() {
-    // Initialize player (Kirby)
-    memset(&player, 0, sizeof(GameObject));
-    player.x = 80;
-    player.y = 100;
-    player.width = 16;
-    player.height = 16;
-    player.type = OBJ_PLAYER;
-    player.active = true;
-    player.facing_right = true;
-    player.health = 3;
-    
-    // Initialize enemies
-    memset(enemies, 0, sizeof(enemies));
-    
-    // Waddle Dee enemies
-    enemies[0].x = 200;
-    enemies[0].y = 208;
-    enemies[0].vx = -0.5f;
-    enemies[0].width = 16;
-    enemies[0].height = 16;
-    enemies[0].type = OBJ_ENEMY;
-    enemies[0].subtype = ENEMY_WADDLE_DEE;
-    enemies[0].active = true;
-    enemies[0].health = 1;
-    enemies[0].patrol_dir = -1;
-    
-    enemies[1].x = 400;
-    enemies[1].y = 144;
-    enemies[1].vx = -0.5f;
-    enemies[1].width = 16;
-    enemies[1].height = 16;
-    enemies[1].type = OBJ_ENEMY;
-    enemies[1].subtype = ENEMY_WADDLE_DEE;
-    enemies[1].active = true;
-    enemies[1].health = 1;
-    enemies[1].patrol_dir = 1;
-    
-    // Blade Knight
-    enemies[2].x = 600;
-    enemies[2].y = 208;
-    enemies[2].vx = -0.3f;
-    enemies[2].width = 16;
-    enemies[2].height = 20;
-    enemies[2].type = OBJ_ENEMY;
-    enemies[2].subtype = ENEMY_BLADE_KNIGHT;
-    enemies[2].active = true;
-    enemies[2].health = 2;
-    enemies[2].patrol_dir = -1;
-    
-    // Initialize stars
-    memset(stars, 0, sizeof(stars));
-    
-    // Initialize collectibles
-    memset(collectibles, 0, sizeof(collectibles));
-    for(int i = 0; i < 5; i++) {
-        collectibles[i].x = 150 + i * 120;
-        collectibles[i].y = 150;
-        collectibles[i].width = 8;
-        collectibles[i].height = 8;
-        collectibles[i].type = OBJ_COLLECTIBLE;
-        collectibles[i].active = true;
-    }
+static void set_sprites(void) {
+    // Load sprite tiles + pal
+    memcpy(pal_obj_mem, s_spritePal, sizeof(s_spritePal));
+    memcpy(&tile_mem[4][0], s_playerTiles, sizeof(s_playerTiles));
+    memcpy(&tile_mem[4][1], s_enemyTiles,  sizeof(s_enemyTiles)); // next tile
+
+    // Clear OAM
+    oam_init(obj_mem, 128);
 }
 
-bool check_collision(float x1, float y1, int w1, int h1,
-                    float x2, float y2, int w2, int h2) {
-    return (x1 < x2 + w2 && x1 + w1 > x2 &&
-            y1 < y2 + h2 && y1 + h1 > y2);
-}
+// ------------------------------
+// Update
+// ------------------------------
+static void update_player(void) {
+    // Input
+    key_poll();
+    int left  = key_is_down(KEY_LEFT);
+    int right = key_is_down(KEY_RIGHT);
+    int jump  = key_is_down(KEY_A) || key_is_down(KEY_UP);
 
-void handle_player_input() {
-    int keys = key_curr_state();
-    int keys_pressed = keys & ~prev_keys;
-    
-    // Left/Right movement
-    if(key_is_down(KEY_LEFT)) {
-        player.vx = -MOVE_SPEED;
-        player.facing_right = false;
-    } else if(key_is_down(KEY_RIGHT)) {
-        player.vx = MOVE_SPEED;
-        player.facing_right = true;
+    // Horizontal
+    if (left && !right) {
+        s_player.vx -= MOVE_ACC;
+        if (s_player.vx < -MOVE_MAX) s_player.vx = -MOVE_MAX;
+        s_player.facing = -1;
+    } else if (right && !left) {
+        s_player.vx += MOVE_ACC;
+        if (s_player.vx >  MOVE_MAX) s_player.vx =  MOVE_MAX;
+        s_player.facing = 1;
     } else {
-        player.vx *= 0.8f; // Friction
-        if(fabsf(player.vx) < 0.1f) player.vx = 0;
+        // friction
+        if (s_player.vx > 0) {
+            s_player.vx -= FRICTION;
+            if (s_player.vx < 0) s_player.vx = 0;
+        }
+        if (s_player.vx < 0) {
+            s_player.vx += FRICTION;
+            if (s_player.vx > 0) s_player.vx = 0;
+        }
     }
-    
+
     // Jump
-    if(keys_pressed & KEY_A && player.on_ground) {
-        player.vy = JUMP_FORCE;
-        player.on_ground = false;
+    if (jump && s_player.on_ground) {
+        s_player.vy = -JUMP_FORCE;
+        s_player.on_ground = 0;
     }
-    
-    // Float (hold A in air)
-    if(key_is_down(KEY_A) && !player.on_ground && player.vy > 0) {
-        player.floating = true;
-        player.vy += FLOAT_FORCE;
-        if(player.vy < -1.0f) player.vy = -1.0f;
-    } else {
-        player.floating = false;
-    }
-    
-    // Attack (B button)
-    if(keys_pressed & KEY_B && player.has_star) {
-        // Find inactive star slot
-        for(int i = 0; i < 5; i++) {
-            if(!stars[i].active) {
-                stars[i].x = player.x + (player.facing_right ? 16 : -8);
-                stars[i].y = player.y + 4;
-                stars[i].vx = player.facing_right ? 4.0f : -4.0f;
-                stars[i].vy = 0;
-                stars[i].width = 8;
-                stars[i].height = 8;
-                stars[i].type = OBJ_STAR;
-                stars[i].active = true;
-                player.has_star = false;
-                break;
-            }
-        }
-    }
-    
-    // Inhale (R button) - Kirby's signature move
-    if(keys_pressed & KEY_R) {
-        // Check if any enemy is close enough to inhale
-        for(int i = 0; i < 10; i++) {
-            if(enemies[i].active) {
-                float dx = player.x - enemies[i].x;
-                float dy = player.y - enemies[i].y;
-                float dist = sqrtf(dx*dx + dy*dy);
-                
-                if(dist < 30 && player.facing_right == (dx < 0)) {
-                    // Inhale enemy and get star
-                    enemies[i].active = false;
-                    player.has_star = true;
-                    break;
-                }
-            }
-        }
-    }
-    
-    prev_keys = keys;
-}
 
-void update_player() {
-    // Apply gravity
-    if(!player.floating) {
-        player.vy += GRAVITY;
-        if(player.vy > MAX_FALL_SPEED) player.vy = MAX_FALL_SPEED;
+    // Gravity
+    s_player.vy += GRAV;
+    if (s_player.vy > MAX_FALL) s_player.vy = MAX_FALL;
+
+    // Integrate X with collision
+    {
+        int nx = s_player.x + s_player.vx / 256; // approx step
+        // test horizontal
+        if (!rect_vs_solid(nx, s_player.y, s_player.w, s_player.h)) {
+            s_player.x = nx;
+        } else {
+            // wall slide: stop
+            s_player.vx = 0;
+        }
     }
-    
-    // Update position
-    player.x += player.vx;
-    player.y += player.vy;
-    
-    // Check map collisions
-    int left_tile = (int)(player.x / TILE_SIZE);
-    int right_tile = (int)((player.x + player.width - 1) / TILE_SIZE);
-    int top_tile = (int)(player.y / TILE_SIZE);
-    int bottom_tile = (int)((player.y + player.height - 1) / TILE_SIZE);
-    
-    // Boundary check
-    if(left_tile < 0) { player.x = 0; player.vx = 0; }
-    if(right_tile >= MAP_WIDTH / TILE_SIZE) { 
-        player.x = MAP_WIDTH - player.width; 
-        player.vx = 0; 
-    }
-    if(top_tile < 0) { player.y = 0; player.vy = 0; }
-    
-    // Ground collision
-    player.on_ground = false;
-    for(int tx = left_tile; tx <= right_tile; tx++) {
-        if(tx < 0 || tx >= MAP_WIDTH / TILE_SIZE) continue;
-        for(int ty = top_tile; ty <= bottom_tile; ty++) {
-            if(ty < 0 || ty >= MAP_HEIGHT / TILE_SIZE) continue;
-            if(level_map[tx][ty].solid) {
-                // Check collision
-                if(check_collision(player.x, player.y, player.width, player.height,
-                                  tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE)) {
-                    // Determine collision side
-                    float overlap_left = (player.x + player.width) - tx * TILE_SIZE;
-                    float overlap_right = (tx + 1) * TILE_SIZE - player.x;
-                    float overlap_top = (player.y + player.height) - ty * TILE_SIZE;
-                    float overlap_bottom = (ty + 1) * TILE_SIZE - player.y;
-                    
-                    // Find minimum overlap
-                    if(overlap_left < overlap_right && overlap_left < overlap_top && 
-                       overlap_left < overlap_bottom) {
-                        player.x = tx * TILE_SIZE - player.width;
-                        player.vx = 0;
-                    } else if(overlap_right < overlap_left && overlap_right < overlap_top && 
-                             overlap_right < overlap_bottom) {
-                        player.x = (tx + 1) * TILE_SIZE;
-                        player.vx = 0;
-                    } else if(overlap_top < overlap_bottom && overlap_top < overlap_left && 
-                             overlap_top < overlap_right) {
-                        player.y = ty * TILE_SIZE - player.height;
-                        player.vy = 0;
-                        player.on_ground = true;
-                    } else {
-                        player.y = (ty + 1) * TILE_SIZE;
-                        player.vy = 0;
+
+    // Integrate Y with collision
+    {
+        int ny = s_player.y + s_player.vy / 256;
+        if (!rect_vs_solid(s_player.x, ny, s_player.w, s_player.h)) {
+            s_player.y = ny;
+            s_player.on_ground = 0;
+        } else {
+            // landed or hit ceiling
+            if (s_player.vy > 0) {
+                // snap to ground
+                // find floor
+                int ty0 = (s_player.y + s_player.h - 1) / TILE_H;
+                int ty1 = (ny + s_player.h - 1) / TILE_H;
+                for (int ty = ty0; ty <= ty1; ++ty) {
+                    if (tile_is_solid(s_player.x / TILE_W, ty) ||
+                        tile_is_solid((s_player.x + s_player.w - 1) / TILE_W, ty)) {
+                        s_player.y = ty * TILE_H - s_player.h;
+                        break;
                     }
                 }
-            }
-        }
-    }
-    
-    // Update animation
-    player.anim_timer++;
-    if(player.anim_timer > 10) {
-        player.anim_timer = 0;
-        player.anim_frame = !player.anim_frame;
-    }
-    
-    // Invincibility timer
-    if(player.invincible_timer > 0) {
-        player.invincible_timer--;
-    }
-    
-    // Update camera
-    camera_x = player.x - SCREEN_WIDTH / 2;
-    camera_y = player.y - SCREEN_HEIGHT / 2;
-    
-    // Clamp camera
-    if(camera_x < 0) camera_x = 0;
-    if(camera_x > MAP_WIDTH - SCREEN_WIDTH) camera_x = MAP_WIDTH - SCREEN_WIDTH;
-    if(camera_y < 0) camera_y = 0;
-    if(camera_y > MAP_HEIGHT - SCREEN_HEIGHT) camera_y = MAP_HEIGHT - SCREEN_HEIGHT;
-}
-
-void update_enemies() {
-    for(int i = 0; i < 10; i++) {
-        if(!enemies[i].active) continue;
-        
-        // Apply gravity
-        enemies[i].vy += GRAVITY;
-        if(enemies[i].vy > MAX_FALL_SPEED) enemies[i].vy = MAX_FALL_SPEED;
-        
-        // Patrol behavior
-        if(enemies[i].subtype == ENEMY_WADDLE_DEE) {
-            enemies[i].vx = 0.5f * enemies[i].patrol_dir;
-            enemies[i].patrol_timer++;
-            if(enemies[i].patrol_timer > 120) {
-                enemies[i].patrol_timer = 0;
-                enemies[i].patrol_dir *= -1;
-            }
-        } else if(enemies[i].subtype == ENEMY_BLADE_KNIGHT) {
-            // Blade Knight - more aggressive, follows player slightly
-            float dx = player.x - enemies[i].x;
-            if(fabsf(dx) < 100) {
-                enemies[i].vx = (dx > 0 ? 1.0f : -1.0f);
+                s_player.vy = 0;
+                s_player.on_ground = 1;
             } else {
-                enemies[i].vx = 0.3f * enemies[i].patrol_dir;
-            }
-            enemies[i].patrol_timer++;
-            if(enemies[i].patrol_timer > 180) {
-                enemies[i].patrol_timer = 0;
-                enemies[i].patrol_dir *= -1;
+                // hit ceiling
+                s_player.vy = 0;
             }
         }
-        
-        // Update position
-        enemies[i].x += enemies[i].vx;
-        enemies[i].y += enemies[i].vy;
-        
-        // Simple ground collision
-        int tx = (int)(enemies[i].x / TILE_SIZE);
-        int ty = (int)((enemies[i].y + enemies[i].height) / TILE_SIZE);
-        
-        if(ty >= 0 && ty < MAP_HEIGHT / TILE_SIZE && 
-           tx >= 0 && tx < MAP_WIDTH / TILE_SIZE) {
-            if(level_map[tx][ty].solid) {
-                enemies[i].y = ty * TILE_SIZE - enemies[i].height;
-                enemies[i].vy = 0;
-            }
+    }
+
+    // Clamp to world bounds (simple)
+    if (s_player.x < 0) s_player.x = 0;
+    if (s_player.y < 0) s_player.y = 0;
+    if (s_player.x > WORLD_W_PIX - s_player.w) s_player.x = WORLD_W_PIX - s_player.w;
+    if (s_player.y > WORLD_H_PIX - s_player.h) {
+        s_player.y = WORLD_H_PIX - s_player.h;
+        s_player.vy = 0;
+        s_player.on_ground = 1;
+    }
+
+    // Animation (very simple bob)
+    s_player.anim_timer++;
+    if (s_player.anim_timer > 10) {
+        s_player.anim_timer = 0;
+        s_player.anim_frame = 1 - s_player.anim_frame;
+    }
+}
+
+static void update_enemies(void) {
+    for (int i = 0; i < MAX_ENEMIES; ++i) {
+        Enemy *e = &s_enemies[i];
+        if (!e->alive) continue;
+        // simple patrol + gravity
+        e->vy += GRAV;
+        if (e->vy > MAX_FALL) e->vy = MAX_FALL;
+
+        // horizontal patrol
+        int nx = e->x + e->dir * 1; // slow
+        if (!rect_vs_solid(nx, e->y, e->w, e->h)) {
+            e->x = nx;
+        } else {
+            e->dir = -e->dir;
         }
-        
-        // Check collision with player
-        if(check_collision(player.x, player.y, player.width, player.height,
-                          enemies[i].x, enemies[i].y, enemies[i].width, enemies[i].height)) {
-            if(player.invincible_timer == 0) {
-                // Player takes damage if not inhaling
-                if(!key_is_down(KEY_R)) {
-                    player.health--;
-                    player.invincible_timer = 60;
-                    
-                    // Knockback
-                    player.vy = -2.0f;
-                    player.vx = (player.x > enemies[i].x ? 2.0f : -2.0f);
-                    
-                    if(player.health <= 0) {
-                        lives--;
-                        player.health = 3;
-                        player.x = 80;
-                        player.y = 100;
+
+        // vertical
+        int ny = e->y + e->vy / 256;
+        if (!rect_vs_solid(e->x, ny, e->w, e->h)) {
+            e->y = ny;
+        } else {
+            if (e->vy > 0) {
+                // snap
+                int ty0 = (e->y + e->h - 1) / TILE_H;
+                int ty1 = (ny + e->h - 1) / TILE_H;
+                for (int ty = ty0; ty <= ty1; ++ty) {
+                    if (tile_is_solid(e->x / TILE_W, ty) ||
+                        tile_is_solid((e->x + e->w - 1) / TILE_W, ty)) {
+                        e->y = ty * TILE_H - e->h;
+                        break;
                     }
                 }
+                e->vy = 0;
+            } else {
+                e->vy = 0;
             }
         }
-        
-        // Check collision with stars
-        for(int j = 0; j < 5; j++) {
-            if(stars[j].active && check_collision(
-                stars[j].x, stars[j].y, stars[j].width, stars[j].height,
-                enemies[i].x, enemies[i].y, enemies[i].width, enemies[i].height)) {
-                enemies[i].health--;
-                stars[j].active = false;
-                
-                if(enemies[i].health <= 0) {
-                    enemies[i].active = false;
-                    score += 100;
-                }
-            }
-        }
+
+        // bounds
+        if (e->x < 0) { e->x = 0; e->dir = 1; }
+        if (e->x > WORLD_W_PIX - e->w) { e->x = WORLD_W_PIX - e->w; e->dir = -1; }
     }
 }
 
-void update_stars() {
-    for(int i = 0; i < 5; i++) {
-        if(!stars[i].active) continue;
-        
-        stars[i].x += stars[i].vx;
-        stars[i].y += stars[i].vy;
-        
-        // Deactivate if off screen
-        if(stars[i].x < camera_x - 16 || stars[i].x > camera_x + SCREEN_WIDTH + 16 ||
-           stars[i].y < camera_y - 16 || stars[i].y > camera_y + SCREEN_HEIGHT + 16) {
-            stars[i].active = false;
+static void update_camera(void) {
+    // Follow player with margin
+    int targetX = s_player.x + s_player.w/2 - SCREEN_W/2;
+    int targetY = s_player.y + s_player.h/2 - SCREEN_H/2;
+
+    // Smooth-ish follow (optional): lerp
+    s_camX += (targetX - s_camX) / 8;
+    s_camY += (targetY - s_camY) / 8;
+
+    // Clamp
+    if (s_camX < 0) s_camX = 0;
+    if (s_camY < 0) s_camY = 0;
+    if (s_camX > WORLD_W_PIX - SCREEN_W) s_camX = WORLD_W_PIX - SCREEN_W;
+    if (s_camY > WORLD_H_PIX - SCREEN_H) s_camY = WORLD_H_PIX - SCREEN_H;
+
+    // Set scroll
+    REG_BG0HOFS = s_camX;
+    REG_BG0VOFS = s_camY;
+}
+
+// ------------------------------
+// Draw
+// ------------------------------
+static void draw_player(void) {
+    // Find free OAM slot (simple: slot 0)
+    OBJ_ATTR *attr = &obj_mem[0];
+    int px = s_player.x - s_camX;
+    int py = s_player.y - s_camY;
+    // Hide if off-screen (cheap)
+    if (px < -16 || py < -16 || px > SCREEN_W || py > SCREEN_H) {
+        attr->attr0 = ATTR0_HIDE;
+        return;
+    }
+    // attr0: y, shape
+    attr->attr0 = ATTR0_Y(py) | ATTR0_SQUARE;
+    // attr1: x, size, hflip
+    u16 a1 = ATTR1_X(px) | ATTR1_SIZE_8x8;
+    if (s_player.facing < 0) a1 |= ATTR1_HFLIP;
+    attr->attr1 = a1;
+    // attr2: tile, pal
+    attr->attr2 = ATTR2_PALBANK(0) | ATTR2_ID(0);
+}
+
+static void draw_enemies(void) {
+    int slot = 1;
+    for (int i = 0; i < MAX_ENEMIES && slot < 128; ++i) {
+        Enemy *e = &s_enemies[i];
+        if (!e->alive) continue;
+        OBJ_ATTR *attr = &obj_mem[slot++];
+        int px = e->x - s_camX;
+        int py = e->y - s_camY;
+        if (px < -16 || py < -16 || px > SCREEN_W || py > SCREEN_H) {
+            attr->attr0 = ATTR0_HIDE;
+            continue;
         }
-        
-        // Check wall collision
-        int tx = (int)(stars[i].x / TILE_SIZE);
-        int ty = (int)(stars[i].y / TILE_SIZE);
-        if(tx >= 0 && tx < MAP_WIDTH / TILE_SIZE && 
-           ty >= 0 && ty < MAP_HEIGHT / TILE_SIZE) {
-            if(level_map[tx][ty].solid) {
-                stars[i].active = false;
-            }
-        }
+        attr->attr0 = ATTR0_Y(py) | ATTR0_SQUARE;
+        u16 a1 = ATTR1_X(px) | ATTR1_SIZE_8x8;
+        if (e->dir < 0) a1 |= ATTR1_HFLIP;
+        attr->attr1 = a1;
+        attr->attr2 = ATTR2_PALBANK(0) | ATTR2_ID(1);
+    }
+    // Hide remaining
+    for (; slot < 128; ++slot) {
+        obj_mem[slot].attr0 = ATTR0_HIDE;
     }
 }
 
-void update_collectibles() {
-    for(int i = 0; i < 10; i++) {
-        if(!collectibles[i].active) continue;
-        
-        // Check collision with player
-        if(check_collision(player.x, player.y, player.width, player.height,
-                          collectibles[i].x, collectibles[i].y, 
-                          collectibles[i].width, collectibles[i].height)) {
-            collectibles[i].active = false;
-            score += 50;
-            player.has_star = true; // Gain star ability
-        }
-    }
-}
-
-void draw_background() {
-    // Draw sky gradient background
-    u16 *vram = (u16*)MEM_VRAM;
-    for(int y = 0; y < SCREEN_HEIGHT; y++) {
-        u16 *dst = &vram[y * SCREEN_WIDTH];
-        u16 sky_color = RGB15(10 + y/10, 15 + y/8, 25 + y/6);
-        for(int x = 0; x < SCREEN_WIDTH; x++) {
-            dst[x] = sky_color;
-        }
-    }
-    
-    // Draw ground tiles
-    for(int ty = 0; ty < MAP_HEIGHT / TILE_SIZE; ty++) {
-        for(int tx = camera_x / TILE_SIZE; tx < (camera_x + SCREEN_WIDTH) / TILE_SIZE + 1; tx++) {
-            if(tx < 0 || tx >= MAP_WIDTH / TILE_SIZE) continue;
-            
-            int screen_x = tx * TILE_SIZE - camera_x;
-            int screen_y = ty * TILE_SIZE - camera_y;
-            
-            if(level_map[tx][ty].solid) {
-                u16 color;
-                if(level_map[tx][ty].tile_id == 1) {
-                    color = RGB15(10, 20, 5); // Green ground
-                } else {
-                    color = RGB15(15, 12, 8); // Brown platform
-                }
-                
-                for(int y = 0; y < TILE_SIZE && (screen_y + y) < SCREEN_HEIGHT; y++) {
-                    if(screen_y + y < 0) continue;
-                    u16 *dst = &vram[(screen_y + y) * SCREEN_WIDTH + screen_x];
-                    for(int x = 0; x < TILE_SIZE && (screen_x + x) < SCREEN_WIDTH; x++) {
-                        if(screen_x + x >= 0) {
-                            dst[x] = color;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-void draw_sprites() {
-    oam_init(obj_buffer, 128);
-    int obj_id = 0;
-    
-    // Draw player (Kirby)
-    if(player.invincible_timer % 4 < 2) { // Flash when invincible
-        int tile_index = player.floating ? TILE_KIRBY2 : 
-                        (player.anim_frame ? TILE_KIRBY1 : TILE_KIRBY2);
-        obj_set_attr(&obj_buffer[obj_id],
-            ATTR0_SQUARE | ATTR0_Y((int)(player.y - camera_y)),
-            ATTR1_SIZE_16 | ATTR1_X((int)(player.x - camera_x)),
-            ATTR2_PALBANK(0) | tile_index);
-        if(!player.facing_right) {
-            obj_buffer[obj_id].attr1 |= ATTR1_HFLIP;
-        }
-        obj_id++;
-    }
-    
-    // Draw enemies
-    for(int i = 0; i < 10; i++) {
-        if(!enemies[i].active) continue;
-        if(obj_id >= 128) break;
-        
-        int tile_offset = (enemies[i].subtype == ENEMY_WADDLE_DEE) ? TILE_WADDLE1 : TILE_WADDLE2;
-        obj_set_attr(&obj_buffer[obj_id],
-            ATTR0_SQUARE | ATTR0_Y((int)(enemies[i].y - camera_y)),
-            ATTR1_SIZE_16 | ATTR1_X((int)(enemies[i].x - camera_x)),
-            ATTR2_PALBANK(0) | tile_offset);
-        obj_id++;
-    }
-    
-    // Draw stars
-    for(int i = 0; i < 5; i++) {
-        if(!stars[i].active) continue;
-        if(obj_id >= 128) break;
-        
-        obj_set_attr(&obj_buffer[obj_id],
-            ATTR0_SQUARE | ATTR0_Y((int)(stars[i].y - camera_y)),
-            ATTR1_SIZE_8 | ATTR1_X((int)(stars[i].x - camera_x)),
-            ATTR2_PALBANK(0) | TILE_STAR);
-        obj_id++;
-    }
-    
-    // Draw collectibles
-    for(int i = 0; i < 10; i++) {
-        if(!collectibles[i].active) continue;
-        if(obj_id >= 128) break;
-        
-        obj_set_attr(&obj_buffer[obj_id],
-            ATTR0_SQUARE | ATTR0_Y((int)(collectibles[i].y - camera_y)),
-            ATTR1_SIZE_8 | ATTR1_X((int)(collectibles[i].x - camera_x)),
-            ATTR2_PALBANK(0) | TILE_COLLECT);
-        obj_id++;
-    }
-    
-    // Hide remaining sprites
-    for(int i = obj_id; i < 128; i++) {
-        obj_buffer[i].attr0 = ATTR0_HIDE;
-    }
-    
-    // Copy to OAM with proper cast
-    oam_copy((OBJ_ATTR*)MEM_OAM, obj_buffer, 128);
-}
-
-void init_palette() {
-    // Set up object palette (16 colors per palette, 16 palettes available)
-    u16 *pal_obj = (u16*)pal_obj_mem; // TONC provides pal_obj_mem
-    
-    // Palette 0 (Sprites)
-    pal_obj[0] = 0;                    // Transparent
-    pal_obj[1] = RGB15(0, 0, 0);      // Black (outline)
-    pal_obj[2] = RGB15(31, 31, 31);   // White
-    pal_obj[3] = RGB15(31, 0, 0);     // Red
-    pal_obj[4] = RGB15(0, 31, 0);     // Green
-    pal_obj[5] = RGB15(0, 0, 31);     // Blue
-    pal_obj[6] = RGB15(31, 31, 0);    // Yellow
-    pal_obj[7] = RGB15(31, 0, 31);    // Magenta
-    pal_obj[8] = RGB15(0, 31, 31);    // Cyan
-    pal_obj[9] = RGB15(16, 16, 16);   // Dark gray
-    pal_obj[10] = RGB15(24, 24, 24);  // Light gray
-    pal_obj[11] = RGB15(20, 10, 5);   // Brown
-    pal_obj[12] = RGB15(31, 31, 0);   // Bright Yellow (stars)
-    pal_obj[13] = RGB15(31, 15, 5);   // Dark Orange
-    pal_obj[14] = RGB15(31, 20, 10);  // Orange (Waddle Dee)
-    pal_obj[15] = RGB15(31, 20, 25);  // Pink (Kirby)
-}
-
-void draw_hud() {
-    // Initialize text engine for HUD
-    tte_init_chr4c(1, BG_CBB(1) | BG_SBB(31), 0xF000, CLR_WHITE, 14, NULL, NULL);
-    
-    // Position text
-    tte_set_pos(8, 8);
-    tte_write("HP:");
-    tte_set_pos(32, 8);
-    for(int i = 0; i < player.health; i++) {
-        tte_write("#");
-    }
-    
-    tte_set_pos(120, 8);
-    tte_write("Score:");
-    char score_str[10];
-    siprintf(score_str, "%d", score);
-    tte_set_pos(160, 8);
-    tte_write(score_str);
-    
-    tte_set_pos(200, 8);
-    tte_write("Lives:");
-    char lives_str[5];
-    siprintf(lives_str, "%d", lives);
-    tte_set_pos(232, 8);
-    tte_write(lives_str);
-}
-
-// ============================================================================
-// Main Program
-// ============================================================================
-
-int main() {
-    // Initialize GBA hardware
+// ------------------------------
+// Main
+// ------------------------------
+int main(void) {
+    // Init systems
     irq_init(NULL);
     irq_enable(II_VBLANK);
-    
-    // Set video mode 3 (bitmap background) with objects
-    REG_DISPCNT = DCNT_MODE3 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D;
-    
-    // Initialize background control for bitmap mode
-    //REG_BG2CNT = BG_BMP16_240x160;
-    
-    // Initialize palette
-    init_palette();
-    
-    // Draw sprites to tile memory
-    draw_kirby_sprite(TILE_KIRBY1, 0);    // Kirby frame 0
-    draw_kirby_sprite(TILE_KIRBY2, 1);    // Kirby frame 1
-    draw_waddle_dee_sprite(TILE_WADDLE1, 0);  // Waddle Dee
-    draw_waddle_dee_sprite(TILE_WADDLE2, 1);  // Waddle Dee frame 2
-    draw_star_sprite(TILE_STAR);           // Star
-    draw_star_sprite(TILE_COLLECT);        // Collectible star
-    
-    // Initialize game
+
+    // Video + assets
+    set_bg();
+    set_sprites();
+
+    // Game init
     init_level();
-    init_objects();
-    
-    // Initialize text engine for HUD
-    tte_init_chr4c(1, BG_CBB(1) | BG_SBB(31), 0xF000, CLR_WHITE, 14, NULL, NULL);
-    
+    init_player();
+    init_enemies();
+
     // Game loop
-    while(1) {
+    while (1) {
         VBlankIntrWait();
-        key_poll();
-        
-        // Update game state
-        handle_player_input();
+
+        // Update
         update_player();
         update_enemies();
-        update_stars();
-        update_collectibles();
-        
-        // Draw everything
-        draw_background();
-        draw_sprites();
-        draw_hud();
-        
-        // Game over check
-        if(lives <= 0) {
-            // Simple game over - reset
-            lives = 3;
-            score = 0;
-            player.health = 3;
-            player.x = 80;
-            player.y = 100;
-            init_objects();
-        }
+        update_camera();
+
+        // Draw
+        draw_player();
+        draw_enemies();
+
+        // OAM copy
+        oam_copy(oam_mem, obj_mem, 128);
     }
-    
+
     return 0;
 }
