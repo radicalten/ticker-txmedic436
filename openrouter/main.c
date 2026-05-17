@@ -92,18 +92,18 @@ void print_dashboard(const char *json_str) {
     cJSON *stock;
 
     cJSON_ArrayForEach(stock, result) {
-        cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
+        cJSON *symbols = cJSON_GetObjectItemCaseSensitive(stock, "symbols");
         cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
         cJSON *change = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChange");
         cJSON *percent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
 
-        if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
+        if (cJSON_IsString(symbols) && cJSON_IsNumber(price)) {
             // Color coding: Green for positive, Red for negative
             const char *color = (cJSON_IsNumber(change) && change->valuedouble >= 0) ? "\033[32m" : "\033[31m";
             const char *reset = "\033[0m";
 
             printf("%-10s | %-10.2f | %s%-10.2f%s | %s%.2f%%%s\n",
-                   symbol->valuestring,
+                   symbols->valuestring,
                    price->valuedouble,
                    color, change->valuedouble, reset,
                    color, percent->valuedouble, reset);
