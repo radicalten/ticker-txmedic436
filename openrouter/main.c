@@ -18,7 +18,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
 
     char *ptr = realloc(mem->memory, mem->size + realsize + 1);
     if (ptr == NULL) {
-        printf("Not enough memory (realloc returned NULL)\n");
+        fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
         return 0;
     }
 
@@ -40,6 +40,7 @@ void fetch_and_display_stocks(const char *symbols) {
 
     curl_handle = curl_easy_init();
     if (!curl_handle) {
+        fprintf(stderr, "Failed to initialize CURL handle\n");
         free(chunk.memory);
         return;
     }
@@ -52,10 +53,8 @@ void fetch_and_display_stocks(const char *symbols) {
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
     
-    // User-Agent is mandatory for Yahoo Finance
+    // User-Agent to prevent 403 Forbidden errors
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-    // Follow redirects if necessary
-    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
     res = curl_easy_perform(curl_handle);
 
@@ -64,49 +63,41 @@ void fetch_and_display_stocks(const char *symbols) {
     } else {
         cJSON *json = cJSON_Parse(chunk.memory);
         if (json == NULL) {
-            printf("Error parsing JSON: %s\n", cJSON_GetErrorPtr());
+            printf("Error parsing JSON response.\n");
         } else {
-            // CORRECT PATH: quoteResponse -> result (array)
+            // Safely navigate the JSON structure with NULL checks
             cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
-            if (quoteResponse == NULL) {
-                printf("Error: 'quoteResponse' not found in JSON\n");
-            } else {
-                cJSON *resultArray = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
-                
-                if (cJSON_IsArray(resultArray)) {
-                    // Clear terminal screen
-                    printf("\033[H\033[J");
-                    printf("====================================================\n");
-                    printf("%-10s | %-10s | %-10s\n", "SYMBOL", "PRICE", "CHANGE %");
-                    printf("----------------------------------------------------\n");
+            cJSON *quote = quoteResponse ? cJSON_GetObjectItemCaseSensitive(quoteResponse, "quote") : NULL;
+            cJSON *resultArray = quote ? cJSON_GetObjectItemCaseSensitive(quote, "result") : NULL;
 
-                    cJSON *stock = NULL;
-                    cJSON_ArrayForEach(stock, resultArray) {
-                        cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
-                        cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
-                        cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
+            if (resultArray && cJSON_IsArray(resultArray)) {
+                // Clear terminal screen
+                printf("\033[H\033[J");
+                printf("====================================================\n");
+                printf("%-10s | %-10s | %-10s\n", "SYMBOL", "PRICE", "CHANGE %");
+                printf("----------------------------------------------------\n");
 
-                        // Robust checks to ensure data exists before printing
-                        if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
-                            const char *sym_str = symbol->valuestring;
-                            double p_val = price->valuedouble;
-                            double cp_val = (cJSON_IsNumber(changePercent)) ? changePercent->valuedouble : 0.0;
+                cJSON *stock = NULL;
+                cJSON_ArrayForEach(stock, resultArray) {
+                    cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
+                    cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
+                    cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
 
-                            // Color coding: Green for positive, Red for negative
-                            const char *color = (cp_val >= 0) ? "\033[0;32m" : "\033[0;31m";
-                            
-                            printf("%-10s | %-10.2f | %s%+.2f%%\033[0m\n", 
-                                   sym_str, 
-                                   p_val, 
-                                   color,
-                                   cp_val);
-                        }
+                    if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
+                        // Color coding: Green for positive, Red for negative
+                        const char *color = (cJSON_IsNumber(changePercent) && changePercent->valuedouble >= 0) ? "\033[0;32m" : "\033[0;31m";
+                        
+                        printf("%-10s | %-10.2f | %s%+.2f%%\033[0m\n", 
+                               symbol->valuestring, 
+                               price->valuedouble, 
+                               color,
+                               changePercent ? changePercent->valuedouble : 0.0);
                     }
-                    printf("----------------------------------------------------\n");
-                    printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
-                } else {
-                    printf("Error: 'result' array not found.\n");
                 }
+                printf("----------------------------------------------------\n");
+                printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
+            } else {
+                printf("Could not find stock data in the API response.\n");
             }
             cJSON_Delete(json);
         }
@@ -120,7 +111,7 @@ void fetch_and_display_stocks(const char *symbols) {
 int main() {
     const char *my_stocks = "AAPL,MSFT,GOOGL,TSLA,AMZN,NVDA";
 
-    // Global init should only happen once
+    // Global Init called ONCE at start
     curl_global_init(CURL_GLOBAL_ALL);
 
     while (1) {
@@ -128,6 +119,8 @@ int main() {
         sleep(10); 
     }
 
+    // Global Cleanup called ONCE at end (though loop is infinite here)
     curl_global_cleanup();
+
     return 0;
 }
