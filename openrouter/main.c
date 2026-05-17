@@ -43,7 +43,7 @@ void fetch_and_display_stocks(const char *symbol) {
 
     // Construct the URL
     char url[512];
-    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v7/finance/quote?%s", symbol);
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1m&range=1d", symbol);
 
     curl_easy_setopt(curl_handle, CURLOPT_URL, url);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
