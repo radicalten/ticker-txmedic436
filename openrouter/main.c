@@ -1,217 +1,216 @@
+// main.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
 #include <curl/curl.h>
 #include "cJSON.h"
 
-#define INTERVAL_SECONDS 60
-#define NUM_SYMBOLS 3
+#define MAX_SYMBOLS 10
+#define URL_BUFFER_SIZE 1024
+#define RESPONSE_BUFFER_SIZE 8192
 
-// Configuration: Add your desired stock symbols here
-const char *symbols[] = {"AAPL", "MSFT", "GOOGL"};
-
-// Structure to hold the fetched data
 typedef struct {
-    char symbol[10];
+    char symbol[16];
     double price;
-    char status[20];
+    double change;
+    double change_percent;
 } StockData;
 
-// Callback function for libcurl to write data into a string
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+// CURL response buffer
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+// CURL write callback function
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
-    char **pptr = (char **)userp;
-    
-    char *ptr = realloc(*pptr, strlen(*pptr) + realsize + 1);
-    if (ptr == NULL) {
-        return 0; /* out of memory */
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) {
+        fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
+        return 0;
     }
-    
-    *pptr = ptr;
-    memcpy(&((*pptr)[strlen(*pptr)]), contents, realsize);
-    (*pptr)[strlen(*pptr)] = 0;
-    
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+
     return realsize;
 }
 
-/**
- * Fetches the raw JSON string for a given symbol from Yahoo Finance.
- * Returns dynamically allocated string or NULL on failure.
- */
-char *fetch_quote_json(const char *symbol) {
+// Fetch data from Yahoo Finance
+int fetch_stock_data(const char *symbol, StockData *data) {
     CURL *curl_handle;
     CURLcode res;
-    char *buffer = malloc(1); // Start with empty string
-    buffer[0] = '\0';
+    struct MemoryStruct chunk;
+    char url[URL_BUFFER_SIZE];
+    char symbols[256];
+    
+    chunk.memory = malloc(1);
+    chunk.size = 0;
 
-    char url[256];
-    // Using the v8 chart API endpoint
-    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d", symbol);
+    snprintf(symbols, sizeof(symbols), "%s", symbol);
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s", symbols);
 
+    curl_global_init(CURL_GLOBAL_ALL);
     curl_handle = curl_easy_init();
-    
-    if(curl_handle) {
-        struct curl_slist *headers = NULL;
-        
-        // --- CRITICAL: Set User-Agent to mimic a browser ---
-        // Yahoo rejects requests without a valid User-Agent
-        headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        
-        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-        curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_callback);
-        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &buffer);
-        
-        // Perform the request
-        res = curl_easy_perform(curl_handle);
-        
-        // Cleanup
+
+    if (!curl_handle) {
+        free(chunk.memory);
+        return 0;
+    }
+
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
+
+    res = curl_easy_perform(curl_handle);
+    if (res != CURLE_OK) {
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         curl_easy_cleanup(curl_handle);
-        curl_slist_free_all(headers);
-        
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            free(buffer);
-            return NULL;
-        }
+        free(chunk.memory);
+        return 0;
     }
-    return buffer;
+
+    // Parse JSON response
+    cJSON *json = cJSON_Parse(chunk.memory);
+    if (!json) {
+        fprintf(stderr, "Error parsing JSON\n");
+        curl_easy_cleanup(curl_handle);
+        free(chunk.memory);
+        return 0;
+    }
+
+    cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
+    if (!quoteResponse) {
+        fprintf(stderr, "Error: quoteResponse not found\n");
+        cJSON_Delete(json);
+        curl_easy_cleanup(curl_handle);
+        free(chunk.memory);
+        return 0;
+    }
+
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
+    if (!result || !cJSON_IsArray(result) || cJSON_GetArraySize(result) == 0) {
+        fprintf(stderr, "Error: No results found\n");
+        cJSON_Delete(json);
+        curl_easy_cleanup(curl_handle);
+        free(chunk.memory);
+        return 0;
+    }
+
+    cJSON *first_result = cJSON_GetArrayItem(result, 0);
+    if (!first_result) {
+        fprintf(stderr, "Error: Empty result\n");
+        cJSON_Delete(json);
+        curl_easy_cleanup(curl_handle);
+        free(chunk.memory);
+        return 0;
+    }
+
+    // Extract data
+    cJSON *symbol_item = cJSON_GetObjectItemCaseSensitive(first_result, "symbol");
+    cJSON *price_item = cJSON_GetObjectItemCaseSensitive(first_result, "regularMarketPrice");
+    cJSON *change_item = cJSON_GetObjectItemCaseSensitive(first_result, "regularMarketChange");
+    cJSON *change_percent_item = cJSON_GetObjectItemCaseSensitive(first_result, "regularMarketChangePercent");
+
+    if (symbol_item && price_item && change_item && change_percent_item) {
+        strncpy(data->symbol, symbol_item->valuestring, sizeof(data->symbol) - 1);
+        data->symbol[sizeof(data->symbol) - 1] = '\0';
+        data->price = price_item->valuedouble;
+        data->change = change_item->valuedouble;
+        data->change_percent = change_percent_item->valuedouble;
+    } else {
+        fprintf(stderr, "Error: Incomplete stock data\n");
+        cJSON_Delete(json);
+        curl_easy_cleanup(curl_handle);
+        free(chunk.memory);
+        return 0;
+    }
+
+    cJSON_Delete(json);
+    curl_easy_cleanup(curl_handle);
+    free(chunk.memory);
+    return 1;
 }
 
-/**
- * Parses the JSON string to extract the price.
- * Returns 0.0 on failure.
- */
-double parse_price(const char *json_string) {
-    cJSON *root = cJSON_Parse(json_string);
-    if (root == NULL) {
-        const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL) {
-            fprintf(stderr, "JSON Parse Error before: %s\n", error_ptr);
-        }
-        return 0.0;
-    }
-
-    // Navigate the JSON tree: chart -> result[0] -> meta -> regularMarketPrice
-    cJSON *chart = cJSON_GetObjectItem(root, "chart");
-    if (chart == NULL) {
-        cJSON_Delete(root);
-        return 0.0;
-    }
-
-    cJSON *result_array = cJSON_GetObjectItem(chart, "result");
-    if (result_array == NULL || !cJSON_IsArray(result_array)) {
-        // Sometimes the API returns an error object or empty result.
-        // e.g. "{\"chart\":{\"result\":null,...}}"
-        cJSON_Delete(root);
-        return 0.0;
-    }
-
-    cJSON *first_result = cJSON_GetArrayItem(result_array, 0);
-    if (first_result == NULL) {
-        cJSON_Delete(root);
-        return 0.0;
-    }
-
-    cJSON *meta = cJSON_GetObjectItem(first_result, "meta");
-    if (meta == NULL) {
-        cJSON_Delete(root);
-        return 0.0;
-    }
-
-    cJSON *price_item = cJSON_GetObjectItem(meta, "regularMarketPrice");
-    double price = 0.0;
-    if (price_item != NULL && cJSON_IsNumber(price_item)) {
-        price = price_item->valuedouble;
-    }
-
-    cJSON_Delete(root);
-    return price;
+// Display dashboard header
+void display_header() {
+    printf("\033[2J\033[H"); // Clear screen and move cursor to top-left
+    printf("========================================\n");
+    printf("     LIVE STOCK PRICE DASHBOARD        \n");
+    printf("========================================\n");
+    printf("%-10s %12s %12s %12s\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %");
+    printf("----------------------------------------\n");
 }
 
-int main(int argc, char **argv) {
-    StockData stocks[NUM_SYMBOLS];
+// Display stock data
+void display_stock(const StockData *data) {
+    char change_str[32], change_percent_str[32];
     
-    // Initialize cURL global (usually only needed once per program)
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    snprintf(change_str, sizeof(change_str), "%.2f", data->change);
+    snprintf(change_percent_str, sizeof(change_percent_str), "%.2f%%", data->change_percent);
+    
+    // Color coding: green for positive, red for negative
+    if (data->change >= 0) {
+        printf("%-10s %12.2f \033[0;32m%12s\033[0m \033[0;32m%12s\033[0m\n", 
+               data->symbol, data->price, change_str, change_percent_str);
+    } else {
+        printf("%-10s %12.2f \033[0;31m%12s\033[0m \033[0;31m%12s\033[0m\n", 
+               data->symbol, data->price, change_str, change_percent_str);
+    }
+}
 
-    printf("Stock Dashboard Initializing...\n");
-    printf("Press Ctrl+C to exit.\n\n");
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <symbol1> [symbol2] ... [symbolN]\n", argv[0]);
+        printf("Example: %s AAPL MSFT GOOGL\n", argv[0]);
+        return 1;
+    }
+
+    int num_symbols = argc - 1;
+    if (num_symbols > MAX_SYMBOLS) {
+        fprintf(stderr, "Error: Maximum %d symbols allowed\n", MAX_SYMBOLS);
+        return 1;
+    }
+
+    StockData stocks[MAX_SYMBOLS];
+    int valid_stocks = 0;
+
+    // Initialize stock symbols
+    for (int i = 0; i < num_symbols; i++) {
+        strncpy(stocks[i].symbol, argv[i + 1], sizeof(stocks[i].symbol) - 1);
+        stocks[i].symbol[sizeof(stocks[i].symbol) - 1] = '\0';
+    }
+
+    printf("Fetching stock data...\n");
 
     while (1) {
-        // Clear Terminal (ANSI escape code)
-        printf("\033[2J\033[H");
-        printf("+--------------------------------------------------+\n");
-        printf("|           TERMINAL STOCK DASHBOARD                |\n");
-        printf("+--------------------------------------------------+\n");
-        printf("| %-10s | %-15s | %-15s |\n", "SYMBOL", "PRICE (USD)", "STATUS");
-        printf("+--------------------------------------------------+\n");
+        display_header();
+        valid_stocks = 0;
 
-        time_t now = time(NULL);
-        char time_str[26];
-        ctime_r(&now, time_str);
-        time_str[24] = '\0'; // Remove newline
-        printf("| Last Updated: %s                 |\n", time_str);
-        printf("+--------------------------------------------------+\n");
-
-        int error_count = 0;
-
-        for (int i = 0; i < NUM_SYMBOLS; i++) {
-            strcpy(stocks[i].symbol, symbols[i]);
-            
-            // 1. Fetch Data
-            char *json_response = fetch_quote_json(stocks[i].symbol);
-            
-            if (json_response == NULL) {
-                stocks[i].price = 0.0;
-                strcpy(stocks[i].status, "NETWORK ERROR");
-                error_count++;
+        for (int i = 0; i < num_symbols; i++) {
+            if (fetch_stock_data(stocks[i].symbol, &stocks[i])) {
+                display_stock(&stocks[i]);
+                valid_stocks++;
             } else {
-                // 2. Parse Data
-                double price = parse_price(json_response);
-                
-                if (price > 0) {
-                    stocks[i].price = price;
-                    strcpy(stocks[i].status, "OK");
-                } else {
-                    // Check if API returned an error structure
-                    if (strstr(json_response, "\"error\"")) {
-                         strcpy(stocks[i].status, "API ERROR");
-                    } else {
-                         strcpy(stocks[i].status, "PARSE ERROR");
-                    }
-                    stocks[i].price = 0.0;
-                }
-                free(json_response);
+                printf("Failed to fetch data for %s\n", stocks[i].symbol);
             }
-
-            // 3. Display Data
-            char price_str[20];
-            if (stocks[i].price == 0.0) {
-                sprintf(price_str, "N/A");
-            } else {
-                sprintf(price_str, "%.2f", stocks[i].price);
-            }
-
-            printf("| %-10s | %-15s | %-15s |\n", 
-                   stocks[i].symbol, 
-                   price_str, 
-                   stocks[i].status);
         }
 
-        printf("+--------------------------------------------------+\n");
-        
-        if (error_count == NUM_SYMBOLS) {
-            fprintf(stderr, "All fetches failed. Retrying in 10 seconds...\n");
-            //sleep(10);
-        } else {
-            printf("Refreshing in %d seconds...\n", INTERVAL_SECONDS);
-            //sleep(INTERVAL_SECONDS);
+        if (valid_stocks == 0) {
+            printf("No valid stock data retrieved.\n");
+            break;
         }
+
+        printf("\nPress Ctrl+C to exit\n");
+        sleep(5); // Refresh every 5 seconds
     }
 
-    curl_global_cleanup();
     return 0;
 }
