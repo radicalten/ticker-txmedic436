@@ -10,7 +10,12 @@
 // Configuration
 #define REFRESH_INTERVAL 5  // seconds
 #define MAX_STOCKS 16
-#define BUFFER_SIZE 1024 * 1024
+
+// Structure to handle curl response memory
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
 
 // Stock data structure
 typedef struct {
@@ -21,135 +26,73 @@ typedef struct {
     int has_data;
 } StockData;
 
-// Global flag for graceful shutdown
 static volatile int running = 1;
 
-// Signal handler for Ctrl+C
 void signal_handler(int sig) {
-    (void)sig;  // Suppress unused parameter warning
     running = 0;
 }
 
-// URL encode function
-char *url_encode(const char *str) {
-    size_t len = strlen(str);
-    char *encoded = malloc(len * 3 + 1);  // Max: 3 chars per char
-    if (!encoded) return NULL;
-    
-    char *p = encoded;
-    for (size_t i = 0; i < len; i++) {
-        if (strchr("!$'()*,;:@&=+$,/?%#[]", str[i]) && str[i] != ' ') {
-            sprintf(p, "%%%02X", (unsigned char)str[i]);
-            p += 3;
-        } else if (str[i] == ' ') {
-            *p++ = '+';
-        } else {
-            *p++ = str[i];
-        }
-    }
-    *p = '\0';
-    return encoded;
-}
+// CORRECTED: Callback function that actually appends data
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
-// Callback function for libcurl
-size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t total_size = size * nmemb;
-    char **response = (char **)userp;
-    
-    char *temp = realloc(*response, total_size + 1);
-    if (!temp) {
-        fprintf(stderr, "Memory allocation failed in write_callback\n");
-        return 0;
-    }
-    
-    *response = temp;
-    memcpy(*response, contents, total_size);
-    (*response)[total_size] = '\0';
-    
-    return total_size;
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) return 0; // out of memory!
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+
+    return realsize;
 }
 
 // Fetch stock data from Yahoo Finance
-int fetch_stock_data(const char *symbols, char **response) {
+int fetch_stock_data(const char *symbols, struct MemoryStruct *chunk) {
     CURL *curl;
     CURLcode res;
     char url[512];
     
-    // URL encode symbols
-    char *encoded_symbols = url_encode(symbols);
-    if (!encoded_symbols) {
-        fprintf(stderr, "Failed to encode symbols\n");
-        return -1;
-    }
-    
     snprintf(url, sizeof(url), 
-             "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s&lang=en-US&region=US&corsDomain=yahoo.com", 
-             encoded_symbols);
-    
-    free(encoded_symbols);
+             "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s", 
+             symbols);
     
     curl = curl_easy_init();
-    if (!curl) {
-        fprintf(stderr, "Failed to initialize curl\n");
-        return -1;
-    }
+    if (!curl) return -1;
     
-    *response = calloc(1, 1);  // Use calloc for cleaner initialization
-    if (!*response) {
-        curl_easy_cleanup(curl);
-        return -1;
-    }
+    chunk->memory = malloc(1); 
+    chunk->size = 0; 
     
-    // Set options
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)chunk);
+    
+    // Yahoo Finance requires a realistic User-Agent to avoid 403 Forbidden errors
     curl_easy_setopt(curl, CURLOPT_USERAGENT, 
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     
     res = curl_easy_perform(curl);
-    
-    // Check for errors
-    if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        curl_easy_cleanup(curl);
-        free(*response);
-        *response = NULL;
-        return -1;
-    }
-    
-    // Get HTTP response code
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    fprintf(stderr, "HTTP Response Code: %ld\n", http_code);
-    
     curl_easy_cleanup(curl);
-    return 0;
+    
+    return (res == CURLE_OK) ? 0 : -1;
 }
 
-// Parse JSON response
 int parse_stock_data(const char *json_response, StockData *stocks, int max_stocks) {
     cJSON *json = cJSON_Parse(json_response);
-    if (!json) {
-        fprintf(stderr, "Failed to parse JSON\n");
-        return -1;
-    }
+    if (!json) return -1;
     
     cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
     if (!quoteResponse) {
-        fprintf(stderr, "No quoteResponse in JSON\n");
         cJSON_Delete(json);
         return -1;
     }
     
     cJSON *result = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
     if (!result || !cJSON_IsArray(result)) {
-        fprintf(stderr, "No result array in JSON\n");
         cJSON_Delete(json);
         return -1;
     }
@@ -176,17 +119,14 @@ int parse_stock_data(const char *json_response, StockData *stocks, int max_stock
     }
     
     cJSON_Delete(json);
-    fprintf(stderr, "Parsed %d stocks\n", count);
     return count;
 }
 
-// Clear screen (cross-platform)
 void clear_screen() {
     printf("\033[2J\033[H");
     fflush(stdout);
 }
 
-// Display dashboard
 void display_dashboard(StockData *stocks, int count, time_t last_update) {
     clear_screen();
     
@@ -194,18 +134,20 @@ void display_dashboard(StockData *stocks, int count, time_t last_update) {
     printf("╔══════════════════════════════════════════════════════════════════════╗\n");
     printf("║                     📈 LIVE STOCK DASHBOARD 📈                      ║\n");
     printf("╠══════════════════════════════════════════════════════════════════════╣\n");
-    printf("║ %-8s │ %12s │ %10s │ %12s ║\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %");
-    printf("╟─────────┼──────────────┼────────────┼──────────────╢\n");
+    printf("║ %-8s │ %12s │ %10s │ %12s ║\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %%");
+    printf("╟─────────┼──────────────┼────────────┼────────────══╢\n");
     
     for (int i = 0; i < count; i++) {
         if (stocks[i].has_data) {
-            const char *change_color = stocks[i].change >= 0 ? "\033[32m" : "\033[31m";
+            // FIXED: Actually using the color variables in the printf
+            const char *color = stocks[i].change >= 0 ? "\033[32m" : "\033[31m";
+            const char *reset = "\033[0m";
             
-            printf("║ %-8s │ %s%12.2f\033[0m │ %s%10.2f\033[0m │ %11.2f%% ║\n",
+            printf("║ %-8s │ %12.2f │ %s%10.2f%s │ %s%11.2f%%%s ║\n",
                    stocks[i].symbol,
-                   change_color, stocks[i].price,
-                   change_color, stocks[i].change,
-                   stocks[i].change_percent);
+                   stocks[i].price,
+                   color, stocks[i].change, reset,
+                   color, stocks[i].change_percent, reset);
         }
     }
     
@@ -219,82 +161,39 @@ void display_dashboard(StockData *stocks, int count, time_t last_update) {
            REFRESH_INTERVAL, time_str);
 }
 
-// Display error
-void display_error(const char *message) {
-    printf("\033[2K\r\033[31mError: %s\033[0m\n", message);
-    fflush(stdout);
-}
-
 int main(int argc, char *argv[]) {
-    // Allow custom symbols via command line
     const char *symbols = "AAPL,GOOGL,MSFT,AMZN,TSLA,META,NVDA,JPM";
-    if (argc > 1) {
-        symbols = argv[1];
-    }
+    if (argc > 1) symbols = argv[1];
     
-    // Setup signal handler with sigaction for reliability
-    struct sigaction sa;
-    sa.sa_handler = signal_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;  // Restart interrupted system calls
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        perror("sigaction SIGINT");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        perror("sigaction SIGTERM");
-    }
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
     
-    // Initialize libcurl
-    CURLcode curl_res = curl_global_init(CURL_GLOBAL_DEFAULT);
-    if (curl_res != CURLE_OK) {
-        fprintf(stderr, "Failed to initialize libcurl: %s\n", curl_easy_strerror(curl_res));
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        fprintf(stderr, "Failed to initialize libcurl\n");
         return 1;
     }
     
-    printf("Initializing stock dashboard...\n");
-    printf("Tracking: %s\n\n", symbols);
-    
     StockData stocks[MAX_STOCKS];
-    char *response = NULL;
-    time_t last_update = 0;
-    
-    // Initialize stocks array
     memset(stocks, 0, sizeof(stocks));
     
-    // Main loop
     while (running) {
-        // Fetch data
-        if (fetch_stock_data(symbols, &response) == 0) {
-            if (response && strlen(response) > 0) {
-                fprintf(stderr, "Response length: %zu\n", strlen(response));
-                
-                int count = parse_stock_data(response, stocks, MAX_STOCKS);
-                if (count > 0) {
-                    last_update = time(NULL);
-                    display_dashboard(stocks, count, last_update);
-                } else {
-                    display_error("Failed to parse stock data - check JSON response");
-                    fprintf(stderr, "Response preview: %.200s...\n", response);
-                }
+        struct MemoryStruct chunk;
+        if (fetch_stock_data(symbols, &chunk) == 0) {
+            int count = parse_stock_data(chunk.memory, stocks, MAX_STOCKS);
+            if (count > 0) {
+                display_dashboard(stocks, count, time(NULL));
             } else {
-                display_error("Empty response from API");
+                printf("\033[31mError: Failed to parse JSON data\033[0m\n");
             }
-            free(response);
-            response = NULL;
+            free(chunk.memory);
         } else {
-            display_error("Failed to fetch data. Retrying...");
+            printf("\033[31mError: Failed to fetch data from Yahoo Finance\033[0m\n");
         }
         
-        // Wait for next update
-        if (running) {
-            sleep(REFRESH_INTERVAL);
-        }
+        if (running) sleep(REFRESH_INTERVAL);
     }
     
-    // Cleanup
-    if (response) free(response);
     curl_global_cleanup();
-    
-    printf("\n\nDashboard stopped.\n");
+    printf("\nDashboard stopped.\n");
     return 0;
 }
