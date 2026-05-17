@@ -1,3 +1,11 @@
+// This program by gemma4-26b-4a 5-17-26 on openrouter is so close to working, but it doesn't fetch the stocks
+// I think the issue is the sliding attention window mechanism used by the 26b4a model 
+// https://www.youtube.com/watch?v=1jtlc-ffI_8
+// Qwen3.6 Solves a Brutal Reverse Engineering Challenge vs Gemma 4 and Matches Claude Sonnet, Apr 28, 2026
+// @protorikis explains that gemma's sliding window attention architecture leads it to make mistakes because it can't keep the entire context in its attention window
+// other attention mechanisms do not have the same mistakes as sliding attention, and dense models, which do not have MoE active experts also do not make these mistakes
+// in this attempt it seems gemma4-26b4a mixes between the name symbol and symbols. it doesn't keep naming straight. 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
