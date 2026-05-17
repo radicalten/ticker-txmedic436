@@ -30,7 +30,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-void fetch_and_display_stocks(const char *symbols) {
+void fetch_and_display_stocks(const char *symbol) {
     CURL *curl_handle;
     CURLcode res;
     struct MemoryStruct chunk;
