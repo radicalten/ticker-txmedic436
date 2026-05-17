@@ -5,22 +5,19 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
-// Structure to handle dynamic memory for CURL response
+// Structure to handle curl response memory
 struct MemoryStruct {
     char *memory;
     size_t size;
 };
 
-// Callback function for CURL to write data into our memory struct
+// Callback function for curl to write data into our MemoryStruct
 static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
     char *ptr = realloc(mem->memory, mem->size + realsize + 1);
-    if (ptr == NULL) {
-        printf("Not enough memory (realloc returned NULL)\n");
-        return 0;
-    }
+    if (!ptr) return 0; // out of memory
 
     mem->memory = ptr;
     memcpy(&(mem->memory[mem->size]), contents, realsize);
@@ -30,86 +27,85 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-void fetch_and_display_stocks(const char *symbols) {
+double get_stock_price(const char *symbol) {
     CURL *curl_handle;
     CURLcode res;
     struct MemoryStruct chunk;
-
     chunk.memory = malloc(1); 
     chunk.size = 0; 
+
+    double price = -1.0;
+    char url[256];
+    
+    // Yahoo Finance API endpoint for chart data
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1m&range=1d", symbol);
 
     curl_global_init(CURL_GLOBAL_ALL);
     curl_handle = curl_easy_init();
 
-    // Construct the URL
-    char url[512];
-    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s", symbols);
+    if (curl_handle) {
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
 
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-    
-    // IMPORTANT: User-Agent to prevent 403 Forbidden errors
-    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        // IMPORTANT: Yahoo Finance rejects requests without a realistic User-Agent
+        curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
 
-    res = curl_easy_perform(curl_handle);
+        res = curl_easy_perform(curl_handle);
 
-    if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-    } else {
-        // Parse the JSON response
-        cJSON *json = cJSON_Parse(chunk.memory);
-        if (json == NULL) {
-            printf("Error parsing JSON.\n");
-        } else {
-            // Yahoo JSON Structure: quoteResponse -> quote -> result (array)
-            cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
-            cJSON *quote = cJSON_GetObjectItemCaseSensitive(quoteResponse, "quote");
-            cJSON *resultArray = cJSON_GetObjectItemCaseSensitive(quote, "result");
-
-            // Clear terminal screen (ANSI escape code)
-            printf("\033[H\033[J");
-            printf("====================================================\n");
-            printf("%-10s | %-10s | %-10s\n", "SYMBOL", "PRICE", "CHANGE %");
-            printf("----------------------------------------------------\n");
-
-            cJSON *stock = NULL;
-            cJSON_ArrayForEach(stock, resultArray) {
-                cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
-                cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
-                cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
-
-                if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
-                    // Color coding: Green for positive, Red for negative
-                    const char *color = (cJSON_IsNumber(changePercent) && changePercent->valuedouble >= 0) ? "\033[0;32m" : "\033[0;31m";
-                    
-                    printf("%-10s | %-10.2f | %s%+.2f%%\033[0m\n", 
-                           symbol->valuestring, 
-                           price->valuedouble, 
-                           color,
-                           changePercent ? changePercent->valuedouble : 0.0);
+        if (res == CURLE_OK) {
+            // Parse the JSON response
+            cJSON *json = cJSON_Parse(chunk.memory);
+            if (json) {
+                // Path: chart -> result[0] -> meta -> regularMarketPrice
+                cJSON *chart = cJSON_GetObjectItemCaseSensitive(json, "chart");
+                cJSON *result = cJSON_GetObjectItemCaseSensitive(chart, "result");
+                if (cJSON_IsArray(result)) {
+                    cJSON *first_res = cJSON_GetArrayItem(result, 0);
+                    cJSON *meta = cJSON_GetObjectItemCaseSensitive(first_res, "meta");
+                    cJSON *price_obj = cJSON_GetObjectItemCaseSensitive(meta, "regularMarketPrice");
+                    if (cJSON_IsNumber(price_obj)) {
+                        price = price_obj->valuedouble;
+                    }
                 }
+                cJSON_Delete(json);
             }
-            printf("----------------------------------------------------\n");
-            printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
-            
-            cJSON_Delete(json);
         }
+        curl_easy_cleanup(curl_handle);
     }
 
-    // Cleanup
-    curl_easy_cleanup(curl_handle);
     free(chunk.memory);
     curl_global_cleanup();
+    return price;
 }
 
 int main() {
-    // Define the stocks you want to track, comma-separated
-    const char *my_stocks = "AAPL,MSFT,GOOGL,TSLA,AMZN,NVDA";
+    // List of stocks to track
+    const char *symbols[] = {"AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BTC-USD"};
+    int num_symbols = sizeof(symbols) / sizeof(symbols[0]);
 
     while (1) {
-        fetch_and_display_stocks(my_stocks);
-        sleep(10); // Wait 10 seconds before next update
+        // Clear terminal screen (ANSI escape code)
+        printf("\033[H\033[J"); 
+        printf("==========================================\n");
+        printf("   LIVE STOCK DASHBOARD (Yahoo Finance)   \n");
+        printf("==========================================\n");
+        printf("%-12s | %-10s\n", "SYMBOL", "PRICE");
+        printf("------------------------------------------\n");
+
+        for (int i = 0; i < num_symbols; i++) {
+            double price = get_stock_price(symbols[i]);
+            if (price > 0) {
+                printf("%-12s | $%-10.2f\n", symbols[i], price);
+            } else {
+                printf("%-12s | %-10s\n", symbols[i], "Error/N/A");
+            }
+        }
+        
+        printf("------------------------------------------\n");
+        printf("Updating every 10 seconds... (Ctrl+C to quit)\n");
+        
+        sleep(10); 
     }
 
     return 0;
