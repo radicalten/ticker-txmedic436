@@ -18,7 +18,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
 
     char *ptr = realloc(mem->memory, mem->size + realsize + 1);
     if (ptr == NULL) {
-        fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
+        printf("Not enough memory (realloc returned NULL)\n");
         return 0;
     }
 
@@ -38,12 +38,8 @@ void fetch_and_display_stocks(const char *symbols) {
     chunk.memory = malloc(1); 
     chunk.size = 0; 
 
+    curl_global_init(CURL_GLOBAL_ALL);
     curl_handle = curl_easy_init();
-    if (!curl_handle) {
-        fprintf(stderr, "Failed to initialize CURL handle\n");
-        free(chunk.memory);
-        return;
-    }
 
     // Construct the URL
     char url[512];
@@ -53,7 +49,7 @@ void fetch_and_display_stocks(const char *symbols) {
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
     
-    // User-Agent to prevent 403 Forbidden errors
+    // IMPORTANT: User-Agent to prevent 403 Forbidden errors
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
     res = curl_easy_perform(curl_handle);
@@ -61,44 +57,42 @@ void fetch_and_display_stocks(const char *symbols) {
     if (res != CURLE_OK) {
         fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     } else {
+        // Parse the JSON response
         cJSON *json = cJSON_Parse(chunk.memory);
         if (json == NULL) {
-            printf("Error parsing JSON response.\n");
+            printf("Error parsing JSON.\n");
         } else {
-            // Safely navigate the JSON structure with NULL checks
+            // Yahoo JSON Structure: quoteResponse -> quote -> result (array)
             cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
-            cJSON *quote = quoteResponse ? cJSON_GetObjectItemCaseSensitive(quoteResponse, "quote") : NULL;
-            cJSON *resultArray = quote ? cJSON_GetObjectItemCaseSensitive(quote, "result") : NULL;
+            cJSON *quote = cJSON_GetObjectItemCaseSensitive(quoteResponse, "quote");
+            cJSON *resultArray = cJSON_GetObjectItemCaseSensitive(quote, "result");
 
-            if (resultArray && cJSON_IsArray(resultArray)) {
-                // Clear terminal screen
-                printf("\033[H\033[J");
-                printf("====================================================\n");
-                printf("%-10s | %-10s | %-10s\n", "SYMBOL", "PRICE", "CHANGE %");
-                printf("----------------------------------------------------\n");
+            // Clear terminal screen (ANSI escape code)
+            printf("\033[H\033[J");
+            printf("====================================================\n");
+            printf("%-10s | %-10s | %-10s\n", "SYMBOL", "PRICE", "CHANGE %");
+            printf("----------------------------------------------------\n");
 
-                cJSON *stock = NULL;
-                cJSON_ArrayForEach(stock, resultArray) {
-                    cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
-                    cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
-                    cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
+            cJSON *stock = NULL;
+            cJSON_ArrayForEach(stock, resultArray) {
+                cJSON *symbol = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
+                cJSON *price = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
+                cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
 
-                    if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
-                        // Color coding: Green for positive, Red for negative
-                        const char *color = (cJSON_IsNumber(changePercent) && changePercent->valuedouble >= 0) ? "\033[0;32m" : "\033[0;31m";
-                        
-                        printf("%-10s | %-10.2f | %s%+.2f%%\033[0m\n", 
-                               symbol->valuestring, 
-                               price->valuedouble, 
-                               color,
-                               changePercent ? changePercent->valuedouble : 0.0);
-                    }
+                if (cJSON_IsString(symbol) && cJSON_IsNumber(price)) {
+                    // Color coding: Green for positive, Red for negative
+                    const char *color = (cJSON_IsNumber(changePercent) && changePercent->valuedouble >= 0) ? "\033[0;32m" : "\033[0;31m";
+                    
+                    printf("%-10s | %-10.2f | %s%+.2f%%\033[0m\n", 
+                           symbol->valuestring, 
+                           price->valuedouble, 
+                           color,
+                           changePercent ? changePercent->valuedouble : 0.0);
                 }
-                printf("----------------------------------------------------\n");
-                printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
-            } else {
-                printf("Could not find stock data in the API response.\n");
             }
+            printf("----------------------------------------------------\n");
+            printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
+            
             cJSON_Delete(json);
         }
     }
@@ -106,21 +100,17 @@ void fetch_and_display_stocks(const char *symbols) {
     // Cleanup
     curl_easy_cleanup(curl_handle);
     free(chunk.memory);
+    curl_global_cleanup();
 }
 
 int main() {
+    // Define the stocks you want to track, comma-separated
     const char *my_stocks = "AAPL,MSFT,GOOGL,TSLA,AMZN,NVDA";
-
-    // Global Init called ONCE at start
-    curl_global_init(CURL_GLOBAL_ALL);
 
     while (1) {
         fetch_and_display_stocks(my_stocks);
-        sleep(10); 
+        sleep(10); // Wait 10 seconds before next update
     }
-
-    // Global Cleanup called ONCE at end (though loop is infinite here)
-    curl_global_cleanup();
 
     return 0;
 }
