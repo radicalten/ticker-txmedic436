@@ -4,7 +4,7 @@
 #include <curl/curl.h>
 #include <time.h>
 #include <unistd.h>
-#include <cJSON.h>
+#include "cJSON.h"
 
 // Define constants
 #define MAX_SYMBOLS 5
