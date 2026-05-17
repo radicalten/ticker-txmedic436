@@ -1,4 +1,5 @@
 // This program by gemma4-26b-4a 5-17-26 on openrouter is so close to working, but it doesn't fetch the stocks
+// gemma4-26b-4a was released on 4-2-26
 // I think the issue is the sliding attention window mechanism used by the 26b4a model 
 // https://www.youtube.com/watch?v=1jtlc-ffI_8
 // Qwen3.6 Solves a Brutal Reverse Engineering Challenge vs Gemma 4 and Matches Claude Sonnet, Apr 28, 2026
