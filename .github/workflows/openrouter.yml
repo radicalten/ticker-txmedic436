@@ -1,4 +1,4 @@
-name: Openrouter-OSX-14-gpt5-ticker
+name: openrouter-OSX-14-gpt5-ticker
 on:
   push:
     branches:
