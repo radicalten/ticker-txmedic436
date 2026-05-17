@@ -1,165 +1,258 @@
+// main.c
+//
+// Simple terminal-based live stock dashboard using:
+//   - cJSON.c / cJSON.h by Dave Gamble
+//   - Yahoo Finance quote endpoint
+//   - libcurl for HTTPS requests
+//
+// Build:
+//   gcc main.c cJSON.c -o stocks -lcurl
+//
+// Run:
+//   ./stocks AAPL MSFT TSLA NVDA
+//
+// Notes:
+//   - Requires libcurl development package
+//   - Uses a browser-like User-Agent so Yahoo Finance does not reject requests
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>
-#include <signal.h>
 #include <curl/curl.h>
+
 #include "cJSON.h"
 
-/* Configuration */
-#define REFRESH_INTERVAL 5
-#define MAX_SYMBOLS      5
-#define API_URL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,cardano,solana,polkadot&vs_currencies=usd"
-
-/* Data Structures */
-typedef struct {
-    char *data;
-    size_t len;
-} ResponseBuffer;
+#define REFRESH_SECONDS 5
+#define MAX_URL_LEN 2048
 
 typedef struct {
-    char symbol[10];
+    char *memory;
+    size_t size;
+} MemoryBlock;
+
+typedef struct {
+    char symbol[32];
     double price;
-    double prev_price;
-} Stock;
+    double change;
+    double changePercent;
+    char currency[16];
+    char marketState[32];
+} StockQuote;
 
-/* Global State */
-Stock stocks[MAX_SYMBOLS];
-int running = 1;
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+    size_t realsize = size * nmemb;
+    MemoryBlock *mem = (MemoryBlock *)userp;
 
-/* Signal Handler for Clean Exit */
-void signal_handler(int sig) {
-    (void)sig;
-    running = 0;
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr)
+        return 0;
+
+    mem->memory = ptr;
+
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+
+    mem->size += realsize;
+    mem->memory[mem->size] = '\0';
+
+    return realsize;
 }
 
-/* libcurl Write Callback */
-size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t total = size * nmemb;
-    ResponseBuffer *buf = (ResponseBuffer *)userp;
-    char *new_data = realloc(buf->data, buf->len + total + 1);
-    if (!new_data) return 0;
-    buf->data = new_data;
-    memcpy(buf->data + buf->len, contents, total);
-    buf->len += total;
-    buf->data[buf->len] = '\0';
-    return total;
-}
-
-/* Fetch JSON from API */
-char* fetch_json(const char *url) {
+static int http_get(const char *url, MemoryBlock *chunk)
+{
     CURL *curl = curl_easy_init();
-    ResponseBuffer buf = { .data = malloc(1), .len = 0 };
-    buf.data[0] = '\0';
+    if (!curl)
+        return 0;
 
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "cJSON-Dashboard/1.0");
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-        
-        CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl error: %s\n", curl_easy_strerror(res));
-            free(buf.data);
-            buf.data = NULL;
-        }
-        curl_easy_cleanup(curl);
-    }
-    return buf.data;
+    chunk->memory = malloc(1);
+    chunk->size = 0;
+
+    struct curl_slist *headers = NULL;
+
+    headers = curl_slist_append(
+        headers,
+        "User-Agent: Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    );
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)chunk);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long response_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK || response_code != 200)
+        return 0;
+
+    return 1;
 }
 
-/* Parse JSON & Update Stocks */
-void parse_json(const char *json_str) {
-    cJSON *root = cJSON_Parse(json_str);
-    if (!root) {
-        fprintf(stderr, "JSON parse error: %s\n", cJSON_GetErrorPtr());
-        return;
+static int parse_quotes(const char *json, StockQuote *quotes, int maxQuotes)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root)
+        return 0;
+
+    cJSON *quoteResponse = cJSON_GetObjectItem(root, "quoteResponse");
+    cJSON *result = cJSON_GetObjectItem(quoteResponse, "result");
+
+    if (!cJSON_IsArray(result)) {
+        cJSON_Delete(root);
+        return 0;
     }
 
-    /* Mapping: API ID -> Display Symbol */
-    const char *api_ids[]    = {"bitcoin", "ethereum", "cardano", "solana", "polkadot"};
-    const char *display_sym[] = {"BTC", "ETH", "ADA", "SOL", "DOT"};
+    int count = cJSON_GetArraySize(result);
+    if (count > maxQuotes)
+        count = maxQuotes;
 
-    for (int i = 0; i < MAX_SYMBOLS; i++) {
-        cJSON *coin = cJSON_GetObjectItemCaseSensitive(root, api_ids[i]);
-        if (cJSON_IsObject(coin)) {
-            cJSON *usd = cJSON_GetObjectItemCaseSensitive(coin, "usd");
-            if (cJSON_IsNumber(usd)) {
-                stocks[i].prev_price = stocks[i].price;
-                stocks[i].price = usd->valuedouble;
-                strncpy(stocks[i].symbol, display_sym[i], sizeof(stocks[i].symbol) - 1);
-                stocks[i].symbol[sizeof(stocks[i].symbol) - 1] = '\0';
-            }
-        }
+    for (int i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(result, i);
+
+        const char *symbol =
+            cJSON_GetStringValue(cJSON_GetObjectItem(item, "symbol"));
+
+        const char *currency =
+            cJSON_GetStringValue(cJSON_GetObjectItem(item, "currency"));
+
+        const char *marketState =
+            cJSON_GetStringValue(cJSON_GetObjectItem(item, "marketState"));
+
+        cJSON *priceObj =
+            cJSON_GetObjectItem(item, "regularMarketPrice");
+
+        cJSON *changeObj =
+            cJSON_GetObjectItem(item, "regularMarketChange");
+
+        cJSON *changePercentObj =
+            cJSON_GetObjectItem(item, "regularMarketChangePercent");
+
+        snprintf(quotes[i].symbol, sizeof(quotes[i].symbol),
+                 "%s", symbol ? symbol : "N/A");
+
+        snprintf(quotes[i].currency, sizeof(quotes[i].currency),
+                 "%s", currency ? currency : "N/A");
+
+        snprintf(quotes[i].marketState, sizeof(quotes[i].marketState),
+                 "%s", marketState ? marketState : "N/A");
+
+        quotes[i].price =
+            cJSON_IsNumber(priceObj) ? priceObj->valuedouble : 0.0;
+
+        quotes[i].change =
+            cJSON_IsNumber(changeObj) ? changeObj->valuedouble : 0.0;
+
+        quotes[i].changePercent =
+            cJSON_IsNumber(changePercentObj)
+                ? changePercentObj->valuedouble
+                : 0.0;
     }
+
     cJSON_Delete(root);
+    return count;
 }
 
-/* Draw Terminal Dashboard */
-void draw_dashboard(void) {
-    /* Clear screen & move cursor to top-left */
-    printf("\033[2J\033[H");
-    
-    /* Header */
-    printf("\033[1;36m╔══════════════════════════════════════════╗\n");
-    printf("║           LIVE MARKET DASHBOARD            ║\n");
-    printf("╠══════════════════════════════════════════╣\n");
-    printf("║ %-8s %-12s %-10s %-8s ║\n", "Symbol", "Price (USD)", "Change", "Time");
-    printf("╠══════════════════════════════════════════╣\n");
+static void build_url(char *url, size_t size, char **symbols, int count)
+{
+    snprintf(url, size,
+             "https://query1.finance.yahoo.com/v7/finance/quote?symbols=");
 
-    /* Time */
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    char time_str[20];
-    strftime(time_str, sizeof(time_str), "%H:%M:%S", t);
+    for (int i = 0; i < count; i++) {
+        strncat(url, symbols[i], size - strlen(url) - 1);
 
-    /* Rows */
-    for (int i = 0; i < MAX_SYMBOLS; i++) {
-        if (stocks[i].symbol[0] == '\0') continue;
+        if (i != count - 1)
+            strncat(url, ",", size - strlen(url) - 1);
+    }
+}
 
-        double change = stocks[i].price - stocks[i].prev_price;
-        double pct = (stocks[i].prev_price > 0.0) ? (change / stocks[i].prev_price) * 100.0 : 0.0;
-        
-        const char *color = (change >= 0.0) ? "\033[32m" : "\033[31m";
-        const char *arrow = (change >= 0.0) ? "▲" : "▼";
+static void clear_screen(void)
+{
+    printf("\033[2J");
+    printf("\033[H");
+}
 
-        printf("║ %-8s $%-11.2f %s%s%.2f%%\033[0m %-10s ║\n",
-               stocks[i].symbol, stocks[i].price, color, arrow, pct, time_str);
+static void print_dashboard(StockQuote *quotes, int count)
+{
+    clear_screen();
+
+    printf("==============================================\n");
+    printf("      Yahoo Finance Live Stock Dashboard\n");
+    printf("==============================================\n\n");
+
+    printf("%-10s %-12s %-12s %-12s %-10s\n",
+           "SYMBOL", "PRICE", "CHANGE", "% CHANGE", "STATE");
+
+    printf("--------------------------------------------------------------\n");
+
+    for (int i = 0; i < count; i++) {
+
+        const char *color =
+            quotes[i].change >= 0 ? "\033[32m" : "\033[31m";
+
+        printf("%-10s ", quotes[i].symbol);
+
+        printf("%-12.2f ", quotes[i].price);
+
+        printf("%s%-12.2f %-12.2f\033[0m ",
+               color,
+               quotes[i].change,
+               quotes[i].changePercent);
+
+        printf("%-10s\n", quotes[i].marketState);
     }
 
-    /* Footer */
-    printf("╠══════════════════════════════════════════╣\n");
-    printf("║ Press Ctrl+C to exit                     ║\n");
-    printf("╚══════════════════════════════════════════╝\033[0m\n");
+    printf("\nRefreshing every %d seconds...\n", REFRESH_SECONDS);
 }
 
-int main(void) {
-    signal(SIGINT, signal_handler);
+int main(int argc, char *argv[])
+{
+    if (argc < 2) {
+        printf("Usage: %s SYMBOL [SYMBOL...]\n", argv[0]);
+        printf("Example: %s AAPL MSFT TSLA\n", argv[0]);
+        return 1;
+    }
+
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    /* Initialize stock array */
-    memset(stocks, 0, sizeof(stocks));
+    char url[MAX_URL_LEN];
 
-    printf("Starting dashboard... Press Ctrl+C to exit.\n");
-    sleep(1);
+    build_url(url, sizeof(url), &argv[1], argc - 1);
 
-    while (running) {
-        char *json = fetch_json(API_URL);
-        if (json && strlen(json) > 0) {
-            parse_json(json);
-            draw_dashboard();
-        } else {
-            printf("\033[2J\033[H⚠️  Failed to fetch market data. Retrying in %ds...\n", REFRESH_INTERVAL);
+    while (1) {
+
+        MemoryBlock response;
+
+        if (!http_get(url, &response)) {
+            fprintf(stderr, "Failed to fetch stock data.\n");
+            sleep(REFRESH_SECONDS);
+            continue;
         }
-        free(json);
-        sleep(REFRESH_INTERVAL);
+
+        StockQuote quotes[128];
+
+        int count = parse_quotes(response.memory, quotes, 128);
+
+        if (count > 0)
+            print_dashboard(quotes, count);
+        else
+            fprintf(stderr, "Failed to parse JSON.\n");
+
+        free(response.memory);
+
+        sleep(REFRESH_SECONDS);
     }
 
     curl_global_cleanup();
-    printf("\n✅ Dashboard exited cleanly.\n");
+
     return 0;
 }
