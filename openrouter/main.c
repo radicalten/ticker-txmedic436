@@ -1,4 +1,3 @@
-// main.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,88 +5,112 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
-// Function to handle curl response data
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    ((char**)userp)[0] = realloc(*(char**)userp, size * nmemb + 1);
-    memcpy(*(char**)userp + size * nmemb, contents, size * nmemb);
-    (*(char**)userp)[size * nmemb] = '\0';
-    return size * nmemb;
+// Structure to hold the HTTP response data
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+// Callback function for curl to write the received data into our memory struct
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) return 0; // out of memory
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+
+    return realsize;
+}
+
+// Function to fetch the current price for a given ticker
+double get_stock_price(const char *ticker) {
+    CURL *curl_handle;
+    CURLcode res;
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1); 
+    chunk.size = 0; 
+
+    double price = -1.0;
+    char url[256];
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/chart/%s", ticker);
+
+    curl_handle = curl_easy_init();
+    if (curl_handle) {
+        // Set URL
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+
+        // IMPORTANT: User-Agent is required to avoid 403 Forbidden errors
+        curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+
+        // Set callback to handle the response data
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+
+        // Perform the request
+        res = curl_easy_perform(curl_handle);
+
+        if (res == CURLE_OK) {
+            // Parse JSON
+            cJSON *json = cJSON_Parse(chunk.memory);
+            if (json) {
+                // Path: chart -> result[0] -> meta -> regularMarketPrice
+                cJSON *chart = cJSON_GetObjectItemCaseSensitive(json, "chart");
+                cJSON *result = cJSON_GetObjectItemCaseSensitive(chart, "result");
+                if (cJSON_IsArray(result)) {
+                    cJSON *first_res = cJSON_GetArrayItem(result, 0);
+                    cJSON *meta = cJSON_GetObjectItemCaseSensitive(first_res, "meta");
+                    cJSON *price_obj = cJSON_GetObjectItemCaseSensitive(meta, "regularMarketPrice");
+                    if (cJSON_IsNumber(price_obj)) {
+                        price = price_obj->valuedouble;
+                    }
+                }
+                cJSON_Delete(json);
+            }
+        }
+        curl_easy_cleanup(curl_handle);
+    }
+
+    free(chunk.memory);
+    return price;
 }
 
 int main() {
-    CURL *curl;
-    CURLcode res;
-    char *response = NULL;
-    size_t response_len = 0;
-    cJSON *root;
+    // List of stocks to track
+    const char *tickers[] = {"AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BTC-USD"};
+    int num_tickers = sizeof(tickers) / sizeof(tickers[0]);
 
-    // Initialize cURL
-    curl = curl_easy_init();
-    if (!curl) {
-        fprintf(stderr, "Failed to initialize cURL\n");
-        return 1;
-    }
+    curl_global_init(CURL_GLOBAL_ALL);
 
-    // Set URL with stock ticker (e.g., AAPL)
-    const char *ticker = "AAPL";
-    char url[256];
-    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/quoteSummary?symbol=%s", ticker);
+    while (1) {
+        // Clear the terminal screen
+        printf("\033[H\033[J"); 
+        printf("==========================================\n");
+        printf("   LIVE STOCK DASHBOARD (Yahoo Finance)   \n");
+        printf("==========================================\n");
+        printf("%-12s | %-10s\n", "TICKER", "PRICE");
+        printf("------------------------------------------\n");
 
-    // Set custom user-agent
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-
-    // Configure cURL
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-    // Perform request
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        goto cleanup;
-    }
-
-    // Parse JSON
-    root = cJSON_Parse(response);
-    if (!root) {
-        fprintf(stderr, "Failed to parse JSON: %s\n", cJSON_GetErrorPtr());
-        goto cleanup;
-    }
-
-    // Extract price (adjust based on actual JSON structure)
-    cJSON *price = cJSON_GetObjectItemCaseSensitive(root, "quoteSummary");
-    if (price && cJSON_IsObject(price)) {
-        price = cJSON_GetObjectItemCaseSensitive(price, "result");
-        if (price && cJSON_IsArray(price) && price->valueint > 0) {
-            price = cJSON_GetArrayItem(price, 0);
-            if (price && cJSON_IsObject(price)) {
-                cJSON *regularPrice = cJSON_GetObjectItemCaseSensitive(price, "price");
-                if (regularPrice && cJSON_IsObject(regularPrice)) {
-                    cJSON *regularMarketPrice = cJSON_GetObjectItemCaseSensitive(regularPrice, "regularMarketPrice");
-                    if (regularMarketPrice && cJSON_IsNumber(regularMarketPrice)) {
-                        printf("\033[2J\033[1;1H"); // Clear screen and move to top-left
-                        printf("Live Stock Price (AAPL): $%.2f\n", regularMarketPrice->valuedouble);
-                    }
-                }
+        for (int i = 0; i < num_tickers; i++) {
+            double price = get_stock_price(tickers[i]);
+            if (price > 0) {
+                printf("%-12s | $%.2f\n", tickers[i], price);
+            } else {
+                printf("%-12s | Error\n", tickers[i]);
             }
         }
+
+        printf("------------------------------------------\n");
+        printf("Refreshing every 10 seconds... (Ctrl+C to quit)\n");
+        
+        fflush(stdout);
+        sleep(10); 
     }
 
-cleanup:
-    // Cleanup
-    cJSON_Delete(root);
-    free(response);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    // Live update loop
-    while (1) {
-        sleep(5); // Update every 5 seconds
-        // Repeat the above steps here (simplified for brevity)
-    }
-
+    curl_global_cleanup();
     return 0;
 }
