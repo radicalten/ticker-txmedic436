@@ -1,161 +1,140 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <time.h>
 #include <curl/curl.h>
 #include "cJSON.h"
 
-#define MAX_SYMBOLS 10
-#define MAX_URL_LEN 256
+/* -------------------------------------------------------------------------- */
+/* Helper: write callback for libcurl – appends received data to a buffer      */
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct {
+        char *data;
+        size_t size;
+    } *structp = (struct {
+        char *data;
+        size_t size;
+    } *)userp;
 
-// Structure to hold stock data
-typedef struct {
-    char symbol[16];
-    double price;
-    double change;
-    double change_percent;
-} StockData;
-
-// Callback for libcurl to write response into a buffer
-size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t total_size = size * nmemb;
-    char **response_ptr = (char **)userp;
-
-    *response_ptr = realloc(*response_ptr, strlen(*response_ptr) + total_size + 1);
-    if (*response_ptr == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
+    char *ptr = realloc(structp->data, structp->size + realsize + 1);
+    if (!ptr) {
+        fprintf(stderr, "realloc() failed\n");
         return 0;
     }
-
-    strncat(*response_ptr, contents, total_size);
-    return total_size;
+    structp->data = ptr;
+    memcpy(&(structp->data[structp->size]), contents, realsize);
+    structp->size += realsize;
+    structp->data[structp->size] = '\0';
+    return realsize;
 }
 
-// Fetch stock data from Yahoo Finance
-int fetch_stock_data(const char *symbol, StockData *stock) {
+/* -------------------------------------------------------------------------- */
+/* Fetch the current price for a given symbol using Yahoo Finance JSON API      */
+static double fetch_stock_price(const char *symbol) {
     CURL *curl;
     CURLcode res;
-    char url[MAX_URL_LEN];
-    char *response = malloc(1);
-    response[0] = '\0';
+    double price = -1.0;
 
-    // Construct URL
-    snprintf(url, MAX_URL_LEN, "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d", symbol);
+    /* Build URL */
+    char url[256];
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s", symbol);
 
     curl = curl_easy_init();
     if (!curl) {
-        free(response);
-        return -1;
+        fprintf(stderr, "curl_easy_init() failed\n");
+        return price;
     }
 
-    // Set headers to mimic a browser
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    headers = curl_slist_append(headers, "Accept: application/json");
+    struct {
+        char *data;
+        size_t size;
+    } chunk = { .data = malloc(1), .size = 0 };
 
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (compatible; LiveDashboard/1.0)");
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
     res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
     if (res != CURLE_OK) {
         fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        free(response);
-        return -1;
+        free(chunk.data);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return price;
     }
 
-    // Parse JSON
-    cJSON *json = cJSON_Parse(response);
-    free(response);
-    if (!json) {
-        fprintf(stderr, "Error parsing JSON for %s\n", symbol);
-        return -1;
+    /* Parse JSON */
+    cJSON *root = cJSON_Parse(chunk.data);
+    if (!root) {
+        fprintf(stderr, "JSON parse error\n");
+        free(chunk.data);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return price;
     }
 
-    cJSON *chart = cJSON_GetObjectItem(json, "chart");
-    if (!chart) {
-        cJSON_Delete(json);
-        return -1;
-    }
-
-    cJSON *result = cJSON_GetObjectItem(chart, "result");
-    if (!result || !cJSON_IsArray(result) || cJSON_GetArraySize(result) == 0) {
-        cJSON_Delete(json);
-        return -1;
-    }
-
-    cJSON *first_result = cJSON_GetArrayItem(result, 0);
-    cJSON *meta = cJSON_GetObjectItem(first_result, "meta");
-    if (!meta) {
-        cJSON_Delete(json);
-        return -1;
-    }
-
-    cJSON *regularMarketPrice = cJSON_GetObjectItem(meta, "regularMarketPrice");
-    cJSON *chartPreviousClose = cJSON_GetObjectItem(meta, "chartPreviousClose");
-
-    if (!regularMarketPrice || !chartPreviousClose) {
-        cJSON_Delete(json);
-        return -1;
-    }
-
-    double price = regularMarketPrice->valuedouble;
-    double prev_close = chartPreviousClose->valuedouble;
-    double change = price - prev_close;
-    double change_percent = (prev_close != 0) ? (change / prev_close) * 100.0 : 0.0;
-
-    strncpy(stock->symbol, symbol, sizeof(stock->symbol));
-    stock->price = price;
-    stock->change = change;
-    stock->change_percent = change_percent;
-
-    cJSON_Delete(json);
-    return 0;
-}
-
-// Print dashboard
-void print_dashboard(StockData *stocks, int count) {
-    printf("\n=== Live Stock Dashboard ===\n");
-    printf("%-8s %10s %10s %10s\n", "Symbol", "Price", "Change", "% Change");
-    printf("------------------------------------\n");
-
-    for (int i = 0; i < count; i++) {
-        printf("%-8s %10.2f %+10.2f %+10.2f%%\n",
-               stocks[i].symbol,
-               stocks[i].price,
-               stocks[i].change,
-               stocks[i].change_percent);
-    }
-    printf("====================================\n\n");
-}
-
-int main() {
-    // Define stock symbols to track
-    const char *symbols[] = {"AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"};
-    int num_symbols = sizeof(symbols) / sizeof(symbols[0]);
-    StockData stocks[MAX_SYMBOLS];
-
-    // Initialize cURL globally
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-
-    // Fetch data for each symbol
-    for (int i = 0; i < num_symbols; i++) {
-        if (fetch_stock_data(symbols[i], &stocks[i]) != 0) {
-            fprintf(stderr, "Failed to fetch data for %s\n", symbols[i]);
-            strncpy(stocks[i].symbol, symbols[i], sizeof(stocks[i].symbol));
-            stocks[i].price = 0;
-            stocks[i].change = 0;
-            stocks[i].change_percent = 0;
+    cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(root, "quoteResponse");
+    if (cJSON_IsObject(quoteResponse)) {
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
+        if (cJSON_IsArray(result) && cJSON_GetArraySize(result) > 0) {
+            cJSON *sym = cJSON_GetArrayItem(result, 0);
+            if (cJSON_IsObject(sym) && cJSON_HasObjectItem(sym, "regularMarketPrice")) {
+                cJSON *priceItem = cJSON_GetObjectItem(sym, "regularMarketPrice");
+                if (cJSON_IsNumber(priceItem)) {
+                    price = priceItem->valuedouble;
+                }
+            }
         }
     }
 
-    // Print dashboard
-    print_dashboard(stocks, num_symbols);
+    cJSON_Delete(root);
+    free(chunk.data);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
 
-    // Cleanup
-    curl_global_cleanup();
+    return price;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Simple pretty‑print of the price with a timestamp                           */
+static void print_price(const char *symbol, double price) {
+    time_t now = time(NULL);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    char timestr[64];
+    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", &tm_now);
+
+    printf("\r%s: $%.2f (as of %s) ", symbol, price, timestr);
+    fflush(stdout);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Main program – loop over a list of symbols and refresh the display         */
+int main(void) {
+    /* Example list – you can modify or read from stdin / args */
+    const char *symbols[] = { "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN" };
+    const size_t num_symbols = sizeof(symbols) / sizeof(symbols[0]);
+
+    printf("Live Stock Dashboard – press Ctrl‑C to exit\n");
+    for (;;) {
+        for (size_t i = 0; i < num_symbols; ++i) {
+            double price = fetch_stock_price(symbols[i]);
+            if (price >= 0.0) {
+                print_price(symbols[i], price);
+            } else {
+                printf("\r%s: error fetching price ", symbols[i]);
+            }
+        }
+        printf("\n");
+        fflush(stdout);
+        sleep(30);   // refresh interval (seconds)
+    }
+
     return 0;
 }
