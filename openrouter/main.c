@@ -1,8 +1,3 @@
-// lagunaxs2-stock 5-16-26 openrouter using prompt:
-// Prompt version 4: 9-28-25 v6 (fixed)
-// Can you create a main.c terminal-based program which utilizes DaveGamble's JSON parser cJSON.c, cJSON.h, and https://query1.finance.yahoo.com to create a simple live dashboard of stock prices? Create a user-agent so that the query to yahoo finance is not rejected.
-// laguna xs.2 is 33b-3a model by poolside ai released 4-28-26
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +10,7 @@
 // Configuration
 #define REFRESH_INTERVAL 5  // seconds
 #define MAX_STOCKS 16
-#define BUFFER_SIZE (1024 * 1024)
+#define BUFFER_SIZE 1024 * 1024
 
 // Stock data structure
 typedef struct {
@@ -26,200 +21,162 @@ typedef struct {
     int has_data;
 } StockData;
 
-// Memory buffer for curl response
-typedef struct {
-    char *data;
-    size_t size;
-} MemoryBuffer;
-
 // Global flag for graceful shutdown
 static volatile int running = 1;
 
-// Global cookie for Yahoo Finance session
-static char *yahoo_cookie = NULL;
-
 // Signal handler for Ctrl+C
 void signal_handler(int sig) {
-    (void)sig;
+    (void)sig;  // Suppress unused parameter warning
     running = 0;
 }
 
-// FIX #1: Proper write callback that APPENDS data instead of overwriting
+// URL encode function
+char *url_encode(const char *str) {
+    size_t len = strlen(str);
+    char *encoded = malloc(len * 3 + 1);  // Max: 3 chars per char
+    if (!encoded) return NULL;
+    
+    char *p = encoded;
+    for (size_t i = 0; i < len; i++) {
+        if (strchr("!$'()*,;:@&=+$,/?%#[]", str[i]) && str[i] != ' ') {
+            sprintf(p, "%%%02X", (unsigned char)str[i]);
+            p += 3;
+        } else if (str[i] == ' ') {
+            *p++ = '+';
+        } else {
+            *p++ = str[i];
+        }
+    }
+    *p = '\0';
+    return encoded;
+}
+
+// Callback function for libcurl
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t total_size = size * nmemb;
-    MemoryBuffer *mem = (MemoryBuffer *)userp;
-
-    char *temp = realloc(mem->data, mem->size + total_size + 1);
-    if (!temp) return 0;
-
-    mem->data = temp;
-    memcpy(&(mem->data[mem->size]), contents, total_size);
-    mem->size += total_size;
-    mem->data[mem->size] = '\0';
-
+    char **response = (char **)userp;
+    
+    char *temp = realloc(*response, total_size + 1);
+    if (!temp) {
+        fprintf(stderr, "Memory allocation failed in write_callback\n");
+        return 0;
+    }
+    
+    *response = temp;
+    memcpy(*response, contents, total_size);
+    (*response)[total_size] = '\0';
+    
     return total_size;
 }
 
-// FIX #2: Obtain a cookie/crumb from Yahoo Finance first
-int obtain_yahoo_cookie(CURL *curl) {
-    CURLcode res;
-    MemoryBuffer chunk = {0};
-    struct curl_slist *headers = NULL;
-
-    // Step 1: Hit the main page to get cookies
-    curl_easy_setopt(curl, CURLOPT_URL, "https://finance.yahoo.com");
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-
-    // Enable cookie engine
-    curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");  // Enable cookie engine in memory
-    curl_easy_setopt(curl, CURLOPT_COOKIEJAR, "");   // Keep cookies in memory
-
-    headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-
-    if (chunk.data) free(chunk.data);
-
-    return (res == CURLE_OK) ? 0 : -1;
-}
-
-// FIX #3: Fetch stock data using the v8 endpoint with proper headers
+// Fetch stock data from Yahoo Finance
 int fetch_stock_data(const char *symbols, char **response) {
     CURL *curl;
     CURLcode res;
-    char url[1024];
-    MemoryBuffer chunk = {0};
-    struct curl_slist *headers = NULL;
-
-    // Use v8 endpoint which is more reliable
-    snprintf(url, sizeof(url),
-             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1d",
-             symbols);
-
-    // For multiple symbols, use the quote endpoint with proper cookie session
-    // Actually, let's use the v7 quote endpoint but with cookie support
-    snprintf(url, sizeof(url),
-             "https://query2.finance.yahoo.com/v7/finance/quote?symbols=%s",
-             symbols);
-
+    char url[512];
+    
+    // URL encode symbols
+    char *encoded_symbols = url_encode(symbols);
+    if (!encoded_symbols) {
+        fprintf(stderr, "Failed to encode symbols\n");
+        return -1;
+    }
+    
+    snprintf(url, sizeof(url), 
+             "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s&lang=en-US&region=US&corsDomain=yahoo.com", 
+             encoded_symbols);
+    
+    free(encoded_symbols);
+    
     curl = curl_easy_init();
-    if (!curl) return -1;
-
-    chunk.data = malloc(1);
-    chunk.data[0] = '\0';
-    chunk.size = 0;
-
+    if (!curl) {
+        fprintf(stderr, "Failed to initialize curl\n");
+        return -1;
+    }
+    
+    *response = calloc(1, 1);  // Use calloc for cleaner initialization
+    if (!*response) {
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+    
+    // Set options
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, 
+                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-
-    // FIX #4: Enable cookie engine so cookies from obtain_yahoo_cookie are reused
-    curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
-    curl_easy_setopt(curl, CURLOPT_COOKIEJAR, "");
-
-    // FIX #5: Set proper headers that Yahoo expects
-    headers = curl_slist_append(headers,
-        "Accept: application/json");
-    headers = curl_slist_append(headers,
-        "Accept-Language: en-US,en;q=0.9");
-    headers = curl_slist_append(headers,
-        "Referer: https://finance.yahoo.com/");
-    headers = curl_slist_append(headers,
-        "Origin: https://finance.yahoo.com");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    
     res = curl_easy_perform(curl);
-
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    if (res == CURLE_OK && http_code == 200) {
-        *response = chunk.data;
-        return 0;
-    } else {
-        fprintf(stderr, "HTTP %ld | curl error: %s\n", http_code,
-                curl_easy_strerror(res));
-        if (chunk.data) free(chunk.data);
+    
+    // Check for errors
+    if (res != CURLE_OK) {
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        curl_easy_cleanup(curl);
+        free(*response);
         *response = NULL;
         return -1;
     }
+    
+    // Get HTTP response code
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    fprintf(stderr, "HTTP Response Code: %ld\n", http_code);
+    
+    curl_easy_cleanup(curl);
+    return 0;
 }
 
 // Parse JSON response
 int parse_stock_data(const char *json_response, StockData *stocks, int max_stocks) {
     cJSON *json = cJSON_Parse(json_response);
     if (!json) {
-        fprintf(stderr, "JSON parse error: %s\n", cJSON_GetErrorPtr());
+        fprintf(stderr, "Failed to parse JSON\n");
         return -1;
     }
-
+    
     cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
     if (!quoteResponse) {
-        fprintf(stderr, "No 'quoteResponse' in JSON\n");
+        fprintf(stderr, "No quoteResponse in JSON\n");
         cJSON_Delete(json);
         return -1;
     }
-
-    cJSON *error = cJSON_GetObjectItemCaseSensitive(quoteResponse, "error");
-    if (error && cJSON_IsObject(error)) {
-        cJSON *code = cJSON_GetObjectItemCaseSensitive(error, "code");
-        cJSON *description = cJSON_GetObjectItemCaseSensitive(error, "description");
-        fprintf(stderr, "API Error: %s - %s\n",
-                code ? code->valuestring : "unknown",
-                description ? description->valuestring : "unknown");
-    }
-
+    
     cJSON *result = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
     if (!result || !cJSON_IsArray(result)) {
-        fprintf(stderr, "No 'result' array in JSON\n");
+        fprintf(stderr, "No result array in JSON\n");
         cJSON_Delete(json);
         return -1;
     }
-
+    
     int count = 0;
     cJSON *item = NULL;
     cJSON_ArrayForEach(item, result) {
         if (count >= max_stocks) break;
-
+        
         cJSON *symbol = cJSON_GetObjectItemCaseSensitive(item, "symbol");
         cJSON *price = cJSON_GetObjectItemCaseSensitive(item, "regularMarketPrice");
         cJSON *change = cJSON_GetObjectItemCaseSensitive(item, "regularMarketChange");
         cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(item, "regularMarketChangePercent");
-
-        if (symbol && cJSON_IsString(symbol) && price && cJSON_IsNumber(price)) {
-            strncpy(stocks[count].symbol, symbol->valuestring,
-                    sizeof(stocks[count].symbol) - 1);
+        
+        if (symbol && price) {
+            strncpy(stocks[count].symbol, symbol->valuestring, sizeof(stocks[count].symbol) - 1);
             stocks[count].symbol[sizeof(stocks[count].symbol) - 1] = '\0';
-            stocks[count].price = price->valuedouble;
-            stocks[count].change = change ? change->valuedouble : 0.0;
-            stocks[count].change_percent = changePercent ? changePercent->valuedouble : 0.0;
+            stocks[count].price = cJSON_GetNumberValue(price);
+            stocks[count].change = change ? cJSON_GetNumberValue(change) : 0.0;
+            stocks[count].change_percent = changePercent ? cJSON_GetNumberValue(changePercent) : 0.0;
             stocks[count].has_data = 1;
             count++;
         }
     }
-
+    
     cJSON_Delete(json);
+    fprintf(stderr, "Parsed %d stocks\n", count);
     return count;
 }
 
@@ -232,42 +189,39 @@ void clear_screen() {
 // Display dashboard
 void display_dashboard(StockData *stocks, int count, time_t last_update) {
     clear_screen();
-
+    
     printf("\n");
-    printf("+====================================================================+\n");
-    printf("|                    LIVE STOCK DASHBOARD                            |\n");
-    printf("+====================================================================+\n");
-    printf("| %-8s | %12s | %10s | %12s |\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %%");
-    printf("+----------+--------------+--------------+--------------+\n");
-
+    printf("╔══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║                     📈 LIVE STOCK DASHBOARD 📈                      ║\n");
+    printf("╠══════════════════════════════════════════════════════════════════════╣\n");
+    printf("║ %-8s │ %12s │ %10s │ %12s ║\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %");
+    printf("╟─────────┼──────────────┼────────────┼──────────────╢\n");
+    
     for (int i = 0; i < count; i++) {
         if (stocks[i].has_data) {
-            const char *arrow = stocks[i].change >= 0 ? "▲" : "▼";
-            const char *color = stocks[i].change >= 0 ? "\033[32m" : "\033[31m";
-            const char *reset = "\033[0m";
-
-            printf("| %-8s | %s%12.2f%s | %s%10.2f%s | %s%11.2f%%%s %s |\n",
+            const char *change_color = stocks[i].change >= 0 ? "\033[32m" : "\033[31m";
+            
+            printf("║ %-8s │ %s%12.2f\033[0m │ %s%10.2f\033[0m │ %11.2f%% ║\n",
                    stocks[i].symbol,
-                   color, stocks[i].price, reset,
-                   color, stocks[i].change, reset,
-                   color, stocks[i].change_percent, reset,
-                   arrow);
+                   change_color, stocks[i].price,
+                   change_color, stocks[i].change,
+                   stocks[i].change_percent);
         }
     }
-
-    printf("+====================================================================+\n");
-
+    
+    printf("╚══════════════════════════════════════════════════════════════════════╝\n");
+    
     struct tm *tm_info = localtime(&last_update);
     char time_str[64];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
-
-    printf("\nUpdating every %d seconds | Last update: %s | Press Ctrl+C to exit\n",
+    
+    printf("\n🔄 Updating every %d seconds | Last update: %s | Press Ctrl+C to exit\n", 
            REFRESH_INTERVAL, time_str);
 }
 
 // Display error
 void display_error(const char *message) {
-    printf("\033[31mError: %s\033[0m\n", message);
+    printf("\033[2K\r\033[31mError: %s\033[0m\n", message);
     fflush(stdout);
 }
 
@@ -277,71 +231,70 @@ int main(int argc, char *argv[]) {
     if (argc > 1) {
         symbols = argv[1];
     }
-
-    // Setup signal handler
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-
+    
+    // Setup signal handler with sigaction for reliability
+    struct sigaction sa;
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;  // Restart interrupted system calls
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction SIGINT");
+    }
+    if (sigaction(SIGTERM, &sa, NULL) == -1) {
+        perror("sigaction SIGTERM");
+    }
+    
     // Initialize libcurl
     CURLcode curl_res = curl_global_init(CURL_GLOBAL_DEFAULT);
     if (curl_res != CURLE_OK) {
-        fprintf(stderr, "Failed to initialize libcurl: %s\n",
-                curl_easy_strerror(curl_res));
+        fprintf(stderr, "Failed to initialize libcurl: %s\n", curl_easy_strerror(curl_res));
         return 1;
     }
-
+    
     printf("Initializing stock dashboard...\n");
     printf("Tracking: %s\n\n", symbols);
-
+    
     StockData stocks[MAX_STOCKS];
     char *response = NULL;
     time_t last_update = 0;
-
+    
+    // Initialize stocks array
     memset(stocks, 0, sizeof(stocks));
-
-    // FIX #6: First obtain a session cookie from Yahoo
-    printf("Obtaining Yahoo Finance session cookie...\n");
-    CURL *cookie_curl = curl_easy_init();
-    if (cookie_curl) {
-        curl_easy_setopt(cookie_curl, CURLOPT_COOKIEFILE, "");
-        curl_easy_setopt(cookie_curl, CURLOPT_COOKIEJAR, "");
-        obtain_yahoo_cookie(cookie_curl);
-        curl_easy_cleanup(cookie_curl);
-    }
-    printf("Cookie obtained. Starting data fetch...\n\n");
-
+    
     // Main loop
     while (running) {
-        if (fetch_stock_data(symbols, &response) == 0 && response) {
-            // Debug: print raw response on first fetch
-            static int first_fetch = 1;
-            if (first_fetch) {
-                printf("Raw response (first 500 chars):\n%.500s\n\n", response);
-                first_fetch = 0;
-            }
-
-            int count = parse_stock_data(response, stocks, MAX_STOCKS);
-            if (count > 0) {
-                last_update = time(NULL);
-                display_dashboard(stocks, count, last_update);
+        // Fetch data
+        if (fetch_stock_data(symbols, &response) == 0) {
+            if (response && strlen(response) > 0) {
+                fprintf(stderr, "Response length: %zu\n", strlen(response));
+                
+                int count = parse_stock_data(response, stocks, MAX_STOCKS);
+                if (count > 0) {
+                    last_update = time(NULL);
+                    display_dashboard(stocks, count, last_update);
+                } else {
+                    display_error("Failed to parse stock data - check JSON response");
+                    fprintf(stderr, "Response preview: %.200s...\n", response);
+                }
             } else {
-                display_error("Failed to parse stock data (check raw response above)");
+                display_error("Empty response from API");
             }
             free(response);
             response = NULL;
         } else {
             display_error("Failed to fetch data. Retrying...");
         }
-
+        
+        // Wait for next update
         if (running) {
             sleep(REFRESH_INTERVAL);
         }
     }
-
+    
     // Cleanup
     if (response) free(response);
     curl_global_cleanup();
-
+    
     printf("\n\nDashboard stopped.\n");
     return 0;
 }
