@@ -105,10 +105,10 @@ void fetch_and_display_stocks(const char *symbol) {
 
 int main() {
     // Define the stocks you want to track, comma-separated
-    const char *symbol[] = {"AAPL","MSFT","GOOGL","TSLA","AMZN","NVDA"};
+    const char *my_stocks[] = {"AAPL","MSFT","GOOGL","TSLA","AMZN","NVDA"};
 
     while (1) {
-        fetch_and_display_stocks(symbol);
+        fetch_and_display_stocks(my_stocks);
         sleep(10); // Wait 10 seconds before next update
     }
 
