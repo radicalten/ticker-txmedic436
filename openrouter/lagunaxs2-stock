@@ -2,6 +2,7 @@
 // Prompt version 4: 9-28-25 v5
 // Can you create a main.c terminal-based program which utilizes DaveGamble’s JSON parser cJSON.c, cJSON.h, and https://query1.finance.yahoo.com to create a simple live dashboard of stock prices? Create a user-agent so that the query to yahoo finance is not rejected. 
 // laguna xs.2 is 33b-3a model by poolside ai released 4-28-26
+// this code compiles, but the stocks fail to fetch. 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
