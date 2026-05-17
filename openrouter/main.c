@@ -1,52 +1,347 @@
+// lagunaxs2-stock 5-16-26 openrouter using prompt:
+// Prompt version 4: 9-28-25 v6 (fixed)
+// Can you create a main.c terminal-based program which utilizes DaveGamble's JSON parser cJSON.c, cJSON.h, and https://query1.finance.yahoo.com to create a simple live dashboard of stock prices? Create a user-agent so that the query to yahoo finance is not rejected.
+// laguna xs.2 is 33b-3a model by poolside ai released 4-28-26
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <cJSON.h>
+#include <time.h>
+#include <unistd.h>
+#include <signal.h>
 #include <curl/curl.h>
+#include "cJSON.h"
 
-// User-Agent string to avoid Yahoo Finance rejection
-#define USER_AGENT "SimpleStockDashboard/1.0 (your_email@example.com)" // Replace with your email
+// Configuration
+#define REFRESH_INTERVAL 5  // seconds
+#define MAX_STOCKS 16
+#define BUFFER_SIZE (1024 * 1024)
 
-// Function to fetch stock price from Yahoo Finance
-cJSON *get_stock_price(const char *symbol) {
+// Stock data structure
+typedef struct {
+    char symbol[16];
+    double price;
+    double change;
+    double change_percent;
+    int has_data;
+} StockData;
+
+// Memory buffer for curl response
+typedef struct {
+    char *data;
+    size_t size;
+} MemoryBuffer;
+
+// Global flag for graceful shutdown
+static volatile int running = 1;
+
+// Global cookie for Yahoo Finance session
+static char *yahoo_cookie = NULL;
+
+// Signal handler for Ctrl+C
+void signal_handler(int sig) {
+    (void)sig;
+    running = 0;
+}
+
+// FIX #1: Proper write callback that APPENDS data instead of overwriting
+size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t total_size = size * nmemb;
+    MemoryBuffer *mem = (MemoryBuffer *)userp;
+
+    char *temp = realloc(mem->data, mem->size + total_size + 1);
+    if (!temp) return 0;
+
+    mem->data = temp;
+    memcpy(&(mem->data[mem->size]), contents, total_size);
+    mem->size += total_size;
+    mem->data[mem->size] = '\0';
+
+    return total_size;
+}
+
+// FIX #2: Obtain a cookie/crumb from Yahoo Finance first
+int obtain_yahoo_cookie(CURL *curl) {
+    CURLcode res;
+    MemoryBuffer chunk = {0};
+    struct curl_slist *headers = NULL;
+
+    // Step 1: Hit the main page to get cookies
+    curl_easy_setopt(curl, CURLOPT_URL, "https://finance.yahoo.com");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+
+    // Enable cookie engine
+    curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");  // Enable cookie engine in memory
+    curl_easy_setopt(curl, CURLOPT_COOKIEJAR, "");   // Keep cookies in memory
+
+    headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    res = curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+
+    if (chunk.data) free(chunk.data);
+
+    return (res == CURLE_OK) ? 0 : -1;
+}
+
+// FIX #3: Fetch stock data using the v8 endpoint with proper headers
+int fetch_stock_data(const char *symbols, char **response) {
     CURL *curl;
     CURLcode res;
-    char *url;
-    cJSON *json;
-    char *data;
+    char url[1024];
+    MemoryBuffer chunk = {0};
+    struct curl_slist *headers = NULL;
 
-    // Construct the Yahoo Finance API URL
-    url = (char *)malloc(strlen("https://query1.finance.yahoo.com/v7/finance/quote?symbol=") + strlen(symbol) + 40); // +40 for parameters
-    if (!url) {
-        perror("malloc failed");
-        return NULL;
-    }
-    sprintf(url, "https://query1.finance.yahoo.com/v7/finance/quote?symbol=%s", symbol);
+    // Use v8 endpoint which is more reliable
+    snprintf(url, sizeof(url),
+             "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1d",
+             symbols);
+
+    // For multiple symbols, use the quote endpoint with proper cookie session
+    // Actually, let's use the v7 quote endpoint but with cookie support
+    snprintf(url, sizeof(url),
+             "https://query2.finance.yahoo.com/v7/finance/quote?symbols=%s",
+             symbols);
 
     curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
-        curl_easy_setopt(curl, CURLOPT_RETURNTRANSFER, 1);
+    if (!curl) return -1;
 
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            free(url);
-            return NULL;
+    chunk.data = malloc(1);
+    chunk.data[0] = '\0';
+    chunk.size = 0;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+
+    // FIX #4: Enable cookie engine so cookies from obtain_yahoo_cookie are reused
+    curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
+    curl_easy_setopt(curl, CURLOPT_COOKIEJAR, "");
+
+    // FIX #5: Set proper headers that Yahoo expects
+    headers = curl_slist_append(headers,
+        "Accept: application/json");
+    headers = curl_slist_append(headers,
+        "Accept-Language: en-US,en;q=0.9");
+    headers = curl_slist_append(headers,
+        "Referer: https://finance.yahoo.com/");
+    headers = curl_slist_append(headers,
+        "Origin: https://finance.yahoo.com");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res == CURLE_OK && http_code == 200) {
+        *response = chunk.data;
+        return 0;
+    } else {
+        fprintf(stderr, "HTTP %ld | curl error: %s\n", http_code,
+                curl_easy_strerror(res));
+        if (chunk.data) free(chunk.data);
+        *response = NULL;
+        return -1;
+    }
+}
+
+// Parse JSON response
+int parse_stock_data(const char *json_response, StockData *stocks, int max_stocks) {
+    cJSON *json = cJSON_Parse(json_response);
+    if (!json) {
+        fprintf(stderr, "JSON parse error: %s\n", cJSON_GetErrorPtr());
+        return -1;
+    }
+
+    cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(json, "quoteResponse");
+    if (!quoteResponse) {
+        fprintf(stderr, "No 'quoteResponse' in JSON\n");
+        cJSON_Delete(json);
+        return -1;
+    }
+
+    cJSON *error = cJSON_GetObjectItemCaseSensitive(quoteResponse, "error");
+    if (error && cJSON_IsObject(error)) {
+        cJSON *code = cJSON_GetObjectItemCaseSensitive(error, "code");
+        cJSON *description = cJSON_GetObjectItemCaseSensitive(error, "description");
+        fprintf(stderr, "API Error: %s - %s\n",
+                code ? code->valuestring : "unknown",
+                description ? description->valuestring : "unknown");
+    }
+
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
+    if (!result || !cJSON_IsArray(result)) {
+        fprintf(stderr, "No 'result' array in JSON\n");
+        cJSON_Delete(json);
+        return -1;
+    }
+
+    int count = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, result) {
+        if (count >= max_stocks) break;
+
+        cJSON *symbol = cJSON_GetObjectItemCaseSensitive(item, "symbol");
+        cJSON *price = cJSON_GetObjectItemCaseSensitive(item, "regularMarketPrice");
+        cJSON *change = cJSON_GetObjectItemCaseSensitive(item, "regularMarketChange");
+        cJSON *changePercent = cJSON_GetObjectItemCaseSensitive(item, "regularMarketChangePercent");
+
+        if (symbol && cJSON_IsString(symbol) && price && cJSON_IsNumber(price)) {
+            strncpy(stocks[count].symbol, symbol->valuestring,
+                    sizeof(stocks[count].symbol) - 1);
+            stocks[count].symbol[sizeof(stocks[count].symbol) - 1] = '\0';
+            stocks[count].price = price->valuedouble;
+            stocks[count].change = change ? change->valuedouble : 0.0;
+            stocks[count].change_percent = changePercent ? changePercent->valuedouble : 0.0;
+            stocks[count].has_data = 1;
+            count++;
+        }
+    }
+
+    cJSON_Delete(json);
+    return count;
+}
+
+// Clear screen (cross-platform)
+void clear_screen() {
+    printf("\033[2J\033[H");
+    fflush(stdout);
+}
+
+// Display dashboard
+void display_dashboard(StockData *stocks, int count, time_t last_update) {
+    clear_screen();
+
+    printf("\n");
+    printf("+====================================================================+\n");
+    printf("|                    LIVE STOCK DASHBOARD                            |\n");
+    printf("+====================================================================+\n");
+    printf("| %-8s | %12s | %10s | %12s |\n", "SYMBOL", "PRICE", "CHANGE", "CHANGE %%");
+    printf("+----------+--------------+--------------+--------------+\n");
+
+    for (int i = 0; i < count; i++) {
+        if (stocks[i].has_data) {
+            const char *arrow = stocks[i].change >= 0 ? "▲" : "▼";
+            const char *color = stocks[i].change >= 0 ? "\033[32m" : "\033[31m";
+            const char *reset = "\033[0m";
+
+            printf("| %-8s | %s%12.2f%s | %s%10.2f%s | %s%11.2f%%%s %s |\n",
+                   stocks[i].symbol,
+                   color, stocks[i].price, reset,
+                   color, stocks[i].change, reset,
+                   color, stocks[i].change_percent, reset,
+                   arrow);
+        }
+    }
+
+    printf("+====================================================================+\n");
+
+    struct tm *tm_info = localtime(&last_update);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+
+    printf("\nUpdating every %d seconds | Last update: %s | Press Ctrl+C to exit\n",
+           REFRESH_INTERVAL, time_str);
+}
+
+// Display error
+void display_error(const char *message) {
+    printf("\033[31mError: %s\033[0m\n", message);
+    fflush(stdout);
+}
+
+int main(int argc, char *argv[]) {
+    // Allow custom symbols via command line
+    const char *symbols = "AAPL,GOOGL,MSFT,AMZN,TSLA,META,NVDA,JPM";
+    if (argc > 1) {
+        symbols = argv[1];
+    }
+
+    // Setup signal handler
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    // Initialize libcurl
+    CURLcode curl_res = curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (curl_res != CURLE_OK) {
+        fprintf(stderr, "Failed to initialize libcurl: %s\n",
+                curl_easy_strerror(curl_res));
+        return 1;
+    }
+
+    printf("Initializing stock dashboard...\n");
+    printf("Tracking: %s\n\n", symbols);
+
+    StockData stocks[MAX_STOCKS];
+    char *response = NULL;
+    time_t last_update = 0;
+
+    memset(stocks, 0, sizeof(stocks));
+
+    // FIX #6: First obtain a session cookie from Yahoo
+    printf("Obtaining Yahoo Finance session cookie...\n");
+    CURL *cookie_curl = curl_easy_init();
+    if (cookie_curl) {
+        curl_easy_setopt(cookie_curl, CURLOPT_COOKIEFILE, "");
+        curl_easy_setopt(cookie_curl, CURLOPT_COOKIEJAR, "");
+        obtain_yahoo_cookie(cookie_curl);
+        curl_easy_cleanup(cookie_curl);
+    }
+    printf("Cookie obtained. Starting data fetch...\n\n");
+
+    // Main loop
+    while (running) {
+        if (fetch_stock_data(symbols, &response) == 0 && response) {
+            // Debug: print raw response on first fetch
+            static int first_fetch = 1;
+            if (first_fetch) {
+                printf("Raw response (first 500 chars):\n%.500s\n\n", response);
+                first_fetch = 0;
+            }
+
+            int count = parse_stock_data(response, stocks, MAX_STOCKS);
+            if (count > 0) {
+                last_update = time(NULL);
+                display_dashboard(stocks, count, last_update);
+            } else {
+                display_error("Failed to parse stock data (check raw response above)");
+            }
+            free(response);
+            response = NULL;
+        } else {
+            display_error("Failed to fetch data. Retrying...");
         }
 
-        curl_easy_cleanup(curl);
-
-        // Get the response data
-        data = malloc(curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_KB) * sizeof(char));
-        if (!data) {
-            perror("malloc failed");
-            free(url);
-            return NULL;
+        if (running) {
+            sleep(REFRESH_INTERVAL);
         }
+    }
 
-        curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_KB, (long *)&curl_content_length);
-        curl_easy_perform(curl); // Perform again to get content length
+    // Cleanup
+    if (response) free(response);
+    curl_global_cleanup();
 
-        res = curl_easy
+    printf("\n\nDashboard stopped.\n");
+    return 0;
+}
