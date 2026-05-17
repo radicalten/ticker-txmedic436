@@ -2,7 +2,7 @@ name: GBA-curl-v1
 on:
   push:
     branches:
-    - master
+    - main
 jobs:
   build-GBA:
     runs-on: ubuntu-latest
