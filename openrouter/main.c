@@ -1,152 +1,165 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <time.h>
+#include <signal.h>
+#include <curl/curl.h>
 #include "cJSON.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#define CLEAR_SCREEN system("cls")
-#define SLEEP_MS(ms) Sleep(ms)
-#else
-#include <unistd.h>
-#define CLEAR_SCREEN system("clear")
-#define SLEEP_MS(ms) sleep(ms/1000)
-#endif
+/* Configuration */
+#define REFRESH_INTERVAL 5
+#define MAX_SYMBOLS      5
+#define API_URL "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,cardano,solana,polkadot&vs_currencies=usd"
 
-#define BUFFER_SIZE 8192
-#define UPDATE_INTERVAL 3000  // milliseconds
-#define MAX_STOCKS 5
+/* Data Structures */
+typedef struct {
+    char *data;
+    size_t len;
+} ResponseBuffer;
 
-// ANSI Terminal Colors (Windows 10+ supports these natively)
-#define RESET   "\033[0m"
-#define GREEN   "\033[32m"
-#define RED     "\033[31m"
-#define CYAN    "\033[36m"
-#define BOLD    "\033[1m"
+typedef struct {
+    char symbol[10];
+    double price;
+    double prev_price;
+} Stock;
 
-/* Fetch JSON from URL using curl. Returns malloc'd string or NULL on failure. */
-char* fetch_json(const char* url) {
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "curl -s --connect-timeout 5 \"%s\"", url);
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
+/* Global State */
+Stock stocks[MAX_SYMBOLS];
+int running = 1;
 
-    char* buffer = malloc(BUFFER_SIZE);
-    if (!buffer) { pclose(pipe); return NULL; }
-
-    size_t len = fread(buffer, 1, BUFFER_SIZE-1, pipe);
-    buffer[len] = '\0';
-    pclose(pipe);
-
-    // Quick validation to avoid crashing display on bad responses
-    cJSON* test = cJSON_Parse(buffer);
-    if (!test) {
-        free(buffer);
-        return NULL;
-    }
-    cJSON_Delete(test);
-    return buffer;
+/* Signal Handler for Clean Exit */
+void signal_handler(int sig) {
+    (void)sig;
+    running = 0;
 }
 
-/* Generate realistic mock stock data for demonstration */
-char* generate_mock_json(void) {
-    static char json[BUFFER_SIZE];
-    
-    const char* symbols[] = {"AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"};
-    float base_prices[] = {175.0f, 140.0f, 330.0f, 250.0f, 178.0f};
+/* libcurl Write Callback */
+size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t total = size * nmemb;
+    ResponseBuffer *buf = (ResponseBuffer *)userp;
+    char *new_data = realloc(buf->data, buf->len + total + 1);
+    if (!new_data) return 0;
+    buf->data = new_data;
+    memcpy(buf->data + buf->len, contents, total);
+    buf->len += total;
+    buf->data[buf->len] = '\0';
+    return total;
+}
 
-    sprintf(json, "{\"stocks\":[");
-    for (int i = 0; i < MAX_STOCKS; i++) {
-        float change_pct = ((float)rand() / RAND_MAX) * 4.0f - 2.0f; // -2% to +2%
-        float price = base_prices[i] * (1.0f + change_pct/100.0f);
-        float change = price - base_prices[i];
+/* Fetch JSON from API */
+char* fetch_json(const char *url) {
+    CURL *curl = curl_easy_init();
+    ResponseBuffer buf = { .data = malloc(1), .len = 0 };
+    buf.data[0] = '\0';
+
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "cJSON-Dashboard/1.0");
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         
-        if (i > 0) strcat(json, ",");
-        sprintf(json + strlen(json),
-            "{\"symbol\":\"%s\",\"price\":%.2f,\"change\":%.2f,\"change_pct\":%.2f}",
-            symbols[i], price, change, change_pct);
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "curl error: %s\n", curl_easy_strerror(res));
+            free(buf.data);
+            buf.data = NULL;
+        }
+        curl_easy_cleanup(curl);
     }
-    strcat(json, "]}");
-    return json;
+    return buf.data;
 }
 
-/* Parse JSON and render dashboard to terminal */
-void display_dashboard(const char* json_str) {
-    cJSON* root = cJSON_Parse(json_str);
+/* Parse JSON & Update Stocks */
+void parse_json(const char *json_str) {
+    cJSON *root = cJSON_Parse(json_str);
     if (!root) {
-        fprintf(stderr, "\n[ERROR] Failed to parse JSON\n");
+        fprintf(stderr, "JSON parse error: %s\n", cJSON_GetErrorPtr());
         return;
     }
 
-    cJSON* stocks = cJSON_GetObjectItem(root, "stocks");
-    if (!stocks || !cJSON_IsArray(stocks)) {
-        fprintf(stderr, "\n[ERROR] Invalid JSON structure (missing 'stocks' array)\n");
-        cJSON_Delete(root);
-        return;
+    /* Mapping: API ID -> Display Symbol */
+    const char *api_ids[]    = {"bitcoin", "ethereum", "cardano", "solana", "polkadot"};
+    const char *display_sym[] = {"BTC", "ETH", "ADA", "SOL", "DOT"};
+
+    for (int i = 0; i < MAX_SYMBOLS; i++) {
+        cJSON *coin = cJSON_GetObjectItemCaseSensitive(root, api_ids[i]);
+        if (cJSON_IsObject(coin)) {
+            cJSON *usd = cJSON_GetObjectItemCaseSensitive(coin, "usd");
+            if (cJSON_IsNumber(usd)) {
+                stocks[i].prev_price = stocks[i].price;
+                stocks[i].price = usd->valuedouble;
+                strncpy(stocks[i].symbol, display_sym[i], sizeof(stocks[i].symbol) - 1);
+                stocks[i].symbol[sizeof(stocks[i].symbol) - 1] = '\0';
+            }
+        }
     }
-
-    printf("%s%cSTOCK DASHBOARD%c %s\n", BOLD, CYAN, 187, 188, RESET);
-    printf("%s  %-6s | %-10s | %-10s | %-8s  %s\n", BOLD, "Symbol", "Price", "Change", "Change%", RESET);
-    printf("%s  %-6s-+-%-10s-+-%-10s-+-%-8s  %s\n", BOLD, "------", "----------", "----------", "--------", RESET);
-
-    cJSON* item;
-    cJSON_ArrayForEach(item, stocks) {
-        cJSON* sym = cJSON_GetObjectItem(item, "symbol");
-        cJSON* price = cJSON_GetObjectItem(item, "price");
-        cJSON* change = cJSON_GetObjectItem(item, "change");
-        cJSON* change_pct = cJSON_GetObjectItem(item, "change_pct");
-
-        if (!sym || !price || !change || !change_pct) continue;
-
-        double val_change = cJSON_GetNumberValue(change);
-        const char* color = val_change >= 0 ? GREEN : RED;
-
-        char change_str[16], pct_str[16];
-        snprintf(change_str, sizeof(change_str), "%+.2f", val_change);
-        snprintf(pct_str, sizeof(pct_str), "%+.2f%%", cJSON_GetNumberValue(change_pct));
-
-        printf("  %-6s | $%-9.2f | %s%-10s%s | %s%-8s%s\n",
-               sym->valuestring,
-               cJSON_GetNumberValue(price),
-               color, change_str, RESET,
-               color, pct_str, RESET);
-    }
-
-    time_t now = time(NULL);
-    char time_str[26];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    printf("%s  Last updated: %s\n", BOLD, time_str);
-
     cJSON_Delete(root);
 }
 
-int main(void) {
-    srand((unsigned int)time(NULL));
-    printf("Live Stock Dashboard (Press Ctrl+C to exit)\n");
-    SLEEP_MS(1500);
+/* Draw Terminal Dashboard */
+void draw_dashboard(void) {
+    /* Clear screen & move cursor to top-left */
+    printf("\033[2J\033[H");
+    
+    /* Header */
+    printf("\033[1;36m╔══════════════════════════════════════════╗\n");
+    printf("║           LIVE MARKET DASHBOARD            ║\n");
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║ %-8s %-12s %-10s %-8s ║\n", "Symbol", "Price (USD)", "Change", "Time");
+    printf("╠══════════════════════════════════════════╣\n");
 
-    // Set to a valid API URL to fetch real data, or leave NULL for mock data
-    const char* api_url = NULL;
-    // Example: const char* api_url = "https://api.example.com/stocks";
+    /* Time */
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char time_str[20];
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", t);
 
-    while (1) {
-        CLEAR_SCREEN;
+    /* Rows */
+    for (int i = 0; i < MAX_SYMBOLS; i++) {
+        if (stocks[i].symbol[0] == '\0') continue;
+
+        double change = stocks[i].price - stocks[i].prev_price;
+        double pct = (stocks[i].prev_price > 0.0) ? (change / stocks[i].prev_price) * 100.0 : 0.0;
         
-        char* json_data = api_url ? fetch_json(api_url) : generate_mock_json();
+        const char *color = (change >= 0.0) ? "\033[32m" : "\033[31m";
+        const char *arrow = (change >= 0.0) ? "▲" : "▼";
 
-        if (json_data) {
-            display_dashboard(json_data);
-            if (api_url) free(json_data); // Only free dynamically allocated memory
-        } else {
-            printf("\n[WARN] Fetch failed, falling back to mock data\n");
-            json_data = generate_mock_json();
-            display_dashboard(json_data);
-            free(json_data);
-        }
-
-        SLEEP_MS(UPDATE_INTERVAL);
+        printf("║ %-8s $%-11.2f %s%s%.2f%%\033[0m %-10s ║\n",
+               stocks[i].symbol, stocks[i].price, color, arrow, pct, time_str);
     }
 
+    /* Footer */
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║ Press Ctrl+C to exit                     ║\n");
+    printf("╚══════════════════════════════════════════╝\033[0m\n");
+}
+
+int main(void) {
+    signal(SIGINT, signal_handler);
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    /* Initialize stock array */
+    memset(stocks, 0, sizeof(stocks));
+
+    printf("Starting dashboard... Press Ctrl+C to exit.\n");
+    sleep(1);
+
+    while (running) {
+        char *json = fetch_json(API_URL);
+        if (json && strlen(json) > 0) {
+            parse_json(json);
+            draw_dashboard();
+        } else {
+            printf("\033[2J\033[H⚠️  Failed to fetch market data. Retrying in %ds...\n", REFRESH_INTERVAL);
+        }
+        free(json);
+        sleep(REFRESH_INTERVAL);
+    }
+
+    curl_global_cleanup();
+    printf("\n✅ Dashboard exited cleanly.\n");
     return 0;
 }
