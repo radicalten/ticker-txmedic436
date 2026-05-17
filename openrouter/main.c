@@ -1,255 +1,172 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
+#include <unistd.h>   // for sleep()
 #include <curl/curl.h>
-#include "cJSON.h"
+#include "cJSON.h"    // DaveGamble's cJSON
 
-#define MAX_SYMBOLS 10
-#define BUFFER_SIZE 8192
-#define UPDATE_INTERVAL 5
+#define USER_AGENT "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+#define REFRESH_INTERVAL 10 // seconds
 
-typedef struct {
-    char symbol[16];
-    double regularMarketPrice;
-    double regularMarketChange;
-    double regularMarketChangePercent;
-    char regularMarketTime[32];
-} StockData;
-
-typedef struct {
-    char *buffer;
+// Structure for storing HTTP response
+struct MemoryStruct {
+    char *memory;
     size_t size;
-} MemoryStruct;
+};
 
-// Global array to store stock symbols
-char *stock_symbols[MAX_SYMBOLS];
-int symbol_count = 0;
-
-// Callback for libcurl to store response data
+// Curl write callback – appends data to memory
 static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
-    MemoryStruct *mem = (MemoryStruct *)userp;
-    
-    char *ptr = realloc(mem->buffer, mem->size + realsize + 1);
-    if (!ptr) {
-        printf("Not enough memory (realloc returned NULL)\n");
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if(!ptr) {
+        fprintf(stderr, "Not enough memory\n");
         return 0;
     }
-    
-    mem->buffer = ptr;
-    memcpy(&(mem->buffer[mem->size]), contents, realsize);
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
     mem->size += realsize;
-    mem->buffer[mem->size] = 0;
-    
+    mem->memory[mem->size] = 0;
+
     return realsize;
 }
 
-// Fetch stock data from Yahoo Finance API
-StockData* fetch_stock_data(const char *symbols_str, int *count) {
-    CURL *curl_handle;
+// Extract current price from Yahoo Finance JSON response
+// Returns -1.0 on error
+double extract_price(const char *json) {
+    cJSON *root = cJSON_Parse(json);
+    if (root == NULL) {
+        return -1.0;
+    }
+
+    // Navigate: chart -> result[0] -> meta -> regularMarketPrice
+    cJSON *chart = cJSON_GetObjectItem(root, "chart");
+    if (chart == NULL) {
+        cJSON_Delete(root);
+        return -1.0;
+    }
+
+    cJSON *result = cJSON_GetObjectItem(chart, "result");
+    if (result == NULL || !cJSON_IsArray(result) || cJSON_GetArraySize(result) == 0) {
+        cJSON_Delete(root);
+        return -1.0;
+    }
+
+    cJSON *first = cJSON_GetArrayItem(result, 0);
+    cJSON *meta = cJSON_GetObjectItem(first, "meta");
+    if (meta == NULL) {
+        cJSON_Delete(root);
+        return -1.0;
+    }
+
+    cJSON *price = cJSON_GetObjectItem(meta, "regularMarketPrice");
+    double value = -1.0;
+    if (cJSON_IsNumber(price)) {
+        value = price->valuedouble;
+    }
+
+    cJSON_Delete(root);
+    return value;
+}
+
+// Fetch price for a given stock symbol
+double fetch_price(const char *symbol) {
+    CURL *curl;
     CURLcode res;
-    MemoryStruct chunk;
-    struct curl_slist *headers = NULL;
-    
-    char url[512];
-    snprintf(url, sizeof(url), 
-             "https://query1.finance.yahoo.com/v7/finance/quote?symbols=%s", 
-             symbols_str);
-    
-    chunk.buffer = malloc(1);
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1);
     chunk.size = 0;
-    
+
+    // Build URL
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d",
+             symbol);
+
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    curl_handle = curl_easy_init();
-    
-    if (curl_handle) {
-        // Set custom User-Agent to avoid rejection
-        headers = curl_slist_append(headers, 
-            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-        curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-        
-        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
-        curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-        
-        res = curl_easy_perform(curl_handle);
-        
-        if (res != CURLE_OK) {
+    curl = curl_easy_init();
+
+    double price = -1.0;
+
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, USER_AGENT);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+        res = curl_easy_perform(curl);
+        if(res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-            free(chunk.buffer);
-            curl_easy_cleanup(curl_handle);
-            curl_global_cleanup();
-            *count = 0;
-            return NULL;
+        } else {
+            price = extract_price(chunk.memory);
         }
-        
-        curl_easy_cleanup(curl_handle);
+
+        curl_easy_cleanup(curl);
     }
+
+    free(chunk.memory);
     curl_global_cleanup();
-    
-    // Parse JSON response
-    cJSON *json = cJSON_Parse(chunk.buffer);
-    free(chunk.buffer);
-    
-    if (!json) {
-        fprintf(stderr, "Error before: [%s]\n", cJSON_GetErrorPtr());
-        *count = 0;
-        return NULL;
-    }
-    
-    cJSON *quote_response = cJSON_GetObjectItem(json, "quoteResponse");
-    if (!quote_response) {
-        cJSON_Delete(json);
-        *count = 0;
-        return NULL;
-    }
-    
-    cJSON *result = cJSON_GetObjectItem(quote_response, "result");
-    if (!result || !cJSON_IsArray(result)) {
-        cJSON_Delete(json);
-        *count = 0;
-        return NULL;
-    }
-    
-    int array_size = cJSON_GetArraySize(result);
-    StockData *stocks = malloc(array_size * sizeof(StockData));
-    *count = array_size;
-    
-    for (int i = 0; i < array_size; i++) {
-        cJSON *item = cJSON_GetArrayItem(result, i);
-        
-        strcpy(stocks[i].symbol, 
-               cJSON_GetObjectItem(item, "symbol")->valuestring ? 
-               cJSON_GetObjectItem(item, "symbol")->valuestring : "N/A");
-        
-        stocks[i].regularMarketPrice = 
-            cJSON_GetObjectItem(item, "regularMarketPrice")->valuedouble;
-        
-        stocks[i].regularMarketChange = 
-            cJSON_GetObjectItem(item, "regularMarketChange")->valuedouble;
-        
-        stocks[i].regularMarketChangePercent = 
-            cJSON_GetObjectItem(item, "regularMarketChangePercent")->valuedouble;
-        
-        // Get formatted timestamp
-        cJSON *time_item = cJSON_GetObjectItem(item, "regularMarketTime");
-        if (cJSON_IsNumber(time_item)) {
-            time_t timestamp = time_item->valueint;
-            struct tm *tm_info = localtime(&timestamp);
-            strftime(stocks[i].regularMarketTime, sizeof(stocks[i].regularMarketTime), 
-                     "%Y-%m-%d %H:%M:%S", tm_info);
-        } else {
-            strcpy(stocks[i].regularMarketTime, "N/A");
-        }
-    }
-    
-    cJSON_Delete(json);
-    return stocks;
+    return price;
 }
 
-// Clear screen (cross-platform)
-void clear_screen() {
-    printf("\033[2J\033[H");
+// Print dashboard header
+void print_header(int num_symbols) {
+    printf("\033[1;36m"); // cyan
+    printf("+");
+    for (int i = 0; i < 44; i++) printf("-");
+    printf("+\n");
+    printf("|  %-20s |  %-14s |\n", "Symbol", "Price (USD)");
+    printf("+");
+    for (int i = 0; i < 44; i++) printf("-");
+    printf("+\n");
+    printf("\033[0m");
 }
 
-// Display the dashboard
-void display_dashboard(StockData *stocks, int count) {
-    time_t now;
-    time(&now);
-    struct tm *local = localtime(&now);
-    char time_str[64];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", local);
-    
-    printf("\033[1;37m"); // Bright white
-    printf("╔══════════════════════════════════════════════════════════════════╗\n");
-    printf("║                   📈 STOCK PRICE DASHBOARD                        ║\n");
-    printf("╠══════════════════════════════════════════════════════════════════╣\n");
-    printf("║ Last Updated: %-50s ║\n", time_str);
-    printf("╠═════════╦══════════════╦══════════════╦══════════════╦══════════════╣\n");
-    printf("║ %-7s ║ %-12s ║ %-12s ║ %-12s ║ %-12s ║\n", 
-           "SYMBOL", "PRICE", "CHANGE", "% CHANGE", "LAST UPDATE");
-    printf("╠═════════╬══════════════╬══════════════╬══════════════╬══════════════╣\n");
-    printf("\033[0m"); // Reset
-    
-    for (int i = 0; i < count; i++) {
-        // Color based on price change
-        if (stocks[i].regularMarketChange >= 0) {
-            printf("\033[32m"); // Green
-        } else {
-            printf("\033[31m"); // Red
-        }
-        
-        printf("║ %-7s ║ $%10.2f │ $%10.2f │ %11.2f%% │ %-12s ║\n",
-               stocks[i].symbol,
-               stocks[i].regularMarketPrice,
-               stocks[i].regularMarketChange,
-               stocks[i].regularMarketChangePercent,
-               stocks[i].regularMarketTime);
+// Print a table row for one symbol and price
+void print_row(const char *symbol, double price) {
+    if (price < 0) {
+        printf("|  %-20s |  %-14s |\n", symbol, "ERROR");
+    } else {
+        printf("|  %-20s |  %14.2f |\n", symbol, price);
     }
-    
-    printf("\033[0m"); // Reset
-    printf("╚═════════╩══════════════╩══════════════╩══════════════╩══════════════╝\n");
-    printf("\nPress Ctrl+C to exit\n");
-}
-
-// Build comma-separated symbol string
-char* build_symbols_string() {
-    size_t total_len = 0;
-    for (int i = 0; i < symbol_count; i++) {
-        total_len += strlen(stock_symbols[i]) + 1;
-    }
-    
-    char *result = malloc(total_len);
-    result[0] = '\0';
-    
-    for (int i = 0; i < symbol_count; i++) {
-        if (i > 0) strcat(result, ",");
-        strcat(result, stock_symbols[i]);
-    }
-    
-    return result;
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Usage: %s <symbol1> [symbol2] [symbol3] ...\n", argv[0]);
-        printf("Example: %s AAPL MSFT GOOGL TSLA\n", argv[0]);
+        fprintf(stderr, "Usage: %s SYMBOL [SYMBOL ...]\n", argv[0]);
+        fprintf(stderr, "Example: %s AAPL MSFT GOOG\n", argv[0]);
         return 1;
     }
-    
-    // Store symbols
-    symbol_count = argc - 1;
-    if (symbol_count > MAX_SYMBOLS) symbol_count = MAX_SYMBOLS;
-    
-    for (int i = 0; i < symbol_count; i++) {
-        stock_symbols[i] = argv[i + 1];
-    }
-    
-    printf("Stock Dashboard initialized for %d symbols\n", symbol_count);
-    printf("Press Ctrl+C to exit\n");
-    sleep(2);
-    
+
+    int num_symbols = argc - 1;
+    char **symbols = &argv[1];
+
+    printf("Live Stock Dashboard (refreshes every %d seconds)\n", REFRESH_INTERVAL);
+    printf("Press Ctrl+C to quit.\n\n");
+
     while (1) {
-        char *symbols_str = build_symbols_string();
-        int count;
-        StockData *stocks = fetch_stock_data(symbols_str, &count);
-        free(symbols_str);
-        
-        if (stocks && count > 0) {
-            clear_screen();
-            display_dashboard(stocks, count);
-            free(stocks);
-        } else {
-            printf("\033[2J\033[H"); // Clear screen
-            printf("Failed to fetch data. Retrying...\n");
+        // Clear screen (ANSI escape)
+        printf("\033[2J\033[1;1H");
+
+        print_header(num_symbols);
+
+        for (int i = 0; i < num_symbols; i++) {
+            double price = fetch_price(symbols[i]);
+            print_row(symbols[i], price);
         }
-        
-        sleep(UPDATE_INTERVAL);
+
+        // Footer
+        printf("\033[1;37m+");
+        for (int i = 0; i < 44; i++) printf("-");
+        printf("+\033[0m\n");
+
+        fflush(stdout);
+        sleep(REFRESH_INTERVAL);
     }
-    
+
     return 0;
 }
