@@ -225,9 +225,9 @@ int main(int argc, char *argv[]) {
             strncpy(stocks[i].symbol, argv[i + 1], MAX_STRLEN - 1);
             stocks[i].symbol[MAX_STRLEN - 1] = '\0';
             // Convert to uppercase
-            for (int j = 0; stocks[i].symbol[j]; j++) {
-                stocks[i].symbol[j] = toupper(stocks[i].symbol[j]);
-            }
+            //for (int j = 0; stocks[i].symbol[j]; j++) {
+            //    stocks[i].symbol[j] = toupper(stocks[i].symbol[j]);
+          //  }
         }
     } else {
         // Default stocks if no arguments provided
@@ -261,11 +261,11 @@ int main(int argc, char *argv[]) {
         print_dashboard(stocks, num_stocks, update_count);
         
         // Wait before next update
-        #ifdef _WIN32
-            Sleep(10000);  // Windows: milliseconds
-        #else
-            sleep(10);     // Unix: seconds
-        #endif
+     //   #ifdef _WIN32
+     //       Sleep(10000);  // Windows: milliseconds
+     //   #else
+     //       sleep(10);     // Unix: seconds
+     //   #endif
     }
 
     return 0;
