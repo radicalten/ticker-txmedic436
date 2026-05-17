@@ -2,212 +2,176 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define SLEEP_MS(ms) Sleep(ms)
+#else
 #include <unistd.h>
+#define SLEEP_MS(ms) usleep(ms * 1000)
+#endif
+
 #include <curl/curl.h>
 #include "cJSON.h"
 
-/* ------------------------------------------------------------------ */
-/* Memory buffer for libcurl write callback                           */
-/* ------------------------------------------------------------------ */
+// --- Data structure for CURL HTTP GET ---
 struct MemoryStruct {
-    char   *memory;
+    char *memory;
     size_t size;
 };
 
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
-{
+// --- CURL Write Callback ---
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
     char *ptr = realloc(mem->memory, mem->size + realsize + 1);
-    if (!ptr)
-        return 0;                       /* out of memory */
+    if (!ptr) {
+        printf("Not enough memory (realloc returned NULL)\n");
+        return 0;
+    }
 
     mem->memory = ptr;
     memcpy(&(mem->memory[mem->size]), contents, realsize);
     mem->size += realsize;
-    mem->memory[mem->size] = 0;         /* keep null-terminated */
+    mem->memory[mem->size] = 0;
+
     return realsize;
 }
 
-/* ------------------------------------------------------------------ */
-/* Fetch JSON from Yahoo Finance                                      */
-/* ------------------------------------------------------------------ */
-static int fetch_url(const char *url, char **out_response)
-{
-    CURL *curl;
-    CURLcode res;
+// --- Fetch Stock Data from Yahoo Finance ---
+char* fetch_stock_data(CURL *curl_handle, const char* ticker) {
     struct MemoryStruct chunk;
-
     chunk.memory = malloc(1);
     chunk.size = 0;
 
-    curl = curl_easy_init();
-    if (!curl) {
-        free(chunk.memory);
-        return -1;
-    }
+    char url[256];
+    snprintf(url, sizeof(url), "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d", ticker);
 
-    /* Use a modern browser User-Agent so Yahoo doesn't 403 us */
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    // Spoof User-Agent to prevent Yahoo Finance from rejecting the request
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0");
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
-    res = curl_easy_perform(curl);
+    CURLcode res = curl_easy_perform(curl_handle);
 
     long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_easy_cleanup(curl);
+    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
 
-    if (res != CURLE_OK) {
-        fprintf(stderr, "Network error: %s\n", curl_easy_strerror(res));
+    if (res != CURLE_OK || http_code != 200) {
+        fprintf(stderr, "\nError fetching %s: HTTP %ld - %s\n", ticker, http_code, curl_easy_strerror(res));
         free(chunk.memory);
-        return -1;
+        return NULL;
     }
 
-    if (http_code != 200) {
-        fprintf(stderr, "HTTP error %ld\n", http_code);
-        free(chunk.memory);
-        return -1;
-    }
-
-    *out_response = chunk.memory;
-    return 0;
+    return chunk.memory;
 }
 
-/* ------------------------------------------------------------------ */
-/* Parse JSON and print a simple dashboard                            */
-/* ------------------------------------------------------------------ */
-static void print_dashboard(const char *json_text)
-{
-    cJSON *root = cJSON_Parse(json_text);
-    if (!root) {
-        printf("Error: failed to parse JSON.\n");
+// --- Parse JSON and Print Dashboard Row ---
+void parse_and_display(const char* json_string, const char* ticker) {
+    cJSON *root = cJSON_Parse(json_string);
+    if (root == NULL) {
+        printf("| %-6s | Parsing Error                                           |\n", ticker);
         return;
     }
 
-    cJSON *quoteResponse = cJSON_GetObjectItemCaseSensitive(root, "quoteResponse");
-    if (!quoteResponse) {
-        printf("Error: unexpected JSON format.\n");
-        cJSON_Delete(root);
-        return;
-    }
+    // Navigate the JSON: chart -> result[0] -> meta
+    cJSON *chart = cJSON_GetObjectItemCaseSensitive(root, "chart");
+    if (!chart) goto cleanup_error;
 
-    cJSON *results = cJSON_GetObjectItemCaseSensitive(quoteResponse, "result");
-    if (!results || !cJSON_IsArray(results)) {
-        printf("No stock data returned.\n");
-        cJSON_Delete(root);
-        return;
-    }
+    cJSON *result = cJSON_GetObjectItemCaseSensitive(chart, "result");
+    if (!cJSON_IsArray(result) || cJSON_GetArraySize(result) == 0) goto cleanup_error;
 
-    /* Header */
-    printf("%-8s %-25s %12s %12s %12s\n",
-           "SYMBOL", "NAME", "PRICE", "CHANGE", "CHANGE%");
-    printf("-------------------------------------------------------------------------\n");
+    cJSON *result_item = cJSON_GetArrayItem(result, 0);
+    cJSON *meta = cJSON_GetObjectItemCaseSensitive(result_item, "meta");
+    if (!meta) goto cleanup_error;
 
-    cJSON *stock;
-    cJSON_ArrayForEach(stock, results) {
-        cJSON *jsym   = cJSON_GetObjectItemCaseSensitive(stock, "symbol");
-        cJSON *jprice = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketPrice");
-        cJSON *jchng  = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChange");
-        cJSON *jpct   = cJSON_GetObjectItemCaseSensitive(stock, "regularMarketChangePercent");
+    cJSON *price_json = cJSON_GetObjectItemCaseSensitive(meta, "regularMarketPrice");
+    cJSON *prev_json = cJSON_GetObjectItemCaseSensitive(meta, "chartPreviousClose");
+    cJSON *currency_json = cJSON_GetObjectItemCaseSensitive(meta, "currency");
 
-        /* Prefer shortName, fall back to longName */
-        const char *name = "";
-        cJSON *jname = cJSON_GetObjectItemCaseSensitive(stock, "shortName");
-        if (!cJSON_IsString(jname))
-            jname = cJSON_GetObjectItemCaseSensitive(stock, "longName");
-        if (cJSON_IsString(jname))
-            name = jname->valuestring;
+    if (!cJSON_IsNumber(price_json) || !cJSON_IsNumber(prev_json)) goto cleanup_error;
 
-        const char *sym    = cJSON_IsString(jsym)   ? jsym->valuestring   : "???";
-        double price       = cJSON_IsNumber(jprice) ? jprice->valuedouble : 0.0;
-        double change      = cJSON_IsNumber(jchng)  ? jchng->valuedouble  : 0.0;
-        double pct         = cJSON_IsNumber(jpct)   ? jpct->valuedouble   : 0.0;
+    double price = price_json->valuedouble;
+    double prev_close = prev_json->valuedouble;
+    const char* currency = (currency_json && currency_json->valuestring) ? currency_json->valuestring : "USD";
 
-        /* ANSI colours: green = up, red = down */
-        const char *col = "", *rst = "\033[0m";
-        if (change > 0.0) col = "\033[32m";
-        else if (change < 0.0) col = "\033[31m";
+    double change = price - prev_close;
+    double change_pct = (prev_close != 0) ? (change / prev_close) * 100.0 : 0.0;
 
-        char display_name[26];
-        strncpy(display_name, name, 25);
-        display_name[25] = '\0';
+    // ANSI Color Codes: Green for up, Red for down
+    const char* color = change >= 0 ? "\033[32m" : "\033[31m";
+    const char* reset = "\033[0m";
+    const char* sign = change >= 0 ? "+" : "";
 
-        printf("%-8s %-25s %12.2f %s%11.2f%s %s%10.2f%%%s\n",
-               sym,
-               display_name,
-               price,
-               col, change, rst,
-               col, pct, rst);
-    }
+    printf("| %-6s | %s%-5s %-8.2f | %s%-8.2f (%s%+.2f%%)          %s|\n", 
+           ticker, color, currency, price, sign, change, color, change_pct, reset);
 
+    cJSON_Delete(root);
+    return;
+
+cleanup_error:
+    printf("| %-6s | Data unavailable or API format changed               |\n", ticker);
     cJSON_Delete(root);
 }
 
-/* ------------------------------------------------------------------ */
-static void clear_screen(void)
-{
-    printf("\033[H\033[J");   /* ANSI clear + home cursor */
-}
-
-/* ------------------------------------------------------------------ */
-int main(int argc, char *argv[])
-{
-    /* Build comma-separated symbol list */
-    char symbols[512] = {0};
-    if (argc > 1) {
-        size_t off = 0;
-        for (int i = 1; i < argc; i++) {
-            int n = snprintf(symbols + off, sizeof(symbols) - off,
-                             "%s%s", (i > 1) ? "," : "", argv[i]);
-            if (n > 0) off += n;
-        }
-    } else {
-        /* Default watchlist */
-        snprintf(symbols, sizeof(symbols),
-                  "AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,AMD,INTC");
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        printf("Usage: %s TICKER1 TICKER2 TICKER3 ...\n", argv[0]);
+        printf("Example: %s AAPL MSFT TSLA GOOGL\n", argv[0]);
+        return 1;
     }
 
-    char url[1024];
-    snprintf(url, sizeof(url),
-             "https://query1.finance.yahoo.com/v7/finance/quote?"
-             "formatted=false&symbols=%s", symbols);
+    int num_tickers = argc - 1;
+    char** tickers = &argv[1];
 
-    printf("Starting dashboard for: %s\n", symbols);
-    printf("Press Ctrl+C to exit.\n");
-    sleep(2);
+    // Initialize CURL globally and per-handle
+    curl_global_init(CURL_GLOBAL_ALL);
+    CURL *curl_handle = curl_easy_init();
+
+    if (!curl_handle) {
+        fprintf(stderr, "Failed to initialize CURL\n");
+        curl_global_cleanup();
+        return 1;
+    }
 
     while (1) {
-        char *response = NULL;
+        // Clear terminal screen and move cursor to top left
+        printf("\033[2J\033[H");
 
-        clear_screen();
-
-        /* Timestamp header */
         time_t now = time(NULL);
-        struct tm *tm_info = localtime(&now);
-        char tbuf[32];
-        strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tm_info);
+        struct tm *t = localtime(&now);
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", t);
 
-        printf("╔══════════════════════════════════════════════════════════════╗\n");
-        printf("║      LIVE STOCK DASHBOARD               %-20s ║\n", tbuf);
-        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+        printf("=======================================================\n");
+        printf("   LIVE STOCK DASHBOARD - %s\n", time_str);
+        printf("=======================================================\n");
+        printf("| Ticker | Price          | Change                    |\n");
+        printf("|--------|----------------|---------------------------|\n");
 
-        if (fetch_url(url, &response) == 0) {
-            print_dashboard(response);
-            free(response);
-        } else {
-            printf("Unable to fetch data. Retrying...\n");
+        for (int i = 0; i < num_tickers; i++) {
+            char* json_data = fetch_stock_data(curl_handle, tickers[i]);
+            if (json_data) {
+                parse_and_display(json_data, tickers[i]);
+                free(json_data); // Free the memory allocated by CURL callback
+            } else {
+                printf("| %-6s | Network Error                                           |\n", tickers[i]);
+            }
         }
 
-        printf("\n[Refresh every 5s | Ctrl+C to quit]\n");
-        sleep(5);
+        printf("=======================================================\n");
+        printf(" Refreshing in 5 seconds. Press Ctrl+C to exit.\n");
+
+        SLEEP_MS(5000); // Wait 5 seconds before next refresh
     }
 
+    // Cleanup (This part is unreachable in this infinite loop, but good practice to include)
+    curl_easy_cleanup(curl_handle);
+    curl_global_cleanup();
     return 0;
 }
