@@ -209,7 +209,7 @@ int main(int argc, char *argv[]) {
         }
 
         printf("\nPress Ctrl+C to exit\n");
-        sleep(5); // Refresh every 5 seconds
+      //  sleep(5); // Refresh every 5 seconds
     }
 
     return 0;
