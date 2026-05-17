@@ -208,7 +208,7 @@ int main(int argc, char **argv) {
             //sleep(10);
         } else {
             printf("Refreshing in %d seconds...\n", INTERVAL_SECONDS);
-            sleep(INTERVAL_SECONDS);
+            //sleep(INTERVAL_SECONDS);
         }
     }
 
