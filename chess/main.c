@@ -1,866 +1,537 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include <time.h>
 
-// Piece definitions
-#define EMPTY 0
-#define PAWN 1
-#define KNIGHT 2
-#define BISHOP 3
-#define ROOK 4
-#define QUEEN 5
-#define KING 6
+// --- Definitions ---
+#define WHITE 8
+#define BLACK 16
 
-#define WHITE 0
-#define BLACK 8
+// Global State
+int board[128];
+int side;
+int castling; // 1=WK, 2=WQ, 4=BK, 8=BQ
+int ep_sq;
+int nodes;
 
-// Board representation
-typedef struct {
-    int board[64];
-    int side;
-    int castle;
-    int ep;
-    int fifty;
-} Position;
+// --- PeSTO Evaluation Tables & Weights ---
+const int mg_value[6] = { 82, 337, 365, 477, 1025, 0 };
+const int eg_value[6] = { 94, 281, 297, 512,  936, 0 };
+const int phase_inc[6] = { 0, 1, 1, 2, 4, 0 };
 
-// Move structure
-typedef struct {
-    int from;
-    int to;
-    int piece;
-    int captured;
-    int promoted;
-    int castle;
-    int ep;
-    int fifty;
-} Move;
-
-// PeSTO piece-square tables (midgame)
-static const int mg_pawn_table[64] = {
-      0,   0,   0,   0,   0,   0,  0,   0,
-     98, 134,  61,  95,  68, 126, 34, -11,
-     -6,   7,  26,  31,  65,  56, 25, -20,
-    -14,  13,   6,  21,  23,  12, 17, -23,
-    -27,  -2,  -5,  12,  17,   6, 10, -25,
-    -26,  -4,  -4, -10,   3,   3, 33, -12,
-    -35,  -1, -20, -23, -15,  24, 38, -22,
-      0,   0,   0,   0,   0,   0,  0,   0,
+const int mg_pesto[6][64] = {
+    { // Pawn
+        0,  0,  0,  0,  0,  0,  0,  0,
+       98,134, 61, 95, 68,126, 34,-11,
+       -6,  7, 26, 31, 65, 56, 25,-20,
+      -14, 13,  6, 21, 23, 12, 17,-23,
+      -27, -2, -5, 12, 17,  6, 10,-25,
+      -26, -4, -4,-10,  3,  3, 33,-12,
+      -35, -1,-20,-23,-15, 24, 38,-22,
+        0,  0,  0,  0,  0,  0,  0,  0
+    },
+    { // Knight
+      -167, -89, -34, -49,  61, -97, -15, -107,
+       -73, -41,  72,  36,  23,  62,   7,  -17,
+       -47,  60,  37,  65,  84, 129,  73,   44,
+        -9,  17,  19,  53,  37,  69,  18,   22,
+       -13,   4,  16,  13,  28,  19,  21,   -8,
+       -23,  -9,  12,  10,  19,  17,  25,  -16,
+       -29, -53, -12,  -3,  -1,  18, -14,  -19,
+      -105, -21, -58, -33, -17, -28, -19,  -23
+    },
+    { // Bishop
+      -29,   4, -82, -37, -25, -42,   7,  -8,
+      -26,  16, -18, -13,  30,  59,  18, -47,
+      -16,  37,  43,  40,  35,  50,  37,  -2,
+       -4,   5,  19,  50,  37,  37,   7,  -2,
+       -6,  13,  13,  26,  34,  12,  10,   4,
+        0,  15,  15,  15,  14,  27,  18,  10,
+        4,  15,  16,   0,   7,  21,  33,   1,
+      -33,  -3, -14, -21, -13, -12, -39, -21
+    },
+    { // Rook
+       32,  42,  32,  51,  63,  9,  31,  43,
+       27,  32,  58,  62,  80, 67,  26,  44,
+       -5,  19,  26,  36,  17, 45,  61,  16,
+      -24, -11,   7,  26,  24, 35,  -8, -20,
+      -36, -26, -12,  -1,   9, -7,   6, -23,
+      -45, -25, -16, -17,   3,  0,  -5, -33,
+      -47, -59, -43, -36, -32,-32, -10, -18,
+      -34, -19,  15,  -8,  -5, -4,  -9,  -4
+    },
+    { // Queen
+      -28,   0,  29,  12,  59,  44,  43,  45,
+      -24, -39,  -5,   1, -16,  57,  28,  54,
+      -13, -17,   7,   8,  29,  56,  47,  57,
+      -27, -27, -16, -16,  -1,  17,  -2,   1,
+       -9, -26,  -9, -10,  -2,  -4,   3,  -3,
+      -14,   2, -11,  -2,  -5,   2,  14,   5,
+      -35,  -8,  11,   2,   8,  15,  -3,   1,
+       -1, -18,  -9,  10, -15, -25, -31, -50
+    },
+    { // King
+      -65,  23,  16, -15, -56, -34,   2,  13,
+       29,  -1, -20,  -7,  -8,  -4, -38, -29,
+       -9,  24,   2, -16, -20,   6,  22, -22,
+      -17, -20, -12, -27, -30, -25, -14, -36,
+      -49,  -1, -27, -39, -46, -44, -33, -51,
+      -14, -14, -22, -46, -44, -30, -15, -27,
+        1,   7,  -8, -64, -43, -16,   9,   8,
+      -15,  36,  12, -54,   8, -28,  24,  14
+    }
 };
 
-static const int mg_knight_table[64] = {
-    -167, -89, -34, -49,  61, -97, -15, -107,
-     -73, -41,  72,  36,  23,  62,   7,  -17,
-     -47,  60,  37,  65,  84, 129,  73,   44,
-      -9,  17,  19,  53,  37,  69,  18,   22,
-     -13,   4,  16,  13,  28,  19,  21,   -8,
-     -23,  -9,  12,  10,  19,  17,  25,  -16,
-     -29, -53, -12,  -3,  -1,  18, -14,  -19,
-    -105, -21, -58, -33, -17, -28, -19,  -23,
+const int eg_pesto[6][64] = {
+    { // Pawn
+        0,   0,   0,   0,   0,   0,   0,   0,
+      178, 173, 158, 134, 147, 132, 165, 187,
+       94, 100,  85,  67,  56,  53,  82,  84,
+       32,  24,  13,   5,  -2,   4,  17,  17,
+       13,   9,  -3,  -7,  -7,  -8,   3,  -1,
+        4,   7,  -6,   1,   0,  -5,  -1,  -8,
+       13,   8,   8,  10,  13,   0,   2,  -7,
+        0,   0,   0,   0,   0,   0,   0,   0
+    },
+    { // Knight
+      -58, -38, -13, -28, -31, -27, -63, -99,
+      -25,   8,  25,  32,  21,  11, -20, -14,
+      -24, -15,  32,  43,  31,  22,  -3, -25,
+      -36,  -5,  25,  34,  32,  47,  14, -18,
+      -41, -20,  13,  12,  12,  20, -13, -17,
+      -43, -23,  -2,  11,  22,  22,  -7,  -3,
+      -58, -47, -48, -11,  14,   9, -27, -44,
+      -29, -51, -60, -56, -44, -34, -42, -71
+    },
+    { // Bishop
+      -14, -21, -11,  -8,  -7,  -9, -17, -24,
+       -8,  -4,   7, -12,  -3, -13,  -4, -14,
+        2,  -8,   0,  -1,  -2,   6,   0,   4,
+       -3,   9,  12,   9,  14,  10,   3,   2,
+       -6,   3,  13,  19,   7,  10,  -3,  -9,
+      -12,  -3,   8,  10,  13,   3,  -7, -15,
+      -14, -18,  -7,  -1,   4,  -9, -15, -27,
+      -23,  -9, -23,  -5,  -9, -16,  -5, -17
+    },
+    { // Rook
+       13,  10,  18,  15,  12,  12,   8,   5,
+       11,  13,  13,  11,  -3,   3,   8,   3,
+        7,   7,   7,   5,   4,  -3,  -5,  -3,
+        4,   3,  13,   1,   2,   1,  -1,   2,
+        3,   5,   8,   4,  -5,  -6,  -8, -11,
+       -4,   0,  -5,  -1,  -7, -12,  -8, -16,
+       -6,  -6,   0,   2,  -9,  -9, -11,  -3,
+       -9,   2,   3,  -1,  -5, -13,   4, -20
+    },
+    { // Queen
+       -9,  22,  22,  27,  27,  19,  10,  20,
+      -17,  20,  32,  41,  58,  25,  30,   0,
+      -20,   6,   9,  49,  47,  35,  19,   9,
+        3,  22,  24,  45,  57,  40,  57,  36,
+      -18,  28,  19,  47,  31,  34,  12,  11,
+       -16, -27,  15,   6,   9,  17,  10,   5,
+       -22, -23, -30, -16, -16, -23, -36, -32,
+       -33, -28, -22, -43,  -5, -32, -20, -41
+    },
+    { // King
+      -74, -35, -18, -18, -11,  15,   4, -17,
+      -12,  17,  14,  17,  17,  38,  23,  11,
+       10,  17,  23,  15,  20,  45,  44,  13,
+       -8,  22,  24,  27,  26,  33,  26,   3,
+      -18,  -4,  21,  24,  27,  23,   9, -11,
+      -19,  -3,  11,  21,  23,  16,   7,  -9,
+      -27, -11,   4,  13,  14,   4,  -5, -17,
+      -53, -34, -21, -11, -28, -14, -24, -43
+    }
 };
 
-static const int mg_bishop_table[64] = {
-    -29,   4, -82, -37, -25, -42,   7,  -8,
-    -26,  16, -18, -13,  30,  59,  18, -47,
-    -16,  37,  43,  40,  35,  50,  37,  -2,
-     -4,   5,  19,  50,  37,  37,   7,  -2,
-     -6,  13,  13,  26,  34,  12,  10,   4,
-      0,  15,  15,  15,  14,  27,  18,  10,
-      4,  15,  16,   0,   7,  21,  33,   1,
-    -33,  -3, -14, -21, -13, -12, -39, -21,
-};
+// --- Core Logic ---
 
-static const int mg_rook_table[64] = {
-     32,  42,  32,  51, 63,  9,  31,  43,
-     27,  32,  58,  62, 80, 67,  26,  44,
-     -5,  19,  26,  36, 17, 45,  61,  16,
-    -24, -11,   7,  26, 24, 35,  -8, -20,
-    -36, -26, -12,  -1,  9, -7,   6, -23,
-    -45, -25, -16, -17,  3,  0,  -5, -33,
-    -44, -16, -20,  -9, -1, 11,  -6, -71,
-    -19, -13,   1,  17, 16,  7, -37, -26,
-};
-
-static const int mg_queen_table[64] = {
-    -28,   0,  29,  12,  59,  44,  43,  45,
-    -24, -39,  -5,   1, -16,  57,  28,  54,
-    -13, -17,   7,   8,  29,  56,  47,  57,
-    -27, -27, -16, -16,  -1,  17,  -2,   1,
-     -9, -26,  -9, -10,  -2,  -4,   3,  -3,
-    -14,   2, -11,  -2,  -5,   2,  14,   5,
-    -35,  -8,  11,   2,   8,  15,  -3,   1,
-     -1, -18,  -9,  10, -15, -25, -31, -50,
-};
-
-static const int mg_king_table[64] = {
-    -65,  23,  16, -15, -56, -34,   2,  13,
-     29,  -1, -20,  -7,  -8,  -4, -38, -29,
-     -9,  24,   2, -16, -20,   6,  22, -22,
-    -17, -20, -12, -27, -30, -25, -14, -36,
-    -49,  -1, -27, -39, -46, -44, -33, -51,
-    -14, -14, -22, -46, -44, -30, -15, -27,
-      1,   7,  -8, -64, -43, -16,   9,   8,
-    -15,  36,  12, -54,   8, -28,  24,  14,
-};
-
-// Endgame tables
-static const int eg_pawn_table[64] = {
-      0,   0,   0,   0,   0,   0,   0,   0,
-    178, 173, 158, 134, 147, 132, 165, 187,
-     94, 100,  85,  67,  56,  53,  82,  84,
-     32,  24,  13,   5,  -2,   4,  17,  17,
-     13,   9,  -3,  -7,  -7,  -8,   3,  -1,
-      4,   7,  -6,   1,   0,  -5,  -1,  -8,
-     13,   8,   8,  10,  13,   0,   2,  -7,
-      0,   0,   0,   0,   0,   0,   0,   0,
-};
-
-static const int eg_knight_table[64] = {
-    -58, -38, -13, -28, -31, -27, -63, -99,
-    -25,  -8, -25,  -2,  -9, -25, -24, -52,
-    -24, -20,  10,   9,  -1,  -9, -19, -41,
-    -17,   3,  22,  22,  22,  11,   8, -18,
-    -18,  -6,  16,  25,  16,  17,   4, -18,
-    -23,  -3,  -1,  15,  10,  -3, -20, -22,
-    -42, -20, -10,  -5,  -2, -20, -23, -44,
-    -29, -51, -23, -15, -22, -18, -50, -64,
-};
-
-static const int eg_bishop_table[64] = {
-    -14, -21, -11,  -8, -7,  -9, -17, -24,
-     -8,  -4,   7, -12, -3, -13,  -4, -14,
-      2,  -8,   0,  -1, -2,   6,   0,   4,
-     -3,   9,  12,   9, 14,  10,   3,   2,
-     -6,   3,  13,  19,  7,  10,  -3,  -9,
-    -12,  -3,   8,  10, 13,   3,  -7, -15,
-    -14, -18,  -7,  -1,  4,  -9, -15, -27,
-    -23,  -9, -23,  -5, -9, -16,  -5, -17,
-};
-
-static const int eg_rook_table[64] = {
-    13, 10, 18, 15, 12,  12,   8,   5,
-    11, 13, 13, 11, -3,   3,   8,   3,
-     7,  7,  7,  5,  4,  -3,  -5,  -3,
-     4,  3, 13,  1,  2,   1,  -1,   2,
-     3,  5,  8,  4, -5,  -6,  -8, -11,
-    -4,  0, -5, -1, -7, -12,  -8, -16,
-    -6, -6,  0,  2, -9,  -9, -11,  -3,
-    -9,  2,  3, -1, -5, -13,   4, -20,
-};
-
-static const int eg_queen_table[64] = {
-     -9,  22,  22,  27,  27,  19,  10,  20,
-    -17,  20,  32,  41,  58,  25,  30,   0,
-    -20,   6,   9,  49,  47,  35,  19,   9,
-      3,  22,  24,  45,  57,  40,  57,  36,
-    -18,  28,  19,  47,  31,  34,  39,  23,
-    -16, -27,  15,   6,   9,  17,  10,   5,
-    -22, -23, -30, -16, -16, -23, -36, -32,
-    -33, -28, -22, -43,  -5, -32, -20, -41,
-};
-
-static const int eg_king_table[64] = {
-    -74, -35, -18, -18, -11,  15,   4, -17,
-    -12,  17,  14,  17,  17,  38,  23,  11,
-     10,  17,  23,  15,  20,  45,  44,  13,
-     -8,  22,  24,  27,  26,  33,  26,   3,
-    -18,  -4,  21,  24,  27,  23,   9, -11,
-    -19,  -3,  11,  21,  23,  16,   7,  -9,
-    -27, -11,   4,  13,  14,   4,  -5, -17,
-    -53, -34, -21, -11, -28, -14, -24, -43
-};
-
-// Piece values (midgame, endgame)
-static const int piece_value_mg[7] = {0, 82, 337, 365, 477, 1025, 0};
-static const int piece_value_eg[7] = {0, 94, 281, 297, 512, 936, 0};
-
-// Direction offsets
-static const int knight_offsets[8] = {-21, -19, -12, -8, 8, 12, 19, 21};
-static const int bishop_offsets[4] = {-11, -9, 9, 11};
-static const int rook_offsets[4] = {-10, -1, 1, 10};
-static const int king_offsets[8] = {-11, -10, -9, -1, 1, 9, 10, 11};
-
-// Mailbox board for move generation
-static const int mailbox[120] = {
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1,  0,  1,  2,  3,  4,  5,  6,  7, -1,
-    -1,  8,  9, 10, 11, 12, 13, 14, 15, -1,
-    -1, 16, 17, 18, 19, 20, 21, 22, 23, -1,
-    -1, 24, 25, 26, 27, 28, 29, 30, 31, -1,
-    -1, 32, 33, 34, 35, 36, 37, 38, 39, -1,
-    -1, 40, 41, 42, 43, 44, 45, 46, 47, -1,
-    -1, 48, 49, 50, 51, 52, 53, 54, 55, -1,
-    -1, 56, 57, 58, 59, 60, 61, 62, 63, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
-};
-
-static const int mailbox64[64] = {
-    21, 22, 23, 24, 25, 26, 27, 28,
-    31, 32, 33, 34, 35, 36, 37, 38,
-    41, 42, 43, 44, 45, 46, 47, 48,
-    51, 52, 53, 54, 55, 56, 57, 58,
-    61, 62, 63, 64, 65, 66, 67, 68,
-    71, 72, 73, 74, 75, 76, 77, 78,
-    81, 82, 83, 84, 85, 86, 87, 88,
-    91, 92, 93, 94, 95, 96, 97, 98
-};
-
-// Function prototypes
-void init_position(Position *pos);
-void print_board(Position *pos);
-int square_attacked(Position *pos, int sq, int side);
-int in_check(Position *pos, int side);
-void make_move(Position *pos, Move *m);
-void unmake_move(Position *pos, Move *m);
-int generate_moves(Position *pos, Move *moves);
-int evaluate(Position *pos);
-int search(Position *pos, int depth, int alpha, int beta);
-Move get_best_move(Position *pos, int depth);
-int parse_move(Position *pos, char *str, Move *m);
-void move_to_string(Move *m, char *str);
-
-// Initialize starting position
-void init_position(Position *pos) {
-    int initial_board[64] = {
-        ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK,
-        PAWN, PAWN, PAWN, PAWN, PAWN, PAWN, PAWN, PAWN,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        PAWN|BLACK, PAWN|BLACK, PAWN|BLACK, PAWN|BLACK, PAWN|BLACK, PAWN|BLACK, PAWN|BLACK, PAWN|BLACK,
-        ROOK|BLACK, KNIGHT|BLACK, BISHOP|BLACK, QUEEN|BLACK, KING|BLACK, BISHOP|BLACK, KNIGHT|BLACK, ROOK|BLACK
+void init_board() {
+    memset(board, 0, sizeof(board));
+    int start[64] = {
+        10, 8, 9,11,12, 9, 8,10,
+         7, 7, 7, 7, 7, 7, 7, 7,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         1, 1, 1, 1, 1, 1, 1, 1,
+         4, 2, 3, 5, 6, 3, 2, 4
     };
-    
-    memcpy(pos->board, initial_board, sizeof(initial_board));
-    pos->side = WHITE;
-    pos->castle = 15; // All castling rights
-    pos->ep = -1;
-    pos->fifty = 0;
+    for (int i = 0; i < 64; i++) {
+        if (start[i]) {
+            int sq = (i / 8) * 16 + (i % 8);
+            board[sq] = ((start[i] > 6) ? BLACK : WHITE) | ((start[i] > 6) ? start[i]-6 : start[i]);
+        }
+    }
+    side = WHITE;
+    castling = 15;
+    ep_sq = 0;
 }
 
-// Print the board
-void print_board(Position *pos) {
-    const char *pieces = ".PNBRQKpnbrqk";
-    
-    printf("\n  a b c d e f g h\n");
-    for (int rank = 7; rank >= 0; rank--) {
-        printf("%d ", rank + 1);
-        for (int file = 0; file < 8; file++) {
-            int sq = rank * 8 + file;
-            int piece = pos->board[sq];
-            if (piece == EMPTY) {
-                printf(". ");
-            } else {
-                int p = piece & 7;
-                int color = piece & 8;
-                printf("%c ", pieces[p + (color ? 7 : 0)]);
-            }
+void print_board() {
+    char pieces[] = ".PNBRQK.pnbrqk";
+    printf("\n");
+    for (int row = 0; row < 8; row++) {
+        printf("%d ", 8 - row);
+        for (int col = 0; col < 8; col++) {
+            int p = board[row * 16 + col];
+            printf("%c ", pieces[p ? (p & 7) + ((p & 16) ? 7 : 0) : 0]);
         }
-        printf("%d\n", rank + 1);
+        printf("\n");
     }
-    printf("  a b c d e f g h\n");
-    printf("\nSide to move: %s\n", pos->side == WHITE ? "White" : "Black");
+    printf("  a b c d e f g h\n\n");
 }
 
-// Check if a square is attacked
-int square_attacked(Position *pos, int sq, int side) {
-    // Pawn attacks
-    if (side == WHITE) {
-        if ((sq / 8) < 7) {
-            if ((sq % 8) > 0 && pos->board[sq + 7] == (PAWN | WHITE)) return 1;
-            if ((sq % 8) < 7 && pos->board[sq + 9] == (PAWN | WHITE)) return 1;
-        }
-    } else {
-        if ((sq / 8) > 0) {
-            if ((sq % 8) > 0 && pos->board[sq - 9] == (PAWN | BLACK)) return 1;
-            if ((sq % 8) < 7 && pos->board[sq - 7] == (PAWN | BLACK)) return 1;
-        }
+int is_attacked(int sq, int enemy) {
+    int pawn_step = (enemy == WHITE) ? 16 : -16;
+    for (int d = -1; d <= 1; d += 2) {
+        int p_sq = sq + pawn_step + d;
+        if (!(p_sq & 0x88) && board[p_sq] == (enemy | 1)) return 1;
     }
-    
-    // Knight attacks
-    for (int i = 0; i < 8; i++) {
-        int to = mailbox[mailbox64[sq] + knight_offsets[i]];
-        if (to != -1 && pos->board[to] == (KNIGHT | side)) return 1;
+    int n_dirs[] = {-33, -31, -18, -14, 14, 18, 31, 33};
+    for (int i=0; i<8; i++) {
+        int n_sq = sq + n_dirs[i];
+        if (!(n_sq & 0x88) && board[n_sq] == (enemy | 2)) return 1;
     }
-    
-    // Bishop/Queen attacks
-    for (int i = 0; i < 4; i++) {
-        int n = mailbox64[sq];
-        while (1) {
-            n += bishop_offsets[i];
-            int to = mailbox[n];
-            if (to == -1) break;
-            if (pos->board[to] != EMPTY) {
-                int piece = pos->board[to];
-                if ((piece & 8) == side) {
-                    int p = piece & 7;
-                    if (p == BISHOP || p == QUEEN) return 1;
-                }
+    int k_dirs[] = {-17, -16, -15, -1, 1, 15, 16, 17};
+    for (int i=0; i<8; i++) {
+        int k_sq = sq + k_dirs[i];
+        if (!(k_sq & 0x88) && board[k_sq] == (enemy | 6)) return 1;
+    }
+    int b_dirs[] = {-17, -15, 15, 17};
+    for (int i=0; i<4; i++) {
+        int cur = sq + b_dirs[i];
+        while (!(cur & 0x88)) {
+            if (board[cur]) {
+                if (board[cur] == (enemy | 3) || board[cur] == (enemy | 5)) return 1;
                 break;
             }
+            cur += b_dirs[i];
         }
     }
-    
-    // Rook/Queen attacks
-    for (int i = 0; i < 4; i++) {
-        int n = mailbox64[sq];
-        while (1) {
-            n += rook_offsets[i];
-            int to = mailbox[n];
-            if (to == -1) break;
-            if (pos->board[to] != EMPTY) {
-                int piece = pos->board[to];
-                if ((piece & 8) == side) {
-                    int p = piece & 7;
-                    if (p == ROOK || p == QUEEN) return 1;
-                }
+    int r_dirs[] = {-16, -1, 1, 16};
+    for (int i=0; i<4; i++) {
+        int cur = sq + r_dirs[i];
+        while (!(cur & 0x88)) {
+            if (board[cur]) {
+                if (board[cur] == (enemy | 4) || board[cur] == (enemy | 5)) return 1;
                 break;
             }
-        }
-    }
-    
-    // King attacks
-    for (int i = 0; i < 8; i++) {
-        int to = mailbox[mailbox64[sq] + king_offsets[i]];
-        if (to != -1 && pos->board[to] == (KING | side)) return 1;
-    }
-    
-    return 0;
-}
-
-// Check if side is in check
-int in_check(Position *pos, int side) {
-    // Find king
-    for (int sq = 0; sq < 64; sq++) {
-        if (pos->board[sq] == (KING | side)) {
-            return square_attacked(pos, sq, side ^ 8);
+            cur += r_dirs[i];
         }
     }
     return 0;
 }
 
-// Make a move
-void make_move(Position *pos, Move *m) {
-    m->captured = pos->board[m->to];
-    m->castle = pos->castle;
-    m->ep = pos->ep;
-    m->fifty = pos->fifty;
-    
-    pos->board[m->to] = pos->board[m->from];
-    pos->board[m->from] = EMPTY;
-    
-    // Handle promotion
-    if (m->promoted) {
-        pos->board[m->to] = m->promoted | pos->side;
-    }
-    
-    // Handle castling
-    if ((m->piece & 7) == KING) {
-        if (m->to - m->from == 2) { // Kingside
-            pos->board[m->from + 1] = pos->board[m->from + 3];
-            pos->board[m->from + 3] = EMPTY;
-        } else if (m->from - m->to == 2) { // Queenside
-            pos->board[m->from - 1] = pos->board[m->from - 4];
-            pos->board[m->from - 4] = EMPTY;
-        }
-    }
-    
-    // Handle en passant capture
-    if ((m->piece & 7) == PAWN && m->to == pos->ep) {
-        if (pos->side == WHITE) {
-            pos->board[m->to - 8] = EMPTY;
-        } else {
-            pos->board[m->to + 8] = EMPTY;
-        }
-    }
-    
-    // Update en passant square
-    pos->ep = -1;
-    if ((m->piece & 7) == PAWN && abs(m->to - m->from) == 16) {
-        pos->ep = (m->from + m->to) / 2;
-    }
-    
-    // Update castling rights
-    if ((m->piece & 7) == KING) {
-        if (pos->side == WHITE) {
-            pos->castle &= ~3;
-        } else {
-            pos->castle &= ~12;
-        }
-    }
-    if ((m->piece & 7) == ROOK) {
-        if (m->from == 0) pos->castle &= ~1;
-        if (m->from == 7) pos->castle &= ~2;
-        if (m->from == 56) pos->castle &= ~4;
-        if (m->from == 63) pos->castle &= ~8;
-    }
-    if (m->to == 0) pos->castle &= ~1;
-    if (m->to == 7) pos->castle &= ~2;
-    if (m->to == 56) pos->castle &= ~4;
-    if (m->to == 63) pos->castle &= ~8;
-    
-    // Update fifty move counter
-    if ((m->piece & 7) == PAWN || m->captured != EMPTY) {
-        pos->fifty = 0;
-    } else {
-        pos->fifty++;
-    }
-    
-    pos->side ^= 8;
-}
-
-// Unmake a move
-void unmake_move(Position *pos, Move *m) {
-    pos->side ^= 8;
-    
-    pos->board[m->from] = m->piece;
-    pos->board[m->to] = m->captured;
-    
-    // Undo castling
-    if ((m->piece & 7) == KING) {
-        if (m->to - m->from == 2) {
-            pos->board[m->from + 3] = pos->board[m->from + 1];
-            pos->board[m->from + 1] = EMPTY;
-        } else if (m->from - m->to == 2) {
-            pos->board[m->from - 4] = pos->board[m->from - 1];
-            pos->board[m->from - 1] = EMPTY;
-        }
-    }
-    
-    // Undo en passant
-    if ((m->piece & 7) == PAWN && m->to == m->ep) {
-        pos->board[m->to] = EMPTY;
-        if (pos->side == WHITE) {
-            pos->board[m->to - 8] = PAWN | BLACK;
-        } else {
-            pos->board[m->to + 8] = PAWN | WHITE;
-        }
-    }
-    
-    pos->castle = m->castle;
-    pos->ep = m->ep;
-    pos->fifty = m->fifty;
-}
-
-// Generate all pseudo-legal moves
-int generate_moves(Position *pos, Move *moves) {
+int generate_moves(int *moves) {
     int count = 0;
-    
-    for (int from = 0; from < 64; from++) {
-        int piece = pos->board[from];
-        if (piece == EMPTY || (piece & 8) != pos->side) continue;
-        
-        int p = piece & 7;
-        
-        if (p == PAWN) {
-            int dir = (pos->side == WHITE) ? 8 : -8;
-            int start_rank = (pos->side == WHITE) ? 1 : 6;
-            int promo_rank = (pos->side == WHITE) ? 7 : 0;
-            
-            // Forward move
-            int to = from + dir;
-            if (to >= 0 && to < 64 && pos->board[to] == EMPTY) {
-                if (to / 8 == promo_rank) {
-                    for (int promo = QUEEN; promo >= KNIGHT; promo--) {
-                        moves[count].from = from;
-                        moves[count].to = to;
-                        moves[count].piece = piece;
-                        moves[count].promoted = promo;
-                        count++;
-                    }
-                } else {
-                    moves[count].from = from;
-                    moves[count].to = to;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-                
-                // Double move from start
-                if (from / 8 == start_rank) {
-                    to = from + 2 * dir;
-                    if (pos->board[to] == EMPTY) {
-                        moves[count].from = from;
-                        moves[count].to = to;
-                        moves[count].piece = piece;
-                        moves[count].promoted = 0;
-                        count++;
-                    }
-                }
-            }
-            
-            // Captures
-            int cap_offsets[2] = {dir - 1, dir + 1};
-            for (int i = 0; i < 2; i++) {
-                int to = from + cap_offsets[i];
-                if (to < 0 || to >= 64) continue;
-                if (abs((to % 8) - (from % 8)) != 1) continue;
-                
-                if ((pos->board[to] != EMPTY && (pos->board[to] & 8) != pos->side) || to == pos->ep) {
-                    if (to / 8 == promo_rank) {
-                        for (int promo = QUEEN; promo >= KNIGHT; promo--) {
-                            moves[count].from = from;
-                            moves[count].to = to;
-                            moves[count].piece = piece;
-                            moves[count].promoted = promo;
-                            count++;
-                        }
+    int enemy = side ^ 24;
+    int dirs[6][8] = {
+        {0}, {-33, -31, -18, -14, 14, 18, 31, 33}, {-17, -15, 15, 17}, 
+        {-16, -1, 1, 16}, {-17, -16, -15, -1, 1, 15, 16, 17}, {-17, -16, -15, -1, 1, 15, 16, 17}
+    };
+    int num_dirs[6] = {0, 8, 4, 4, 8, 8};
+
+    for (int sq = 0; sq < 128; sq++) {
+        if (!(sq & 0x88) && (board[sq] & side)) {
+            int p = board[sq] & 7;
+            if (p == 1) { // Pawn
+                int step = (side == WHITE) ? -16 : 16;
+                int prom_row = (side == WHITE) ? 0 : 7;
+                if (!( (sq + step) & 0x88) && board[sq + step] == 0) {
+                    if ((sq + step) >> 4 == prom_row) {
+                        for(int pr = 2; pr <= 5; pr++) moves[count++] = sq | ((sq+step)<<8) | (pr<<16);
                     } else {
-                        moves[count].from = from;
-                        moves[count].to = to;
-                        moves[count].piece = piece;
-                        moves[count].promoted = 0;
-                        count++;
+                        moves[count++] = sq | ((sq+step)<<8);
+                        int start_row = (side == WHITE) ? 6 : 1;
+                        if ((sq >> 4) == start_row && board[sq + step * 2] == 0)
+                            moves[count++] = sq | ((sq+step*2)<<8);
                     }
                 }
-            }
-        } else if (p == KNIGHT) {
-            for (int i = 0; i < 8; i++) {
-                int to = mailbox[mailbox64[from] + knight_offsets[i]];
-                if (to != -1 && (pos->board[to] == EMPTY || (pos->board[to] & 8) != pos->side)) {
-                    moves[count].from = from;
-                    moves[count].to = to;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-            }
-        } else if (p == BISHOP || p == QUEEN) {
-            for (int i = 0; i < 4; i++) {
-                int n = mailbox64[from];
-                while (1) {
-                    n += bishop_offsets[i];
-                    int to = mailbox[n];
-                    if (to == -1) break;
-                    if (pos->board[to] != EMPTY) {
-                        if ((pos->board[to] & 8) != pos->side) {
-                            moves[count].from = from;
-                            moves[count].to = to;
-                            moves[count].piece = piece;
-                            moves[count].promoted = 0;
-                            count++;
+                for (int d = -1; d <= 1; d += 2) {
+                    int cap_sq = sq + step + d;
+                    if (!(cap_sq & 0x88)) {
+                        if ((board[cap_sq] & enemy) || cap_sq == ep_sq) {
+                            int ep_flag = (cap_sq == ep_sq) ? (1<<20) : 0;
+                            if (cap_sq >> 4 == prom_row) {
+                                for(int pr = 2; pr <= 5; pr++) moves[count++] = sq | (cap_sq<<8) | (pr<<16) | ep_flag;
+                            } else {
+                                moves[count++] = sq | (cap_sq<<8) | ep_flag;
+                            }
                         }
-                        break;
                     }
-                    moves[count].from = from;
-                    moves[count].to = to;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
                 }
-            }
-        }
-        
-        if (p == ROOK || p == QUEEN) {
-            for (int i = 0; i < 4; i++) {
-                int n = mailbox64[from];
-                while (1) {
-                    n += rook_offsets[i];
-                    int to = mailbox[n];
-                    if (to == -1) break;
-                    if (pos->board[to] != EMPTY) {
-                        if ((pos->board[to] & 8) != pos->side) {
-                            moves[count].from = from;
-                            moves[count].to = to;
-                            moves[count].piece = piece;
-                            moves[count].promoted = 0;
-                            count++;
+            } else { // Officers
+                for (int i = 0; i < num_dirs[p - 1]; i++) {
+                    int cur = sq + dirs[p - 1][i];
+                    while (!(cur & 0x88)) {
+                        if (board[cur]) {
+                            if (board[cur] & enemy) moves[count++] = sq | (cur<<8);
+                            break;
                         }
-                        break;
+                        moves[count++] = sq | (cur<<8);
+                        if (p == 2 || p == 6) break;
+                        cur += dirs[p - 1][i];
                     }
-                    moves[count].from = from;
-                    moves[count].to = to;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
                 }
-            }
-        } else if (p == KING) {
-            for (int i = 0; i < 8; i++) {
-                int to = mailbox[mailbox64[from] + king_offsets[i]];
-                if (to != -1 && (pos->board[to] == EMPTY || (pos->board[to] & 8) != pos->side)) {
-                    moves[count].from = from;
-                    moves[count].to = to;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-            }
-            
-            // Castling
-            if (pos->side == WHITE) {
-                if ((pos->castle & 2) && pos->board[5] == EMPTY && pos->board[6] == EMPTY &&
-                    !square_attacked(pos, 4, BLACK) && !square_attacked(pos, 5, BLACK)) {
-                    moves[count].from = 4;
-                    moves[count].to = 6;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-                if ((pos->castle & 1) && pos->board[3] == EMPTY && pos->board[2] == EMPTY && pos->board[1] == EMPTY &&
-                    !square_attacked(pos, 4, BLACK) && !square_attacked(pos, 3, BLACK)) {
-                    moves[count].from = 4;
-                    moves[count].to = 2;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-            } else {
-                if ((pos->castle & 8) && pos->board[61] == EMPTY && pos->board[62] == EMPTY &&
-                    !square_attacked(pos, 60, WHITE) && !square_attacked(pos, 61, WHITE)) {
-                    moves[count].from = 60;
-                    moves[count].to = 62;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
-                }
-                if ((pos->castle & 4) && pos->board[59] == EMPTY && pos->board[58] == EMPTY && pos->board[57] == EMPTY &&
-                    !square_attacked(pos, 60, WHITE) && !square_attacked(pos, 59, WHITE)) {
-                    moves[count].from = 60;
-                    moves[count].to = 58;
-                    moves[count].piece = piece;
-                    moves[count].promoted = 0;
-                    count++;
+                // Castling
+                if (p == 6) {
+                    if (side == WHITE) {
+                        if ((castling & 1) && !board[117] && !board[118] && !is_attacked(116, BLACK) && !is_attacked(117, BLACK) && !is_attacked(118, BLACK))
+                            moves[count++] = 116 | (118<<8) | (1<<24);
+                        if ((castling & 2) && !board[115] && !board[114] && !board[113] && !is_attacked(116, BLACK) && !is_attacked(115, BLACK) && !is_attacked(114, BLACK))
+                            moves[count++] = 116 | (114<<8) | (1<<24);
+                    } else {
+                        if ((castling & 4) && !board[5] && !board[6] && !is_attacked(4, WHITE) && !is_attacked(5, WHITE) && !is_attacked(6, WHITE))
+                            moves[count++] = 4 | (6<<8) | (1<<24);
+                        if ((castling & 8) && !board[3] && !board[2] && !board[1] && !is_attacked(4, WHITE) && !is_attacked(3, WHITE) && !is_attacked(2, WHITE))
+                            moves[count++] = 4 | (2<<8) | (1<<24);
+                    }
                 }
             }
         }
     }
-    
     return count;
 }
 
-// PeSTO evaluation
-int evaluate(Position *pos) {
-    int mg[2] = {0, 0};
-    int eg[2] = {0, 0};
-    int game_phase = 0;
+void make_move(int move) {
+    int src = move & 0xFF, dst = (move >> 8) & 0xFF, promo = (move >> 16) & 7;
+    int ep = (move >> 20) & 1, castle = (move >> 24) & 1;
+    int p = board[src];
     
-    for (int sq = 0; sq < 64; sq++) {
-        int piece = pos->board[sq];
-        if (piece == EMPTY) continue;
-        
-        int p = piece & 7;
-        int color = (piece & 8) ? 1 : 0;
-        int sq_flipped = color ? (sq ^ 56) : sq;
-        
-        // Material
-        mg[color] += piece_value_mg[p];
-        eg[color] += piece_value_eg[p];
-        
-        // Piece-square tables
-        switch (p) {
-            case PAWN:
-                mg[color] += mg_pawn_table[sq_flipped];
-                eg[color] += eg_pawn_table[sq_flipped];
-                break;
-            case KNIGHT:
-                mg[color] += mg_knight_table[sq_flipped];
-                eg[color] += eg_knight_table[sq_flipped];
-                game_phase += 1;
-                break;
-            case BISHOP:
-                mg[color] += mg_bishop_table[sq_flipped];
-                eg[color] += eg_bishop_table[sq_flipped];
-                game_phase += 1;
-                break;
-            case ROOK:
-                mg[color] += mg_rook_table[sq_flipped];
-                eg[color] += eg_rook_table[sq_flipped];
-                game_phase += 2;
-                break;
-            case QUEEN:
-                mg[color] += mg_queen_table[sq_flipped];
-                eg[color] += eg_queen_table[sq_flipped];
-                game_phase += 4;
-                break;
-            case KING:
-                mg[color] += mg_king_table[sq_flipped];
-                eg[color] += eg_king_table[sq_flipped];
-                break;
-        }
+    board[dst] = p; board[src] = 0;
+    if (promo) board[dst] = side | promo;
+    if (ep) board[dst + ((side == WHITE) ? 16 : -16)] = 0;
+    if (castle) {
+        if (dst == 118) { board[117] = board[119]; board[119] = 0; } // WK
+        if (dst == 114) { board[115] = board[112]; board[112] = 0; } // WQ
+        if (dst == 6)   { board[5] = board[7]; board[7] = 0; }     // BK
+        if (dst == 2)   { board[3] = board[0]; board[0] = 0; }     // BQ
     }
-    
-    // Tapered eval
-    int mg_score = mg[0] - mg[1];
-    int eg_score = eg[0] - eg[1];
-    int mg_phase = game_phase;
-    if (mg_phase > 24) mg_phase = 24;
-    int eg_phase = 24 - mg_phase;
-    
-    int score = (mg_score * mg_phase + eg_score * eg_phase) / 24;
-    
-    return (pos->side == WHITE) ? score : -score;
+
+    if (src == 116 || dst == 116) castling &= ~3;
+    if (src == 112 || dst == 112) castling &= ~2;
+    if (src == 119 || dst == 119) castling &= ~1;
+    if (src == 4 || dst == 4) castling &= ~12;
+    if (src == 0 || dst == 0) castling &= ~8;
+    if (src == 7 || dst == 7) castling &= ~4;
+
+    ep_sq = 0;
+    if ((p & 7) == 1 && abs(src - dst) == 32) ep_sq = src + ((side == WHITE) ? -16 : 16);
+    side ^= 24;
 }
 
-// Negamax search with alpha-beta pruning
-int search(Position *pos, int depth, int alpha, int beta) {
-    if (depth == 0) {
-        return evaluate(pos);
-    }
-    
-    Move moves[256];
-    int count = generate_moves(pos, moves);
-    
-    if (count == 0) {
-        if (in_check(pos, pos->side)) {
-            return -30000 - depth; // Checkmate
+// --- Evaluation & Search ---
+
+int evaluate() {
+    int mg[2] = {0, 0}, eg[2] = {0, 0}, gamePhase = 0;
+    for (int sq = 0; sq < 128; sq++) {
+        if (!(sq & 0x88) && board[sq]) {
+            int p = (board[sq] & 7) - 1;
+            int c = (board[sq] & WHITE) ? 0 : 1; // 0 for White, 1 for Black
+            int idx64 = (sq >> 4) * 8 + (sq & 7);
+            int mapped_sq = (c == 0) ? idx64 : (idx64 ^ 56);
+            
+            mg[c] += mg_value[p] + mg_pesto[p][mapped_sq];
+            eg[c] += eg_value[p] + eg_pesto[p][mapped_sq];
+            gamePhase += phase_inc[p];
         }
-        return 0; // Stalemate
     }
-    
+    int mgPhase = (gamePhase > 24) ? 24 : gamePhase;
+    int egPhase = 24 - mgPhase;
+    int score = ((mg[0] - mg[1]) * mgPhase + (eg[0] - eg[1]) * egPhase) / 24;
+    return (side == WHITE) ? score : -score;
+}
+
+void sort_moves(int *moves, int count) {
+    for (int i = 0; i < count - 1; i++) {
+        int best_i = i, best_score = -1;
+        for (int j = i; j < count; j++) {
+            int d = (moves[j] >> 8) & 0xFF;
+            int score = board[d] ? (board[d] & 7) : 0;
+            if (moves[j] & (1<<20)) score = 1; // EP
+            if (score > best_score) { best_score = score; best_i = j; }
+        }
+        int temp = moves[i]; moves[i] = moves[best_i]; moves[best_i] = temp;
+    }
+}
+
+int quiesce(int alpha, int beta) {
+    nodes++;
+    int stand_pat = evaluate();
+    if (stand_pat >= beta) return beta;
+    if (alpha < stand_pat) alpha = stand_pat;
+
+    int moves[256];
+    int count = generate_moves(moves);
+    sort_moves(moves, count);
+
     for (int i = 0; i < count; i++) {
-        make_move(pos, &moves[i]);
+        int dst = (moves[i] >> 8) & 0xFF;
+        if (board[dst] == 0 && !(moves[i] & (1<<20))) continue; // Captures only
         
-        if (in_check(pos, pos->side ^ 8)) {
-            unmake_move(pos, &moves[i]);
+        int saved_board[128], saved_side = side, saved_castling = castling, saved_ep = ep_sq;
+        memcpy(saved_board, board, sizeof(board));
+        make_move(moves[i]);
+        
+        int king_sq = -1;
+        for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (saved_side|6)) king_sq = sq;
+        if (is_attacked(king_sq, side)) {
+            memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
             continue;
         }
-        
-        int score = -search(pos, depth - 1, -beta, -alpha);
-        unmake_move(pos, &moves[i]);
-        
-        if (score >= beta) {
-            return beta;
-        }
-        if (score > alpha) {
-            alpha = score;
-        }
+
+        int score = -quiesce(-beta, -alpha);
+        memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
+
+        if (score >= beta) return beta;
+        if (score > alpha) alpha = score;
     }
-    
     return alpha;
 }
 
-// Get best move
-Move get_best_move(Position *pos, int depth) {
-    Move moves[256];
-    int count = generate_moves(pos, moves);
-    
-    Move best_move = moves[0];
-    int best_score = -999999;
-    
+int search(int depth, int alpha, int beta) {
+    nodes++;
+    if (depth == 0) return quiesce(alpha, beta);
+
+    int moves[256], legal = 0;
+    int count = generate_moves(moves);
+    sort_moves(moves, count);
+    int best_score = -100000;
+
     for (int i = 0; i < count; i++) {
-        make_move(pos, &moves[i]);
-        
-        if (in_check(pos, pos->side ^ 8)) {
-            unmake_move(pos, &moves[i]);
+        int saved_board[128], saved_side = side, saved_castling = castling, saved_ep = ep_sq;
+        memcpy(saved_board, board, sizeof(board));
+        make_move(moves[i]);
+
+        int king_sq = -1;
+        for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (saved_side|6)) king_sq = sq;
+        if (is_attacked(king_sq, side)) {
+            memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
             continue;
         }
-        
-        int score = -search(pos, depth - 1, -999999, 999999);
-        unmake_move(pos, &moves[i]);
-        
-        if (score > best_score) {
-            best_score = score;
-            best_move = moves[i];
-        }
+        legal++;
+        int score = -search(depth - 1, -beta, -alpha);
+        memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
+
+        if (score > best_score) best_score = score;
+        if (score > alpha) alpha = score;
+        if (alpha >= beta) break;
     }
-    
-    printf("Best move score: %d\n", best_score);
-    return best_move;
+
+    if (legal == 0) {
+        int king_sq = -1;
+        for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (side|6)) king_sq = sq;
+        return is_attacked(king_sq, side^24) ? -99999 : 0;
+    }
+    return best_score;
 }
 
-// Parse move from string (e.g., "e2e4")
-int parse_move(Position *pos, char *str, Move *m) {
-    if (strlen(str) < 4) return 0;
-    
-    int from_file = str[0] - 'a';
-    int from_rank = str[1] - '1';
-    int to_file = str[2] - 'a';
-    int to_rank = str[3] - '1';
-    
-    if (from_file < 0 || from_file > 7 || from_rank < 0 || from_rank > 7) return 0;
-    if (to_file < 0 || to_file > 7 || to_rank < 0 || to_rank > 7) return 0;
-    
-    int from = from_rank * 8 + from_file;
-    int to = to_rank * 8 + to_file;
-    
-    Move moves[256];
-    int count = generate_moves(pos, moves);
-    
+int best_move = 0;
+int think(int depth) {
+    int moves[256];
+    int count = generate_moves(moves);
+    sort_moves(moves, count);
+    int alpha = -100000, beta = 100000, max_score = -100000;
+    best_move = 0;
+
     for (int i = 0; i < count; i++) {
-        if (moves[i].from == from && moves[i].to == to) {
-            // Handle promotion
-            if (strlen(str) >= 5) {
-                char promo = str[4];
-                if (promo == 'q') moves[i].promoted = QUEEN;
-                else if (promo == 'r') moves[i].promoted = ROOK;
-                else if (promo == 'b') moves[i].promoted = BISHOP;
-                else if (promo == 'n') moves[i].promoted = KNIGHT;
-            }
+        int saved_board[128], saved_side = side, saved_castling = castling, saved_ep = ep_sq;
+        memcpy(saved_board, board, sizeof(board));
+        make_move(moves[i]);
+
+        int king_sq = -1;
+        for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (saved_side|6)) king_sq = sq;
+        if (is_attacked(king_sq, side)) {
+            memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
+            continue;
+        }
+
+        int score = -search(depth - 1, -beta, -alpha);
+        memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
+
+        if (score > max_score) { max_score = score; best_move = moves[i]; }
+        if (score > alpha) alpha = score;
+    }
+    return max_score;
+}
+
+// --- CLI ---
+
+int parse_move(char *str, int *parsed_move) {
+    if (strlen(str) < 4) return 0;
+    int src = (7 - (str[1] - '1')) * 16 + (str[0] - 'a');
+    int dst = (7 - (str[3] - '1')) * 16 + (str[2] - 'a');
+    int promo = (str[4] == 'q') ? 5 : (str[4] == 'r') ? 4 : (str[4] == 'b') ? 3 : (str[4] == 'n') ? 2 : 0;
+
+    int moves[256];
+    int count = generate_moves(moves);
+    for (int i = 0; i < count; i++) {
+        if ((moves[i] & 0xFF) == src && ((moves[i] >> 8) & 0xFF) == dst && ((moves[i] >> 16) & 7) == promo) {
+            int saved_board[128], saved_side = side, saved_castling = castling, saved_ep = ep_sq;
+            memcpy(saved_board, board, sizeof(board));
+            make_move(moves[i]);
+            int king_sq = -1;
+            for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (saved_side|6)) king_sq = sq;
+            int illegal = is_attacked(king_sq, side);
+            memcpy(board, saved_board, sizeof(board)); side = saved_side; castling = saved_castling; ep_sq = saved_ep;
             
-            *m = moves[i];
-            return 1;
+            if (!illegal) { *parsed_move = moves[i]; return 1; }
         }
     }
-    
     return 0;
 }
 
-// Convert move to string
-void move_to_string(Move *m, char *str) {
-    sprintf(str, "%c%c%c%c", 
-            'a' + (m->from % 8),
-            '1' + (m->from / 8),
-            'a' + (m->to % 8),
-            '1' + (m->to / 8));
-    
-    if (m->promoted) {
-        char promo_char = 'q';
-        if (m->promoted == ROOK) promo_char = 'r';
-        else if (m->promoted == BISHOP) promo_char = 'b';
-        else if (m->promoted == KNIGHT) promo_char = 'n';
-        sprintf(str + 4, "%c", promo_char);
-    }
+void print_move(int move) {
+    int src = move & 0xFF, dst = (move >> 8) & 0xFF, promo = (move >> 16) & 7;
+    char p = (promo==5) ? 'q' : (promo==4) ? 'r' : (promo==3) ? 'b' : (promo==2) ? 'n' : ' ';
+    printf("%c%d%c%d%c\n", 'a' + (src & 7), 8 - (src >> 4), 'a' + (dst & 7), 8 - (dst >> 4), p);
 }
 
-// Main function
 int main() {
-    Position pos;
-    init_position(&pos);
-    
-    printf("Simple Chess Engine with PeSTO Evaluation\n");
-    printf("Commands: move (e.g., e2e4), computer, print, quit\n");
-    
+    init_board();
+    char line[256];
+    printf("Micro-PeSTO C Chess Engine\n");
+    printf("Commands: e2e4 (your move), go (engine move), d (display), quit\n");
+    print_board();
+
     while (1) {
-        print_board(&pos);
-        
-        char input[100];
-        printf("\nCommand: ");
-        if (!fgets(input, sizeof(input), stdin)) break;
-        
-        // Remove newline
-        input[strcspn(input, "\n")] = 0;
-        
-        if (strcmp(input, "quit") == 0) {
-            break;
-        } else if (strcmp(input, "print") == 0) {
-            continue;
-        } else if (strcmp(input, "computer") == 0) {
-            printf("Computer is thinking...\n");
-            Move best = get_best_move(&pos, 4);
-            make_move(&pos, &best);
-            
-            char move_str[10];
-            move_to_string(&best, move_str);
-            printf("Computer plays: %s\n", move_str);
+        printf("> ");
+        if (!fgets(line, sizeof(line), stdin) || !strncmp(line, "quit", 4)) break;
+        if (!strncmp(line, "d", 1)) { print_board(); continue; }
+
+        int m;
+        int is_engine_turn = 0;
+
+        if (!strncmp(line, "go", 2)) {
+            is_engine_turn = 1;
+        } else if (parse_move(line, &m)) {
+            make_move(m);
+            print_board();
+            is_engine_turn = 1; // Auto-respond
         } else {
-            Move m;
-            if (parse_move(&pos, input, &m)) {
-                make_move(&pos, &m);
-                
-                if (in_check(&pos, pos.side)) {
-                    unmake_move(&pos, &m);
-                    printf("Illegal move (leaves king in check)\n");
-                }
+            printf("Unknown command or illegal move.\n");
+        }
+
+        if (is_engine_turn) {
+            nodes = 0;
+            printf("Thinking...\n");
+            int score = think(4); // Search Depth
+            
+            if (best_move) {
+                printf("PeSTO info: depth 4, nodes %d, score %d\n", nodes, score);
+                printf("Engine plays: ");
+                print_move(best_move);
+                make_move(best_move);
+                print_board();
             } else {
-                printf("Invalid move\n");
+                int king_sq = -1;
+                for(int sq=0; sq<128; sq++) if(!(sq&0x88) && board[sq] == (side|6)) king_sq = sq;
+                if(is_attacked(king_sq, side^24)) printf("Checkmate!\n");
+                else printf("Stalemate!\n");
             }
         }
     }
-    
     return 0;
 }
