@@ -1,4 +1,7 @@
 /*
+V3 Prompt 5-27-26
+Can you create a single file chess program in C that uses PeSTO (Piece Square Table Only evaluation), uses the Universal Chess Interface (UCI), and works in the Mac Terminal?
+
 Single-File Chess Engine with PeSTO Evaluation
 Here's a complete, single-file chess engine in C with PeSTO evaluation and UCI support:
 
