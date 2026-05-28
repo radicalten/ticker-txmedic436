@@ -2,6 +2,22 @@
 Here is a complete, single-file C chess engine that plays in the Mac Terminal and uses purely the PeSTO (Piece-Square Table Only) evaluation function.
 
 It implements all the chess rules (En Passant, Castling, Promotions), a negamax search with alpha-beta pruning, quiescence search (to prevent silly blunders), and a simple terminal interface.
+
+How to Compile and Play on Mac
+
+    Open your Mac Terminal.
+    Save the code below into a file named pesto_chess.c (you can use nano pesto_chess.c).
+    Compile it using the standard Mac C compiler:
+    gcc -O3 pesto_chess.c -o pesto_chess
+    Run the program:
+    ./pesto_chess
+
+Commands
+
+    Move: Type standard coordinate notation like e2e4 and press Enter. The engine will automatically reply.
+    go: Type go to force the engine to make a move (e.g., if you want it to play White first).
+    d: Displays the board again.
+    quit: Exits the program.
 */
 
 #include <stdio.h>
