@@ -21,7 +21,7 @@ Features Implemented
         MVV-LVA Move Ordering: (Most Valuable Victim - Least Valuable Attacker). During search, it orders moves so that capturing a Queen with a Pawn is searched before capturing a Pawn with a Queen, generating massive speedups in Alpha-Beta.
     Mac Compatibility: Avoids Windows-only <conio.h> or <windows.h> and relies on standard POSIX <sys/time.h> and <sys/select.h> to poll standard input asynchronously while calculating.
 */
-
+// Sadly this failed to implement the UCI protocol and failed to work in BanksiaGUI
 
 #include <stdio.h>
 #include <stdlib.h>
