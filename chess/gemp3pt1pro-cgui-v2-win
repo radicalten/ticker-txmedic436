@@ -1,3 +1,41 @@
+/*
+Here is a complete, single-file C program that acts as a terminal-based Chess GUI.
+
+It uses POSIX pipes to communicate with a UCI engine (like Stockfish), utilizes ANSI escape codes to draw a colorful board directly in the Mac Terminal, and handles basic chess rules for visual updates (including castling and en passant).
+Prerequisites
+
+You need a UCI-compliant engine installed. The easiest way to get one on a Mac is via Homebrew:
+brew install stockfish
+
+How to Compile and Run
+
+    Open your Mac Terminal.
+    Navigate to the folder where you saved the file.
+    Compile the code using standard gcc (or clang, which comes with macOS developer tools):
+gcc -O3 chess_gui.c -o chess_gui
+
+Run the program:
+./chess_gui
+
+Features of this GUI
+
+    Single File: It fulfills your requirement perfectly—everything from IPC (Inter-process communication) to the UI rendering is self-contained.
+    Mac Terminal UI: Utilizes standard ANSI escape colors (Blue and White) and Unicode characters to render a surprisingly good-looking board directly in the terminal window. White pieces are drawn in red to contrast properly with the board.
+    UCI Standard: Works strictly using the UCI protocol (position startpos moves ...), meaning you can swap out Stockfish for any other UCI engine simply by changing the #define ENGINE_PATH at the top of the file.
+    Visual Rules: Checks the move notation and correctly manages the internal board array for standard moves, castling (e.g., e1g1), promotions (e.g., e7e8q), and en passant so the board never breaks visually.
+
+How to Play
+
+When prompted, type your move in standard UCI format and press Enter.
+
+    Move a pawn: e2e4
+    Move a knight: g1f3
+    Castle Kingside: e1g1
+    Promote a pawn to a Queen: e7e8q
+    To exit the program, type quit.
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
