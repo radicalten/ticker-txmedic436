@@ -281,9 +281,9 @@ void draw_square(int r, int c) {
     int is_dark = (r + c) % 2;
     // Set Background Colors (Charcoal for dark, light grey for light)
     if (is_dark) {
-        printf("\e[48;5;237m");
+        printf("\e[48;5;172m");
     } else {
-        printf("\e[48;5;250m");
+        printf("\e[48;5;223m");
     }
 
     char p = board[r][c];
