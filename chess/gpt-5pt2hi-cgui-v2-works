@@ -1,3 +1,19 @@
+/*
+Below is a single-file C program that runs in the macOS Terminal and acts as a simple text-mode chess “GUI” for playing against any UCI-compliant engine (e.g., Stockfish). It:
+
+    Launches a UCI engine (via fork/exec + pipes)
+    Performs the UCI handshake (uci, isready)
+    Shows an ASCII board in Terminal
+    Accepts UCI coordinate moves from you (e.g., e2e4, e7e8q)
+    Sends position startpos moves ... + go movetime N
+    Parses engine output and applies bestmove ...
+    Supports commands: new, undo [n], fen, time <ms>, flip, moves, quit
+
+It is not a full rules arbiter (it applies moves faithfully including castling/en-passant/promotion, but doesn’t deeply validate legality like “moving into check”).
+
+If you tell me which engine you want to use (Stockfish path, and whether you want engine-vs-engine, SAN input, arrow-key navigation, colored squares, or incremental UCI position fen instead of long move lists), I can adjust the program accordingly while keeping it single-file.
+
+*/
 // uci_tui_chess.c
 // Simple Terminal chess UI for UCI engines (macOS-friendly, single file)
 //
