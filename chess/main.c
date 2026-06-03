@@ -111,9 +111,9 @@ void print_board() {
     for (int row = 0; row < 8; row++) {
         printf("   \033[1m%d \033[0m", 8 - row);
         for (int col = 0; col < 8; col++) {
-            // Checkered background colors (ANSI 47=White, 41=Green)
+            // Checkered background colors (ANSI 47=White, 42=Green)
             int is_light = (row + col) % 2 == 0;
-            printf("\033[%dm", is_light ? 47 : 44);
+            printf("\033[%dm", is_light ? 47 : 42);
             
             char p = board[row][col];
             // Text color (ANSI 30=Black for black pieces, 31=Red for white pieces for contrast)
