@@ -69,6 +69,13 @@ ESC[48;5;⟨n⟩m Select background color
   8- 15:  high intensity colors (as in ESC [ 90–97 m)
  16-231:  6 × 6 × 6 cube (216 colors): 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
 232-255:  grayscale from dark to light in 24 steps
+
+For Chess:
+Dark Squares:  printf("\e[48;5;172m"); #d78700 (215, 135, 0) Harvest Gold color
+Light Squares: printf("\e[48;5;223m"); #ffd7af (255, 215, 175) Peach color
+White Pieces:  printf("\e[1;97m"); BrightWhite (255, 255, 255) White color 1; = bold
+Black Pieces:  printf("\e[0;40m"); Black (0, 0, 0) Black color 0; = no modifiers, default. 
+
 */
 
 #include <stdio.h>
@@ -292,7 +299,7 @@ void draw_square(int r, int c) {
         if (isupper(p)) {
             printf("\e[1;97m"); 
         } else {
-            printf("\e[1;30"); 
+            printf("\e[0;30"); 
         }
         printf(" %s ", get_piece_char(p));
     } else {
