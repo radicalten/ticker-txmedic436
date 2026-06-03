@@ -75,7 +75,7 @@ Dark Squares:  printf("\e[48;5;172m"); #d78700 (215, 135, 0) Harvest Gold color
 Light Squares: printf("\e[48;5;223m"); #ffd7af (255, 215, 175) Peach color
 White Pieces:  printf("\e[97m");       BrightWhite (255, 255, 255) White color 1; = bold | option 1 
 White Pieces:  printf("\e[38;5;231m"); #ffffff (255, 255, 255) White color 1; = bold | option 2 in case BrightWhite is not 255,255,255 on your system
-White Pieces:  printf("\e[38;5;222m"); #FFD787 (255, 215, 135) White color 1; = bold | option 3 wood color of FIDE wood chess set actual: "RGBA(215, 182, 129, 1)" "#D7B681"
+White Pieces:  printf("\e[38;5;222m"); #FFD787 (255, 215, 135) White color 1; = bold | option 3 wood color of FIDE wood chess set actual: "RGBA(215, 182, 129, 1)" "#D7B681", visibility is too low here.
 Black Pieces:  printf("\e[30m"); Black (0, 0, 0) Black color 0; = reset modifiers.
 
 */
@@ -299,7 +299,7 @@ void draw_square(int r, int c) {
     if (p != '.') {
         // Foreground styling (White pieces are White, Black pieces are Black)
         if (isupper(p)) {
-            printf("\e[38;5;222m");
+            printf("\e[38;5;231m");
         } else {
             printf("\e[30m"); 
         }
