@@ -2,341 +2,248 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <ctype.h>
-#include <sys/select.h>
-#include <signal.h>
 
-#define BOARD_SIZE 8
-#define EMPTY 0
-#define WHITE 8
-#define BLACK 16
-#define PAWN 1
-#define KNIGHT 2
-#define BISHOP 3
-#define ROOK 4
-#define QUEEN 5
-#define KING 6
+#define ENGINE_PATH "stockfish" // Assumes stockfish is in your PATH. Change to absolute path if needed.
+#define MOVE_HISTORY_SIZE 4096
+#define BUFFER_SIZE 1024
 
-typedef struct {
-    int board[64];
-    int whiteToMove;
-    int castleRights;
-    int enPassant;
-    int halfmoveClock;
-    int fullmoveNumber;
-    char moveHistory[500][10];
-    int moveCount;
-} Position;
+// Global board state
+char board[8][8];
+char move_history[MOVE_HISTORY_SIZE];
 
-typedef struct {
-    FILE *toEngine;
-    FILE *fromEngine;
-    pid_t enginePid;
-} Engine;
+// Pipe file descriptors
+int parent_to_child[2];
+int child_to_parent[2];
 
-void initPosition(Position *pos) {
-    int startBoard[64] = {
-        WHITE|ROOK, WHITE|KNIGHT, WHITE|BISHOP, WHITE|QUEEN, WHITE|KING, WHITE|BISHOP, WHITE|KNIGHT, WHITE|ROOK,
-        WHITE|PAWN, WHITE|PAWN, WHITE|PAWN, WHITE|PAWN, WHITE|PAWN, WHITE|PAWN, WHITE|PAWN, WHITE|PAWN,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
-        BLACK|PAWN, BLACK|PAWN, BLACK|PAWN, BLACK|PAWN, BLACK|PAWN, BLACK|PAWN, BLACK|PAWN, BLACK|PAWN,
-        BLACK|ROOK, BLACK|KNIGHT, BLACK|BISHOP, BLACK|QUEEN, BLACK|KING, BLACK|BISHOP, BLACK|KNIGHT, BLACK|ROOK
+FILE *engine_write;
+FILE *engine_read;
+
+void init_board() {
+    char initial[8][8] = {
+        {'r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'},
+        {'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'},
+        {'.', '.', '.', '.', '.', '.', '.', '.'},
+        {'.', '.', '.', '.', '.', '.', '.', '.'},
+        {'.', '.', '.', '.', '.', '.', '.', '.'},
+        {'.', '.', '.', '.', '.', '.', '.', '.'},
+        {'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'},
+        {'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'}
     };
-    memcpy(pos->board, startBoard, sizeof(startBoard));
-    pos->whiteToMove = 1;
-    pos->castleRights = 15;
-    pos->enPassant = -1;
-    pos->halfmoveClock = 0;
-    pos->fullmoveNumber = 1;
-    pos->moveCount = 0;
+    memcpy(board, initial, sizeof(board));
+    move_history[0] = '\0';
 }
 
-void displayBoard(Position *pos) {
-    const char *pieces = " PNBRQK";
-    printf("\n");
-    printf("  ┌───┬───┬───┬───┬───┬───┬───┬───┐\n");
-    for (int rank = 7; rank >= 0; rank--) {
-        printf("%d │", rank + 1);
-        for (int file = 0; file < 8; file++) {
-            int sq = rank * 8 + file;
-            int piece = pos->board[sq];
-            if (piece == EMPTY) {
-                printf("   │");
+void print_board() {
+    printf("\n  ");
+    for (char c = 'a'; c <= 'h'; c++) printf("  %c ", c);
+    printf("\n  +---+---+---+---+---+---+---+---+\n");
+    
+    for (int r = 0; r < 8; r++) {
+        printf("%d |", 8 - r);
+        for (int c = 0; c < 8; c++) {
+            char piece = board[r][c];
+            // ANSI colors: White pieces are Bold Green, Black pieces are Bold Red, Empty is grey
+            if (piece == '.') {
+                printf("   |");
+            } else if (isupper(piece)) {
+                printf(" \033[1;32m%c\033[0m |", piece);
             } else {
-                char c = pieces[piece & 7];
-                if (piece & BLACK) c = tolower(c);
-                printf(" %c │", c);
+                printf(" \033[1;31m%c\033[0m |", toupper(piece));
             }
         }
-        printf("\n");
-        if (rank > 0) printf("  ├───┼───┼───┼───┼───┼───┼───┼───┤\n");
+        printf(" %d\n  +---+---+---+---+---+---+---+---+\n", 8 - r);
     }
-    printf("  └───┴───┴───┴───┴───┴───┴───┴───┘\n");
-    printf("    a   b   c   d   e   f   g   h\n\n");
+    printf("  ");
+    for (char c = 'a'; c <= 'h'; c++) printf("  %c ", c);
+    printf("\n\n");
 }
 
-int squareFromAlgebraic(const char *str) {
-    if (strlen(str) < 2) return -1;
-    int file = str[0] - 'a';
-    int rank = str[1] - '1';
-    if (file < 0 || file > 7 || rank < 0 || rank > 7) return -1;
-    return rank * 8 + file;
-}
+void apply_move(const char *move) {
+    int c1 = move[0] - 'a';
+    int r1 = 8 - (move[1] - '0');
+    int c2 = move[2] - 'a';
+    int r2 = 8 - (move[3] - '0');
 
-void algebraicFromSquare(int sq, char *str) {
-    str[0] = 'a' + (sq % 8);
-    str[1] = '1' + (sq / 8);
-    str[2] = '\0';
-}
+    char piece = board[r1][c1];
+    char captured = board[r2][c2];
 
-int parseMove(const char *moveStr, int *from, int *to, int *promotion) {
-    if (strlen(moveStr) < 4) return 0;
-    *from = squareFromAlgebraic(moveStr);
-    *to = squareFromAlgebraic(moveStr + 2);
-    *promotion = 0;
-    if (*from < 0 || *to < 0) return 0;
-    if (strlen(moveStr) >= 5) {
-        char p = tolower(moveStr[4]);
-        if (p == 'q') *promotion = QUEEN;
-        else if (p == 'r') *promotion = ROOK;
-        else if (p == 'b') *promotion = BISHOP;
-        else if (p == 'n') *promotion = KNIGHT;
+    // Handle Castling (move the rook too)
+    if (toupper(piece) == 'K' && abs(c2 - c1) == 2) {
+        if (c2 == 6) { // Kingside
+            board[r1][5] = board[r1][7];
+            board[r1][7] = '.';
+        } else if (c2 == 2) { // Queenside
+            board[r1][3] = board[r1][0];
+            board[r1][0] = '.';
+        }
     }
-    return 1;
-}
 
-int isLegalMove(Position *pos, int from, int to, int promotion) {
-    if (from < 0 || from > 63 || to < 0 || to > 63) return 0;
-    int piece = pos->board[from];
-    if (piece == EMPTY) return 0;
-    int color = piece & (WHITE | BLACK);
-    if ((pos->whiteToMove && color != WHITE) || (!pos->whiteToMove && color != BLACK)) 
-        return 0;
-    int target = pos->board[to];
-    if (target != EMPTY && (target & (WHITE | BLACK)) == color) return 0;
-    return 1;
-}
-
-void makeMove(Position *pos, int from, int to, int promotion) {
-    int piece = pos->board[from];
-    int target = pos->board[to];
-    
-    // Store move in history
-    char moveStr[10];
-    algebraicFromSquare(from, moveStr);
-    algebraicFromSquare(to, moveStr + 2);
-    if (promotion) {
-        const char *promoChars = " pnbrqk";
-        moveStr[4] = promoChars[promotion];
-        moveStr[5] = '\0';
+    // Handle Promotion
+    if (strlen(move) == 5) {
+        char promo = move[4];
+        if (isupper(piece)) promo = toupper(promo);
+        else promo = tolower(promo);
+        board[r2][c2] = promo;
     } else {
-        moveStr[4] = '\0';
+        board[r2][c2] = piece;
     }
-    strcpy(pos->moveHistory[pos->moveCount++], moveStr);
-    
-    // En passant capture
-    if ((piece & 7) == PAWN && to == pos->enPassant) {
-        int captureSquare = pos->whiteToMove ? to - 8 : to + 8;
-        pos->board[captureSquare] = EMPTY;
-    }
-    
-    pos->board[to] = piece;
-    pos->board[from] = EMPTY;
-    
-    if (promotion != 0) {
-        pos->board[to] = (piece & (WHITE | BLACK)) | promotion;
-    }
-    
-    // Castling
-    if ((piece & 7) == KING) {
-        if (from == 4 && to == 6) { pos->board[5] = pos->board[7]; pos->board[7] = EMPTY; }
-        else if (from == 4 && to == 2) { pos->board[3] = pos->board[0]; pos->board[0] = EMPTY; }
-        else if (from == 60 && to == 62) { pos->board[61] = pos->board[63]; pos->board[63] = EMPTY; }
-        else if (from == 60 && to == 58) { pos->board[59] = pos->board[56]; pos->board[56] = EMPTY; }
-        if (piece & WHITE) pos->castleRights &= ~3;
-        else pos->castleRights &= ~12;
-    }
-    
-    if ((piece & 7) == ROOK) {
-        if (from == 0) pos->castleRights &= ~2;
-        if (from == 7) pos->castleRights &= ~1;
-        if (from == 56) pos->castleRights &= ~8;
-        if (from == 63) pos->castleRights &= ~4;
-    }
-    
-    pos->enPassant = -1;
-    if ((piece & 7) == PAWN && abs(to - from) == 16) {
-        pos->enPassant = (from + to) / 2;
-    }
-    
-    if ((piece & 7) == PAWN || target != EMPTY) pos->halfmoveClock = 0;
-    else pos->halfmoveClock++;
-    
-    if (!pos->whiteToMove) pos->fullmoveNumber++;
-    pos->whiteToMove = !pos->whiteToMove;
+
+    board[r1][c1] = '.';
+
+    // Update move history
+    if (strlen(move_history) > 0) strcat(move_history, " ");
+    strcat(move_history, move);
 }
 
-void startEngine(Engine *eng, const char *enginePath) {
-    int toEnginePipe[2], fromEnginePipe[2];
-    if (pipe(toEnginePipe) == -1 || pipe(fromEnginePipe) == -1) {
-        perror("pipe"); exit(1);
-    }
-    eng->enginePid = fork();
-    if (eng->enginePid == -1) { perror("fork"); exit(1); }
-    
-    if (eng->enginePid == 0) {
-        dup2(toEnginePipe[0], STDIN_FILENO);
-        dup2(fromEnginePipe[1], STDOUT_FILENO);
-        dup2(fromEnginePipe[1], STDERR_FILENO);
-        close(toEnginePipe[1]);
-        close(fromEnginePipe[0]);
-        execlp(enginePath, enginePath, NULL);
-        perror("execlp"); exit(1);
-    }
-    
-    close(toEnginePipe[0]);
-    close(fromEnginePipe[1]);
-    eng->toEngine = fdopen(toEnginePipe[1], "w");
-    eng->fromEngine = fdopen(fromEnginePipe[0], "r");
-    if (!eng->toEngine || !eng->fromEngine) { perror("fdopen"); exit(1); }
-    setbuf(eng->toEngine, NULL);
+void send_uci(const char *cmd) {
+    fprintf(engine_write, "%s\n", cmd);
+    fflush(engine_write);
 }
 
-void sendUCI(Engine *eng, const char *command) {
-    fprintf(eng->toEngine, "%s\n", command);
-    fflush(eng->toEngine);
-}
-
-char *receiveUCI(Engine *eng, char *buffer, int size) {
-    fd_set readfds;
-    struct timeval tv;
-    int fd = fileno(eng->fromEngine);
-    FD_ZERO(&readfds);
-    FD_SET(fd, &readfds);
-    tv.tv_sec = 0;
-    tv.tv_usec = 10000;
-    if (select(fd + 1, &readfds, NULL, NULL, &tv) > 0 && FD_ISSET(fd, &readfds)) {
-        if (fgets(buffer, size, eng->fromEngine)) return buffer;
+char* read_uci(const char *expected_prefix) {
+    static char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), engine_read)) {
+        // Remove trailing newline
+        line[strcspn(line, "\n")] = 0;
+        if (strncmp(line, expected_prefix, strlen(expected_prefix)) == 0) {
+            return line;
+        }
     }
     return NULL;
 }
 
-void getBestMove(Engine *eng, Position *pos, char *bestMove, int bufSize) {
-    char buffer[4096];
-    char posCmd[2048] = "position startpos";
-    
-    if (pos->moveCount > 0) {
-        strcat(posCmd, " moves");
-        for (int i = 0; i < pos->moveCount; i++) {
-            strcat(posCmd, " ");
-            strcat(posCmd, pos->moveHistory[i]);
-        }
+void spawn_engine() {
+    if (pipe(parent_to_child) == -1 || pipe(child_to_parent) == -1) {
+        perror("pipe");
+        exit(1);
     }
-    
-    sendUCI(eng, posCmd);
-    sendUCI(eng, "go movetime 2000");
-    
-    bestMove[0] = '\0';
-    while (1) {
-        char *response = receiveUCI(eng, buffer, sizeof(buffer));
-        if (response) {
-            if (strncmp(response, "bestmove", 8) == 0) {
-                sscanf(response, "bestmove %s", bestMove);
-                break;
-            }
-        }
-        usleep(10000);
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        exit(1);
     }
+
+    if (pid == 0) { // Child process (Engine)
+        close(parent_to_child[1]); // Close write end of parent->child
+        close(child_to_parent[0]); // Close read end of child->parent
+        
+        dup2(parent_to_child[0], STDIN_FILENO);
+        dup2(child_to_parent[1], STDOUT_FILENO);
+        
+        close(parent_to_child[0]);
+        close(child_to_parent[1]);
+        
+        execlp(ENGINE_PATH, ENGINE_PATH, NULL);
+        
+        // If execlp fails
+        perror("Failed to launch engine. Is '" ENGINE_PATH "' in your PATH?");
+        exit(1);
+    }
+
+    // Parent process (GUI)
+    close(parent_to_child[0]); // Close read end of parent->child
+    close(child_to_parent[1]); // Close write end of child->parent
+    
+    engine_write = fdopen(parent_to_child[1], "w");
+    engine_read = fdopen(child_to_parent[0], "r");
+
+    // UCI Handshake
+    send_uci("uci");
+    read_uci("uciok");
+    send_uci("isready");
+    read_uci("readyok");
 }
 
-void cleanup(Engine *eng) {
-    if (eng->toEngine) {
-        sendUCI(eng, "quit");
-        fclose(eng->toEngine);
-    }
-    if (eng->fromEngine) fclose(eng->fromEngine);
-    if (eng->enginePid > 0) kill(eng->enginePid, SIGTERM);
-}
-
-int main(int argc, char *argv[]) {
-    Position pos;
-    Engine eng = {0};
-    char input[256];
-    int useEngine = 0;
-    
-    printf("\n╔═══════════════════════════════════════════╗\n");
-    printf("║  Terminal Chess with UCI Engine Support  ║\n");
-    printf("╚═══════════════════════════════════════════╝\n\n");
-    
-    if (argc > 1) {
-        printf("Starting engine: %s\n", argv[1]);
-        startEngine(&eng, argv[1]);
-        sendUCI(&eng, "uci");
-        char buffer[4096];
-        while (1) {
-            char *response = receiveUCI(&eng, buffer, sizeof(buffer));
-            if (response && strncmp(response, "uciok", 5) == 0) break;
-            usleep(10000);
-        }
-        sendUCI(&eng, "isready");
-        while (1) {
-            char *response = receiveUCI(&eng, buffer, sizeof(buffer));
-            if (response && strncmp(response, "readyok", 7) == 0) break;
-            usleep(10000);
-        }
-        sendUCI(&eng, "ucinewgame");
-        useEngine = 1;
-        printf("Engine ready!\n\n");
+void engine_play() {
+    char cmd[BUFFER_SIZE];
+    if (strlen(move_history) > 0) {
+        snprintf(cmd, sizeof(cmd), "position startpos moves %s", move_history);
     } else {
-        printf("Two-player mode (no engine)\n");
-        printf("Usage: %s [path-to-engine]\n", argv[0]);
-        printf("Example: %s stockfish\n\n", argv[0]);
+        snprintf(cmd, sizeof(cmd), "position startpos");
     }
+    send_uci(cmd);
+    send_uci("isready");
+    read_uci("readyok");
     
-    initPosition(&pos);
+    // Ask engine to calculate (depth 15 is reasonably fast)
+    send_uci("go depth 15");
     
-    printf("Commands:\n");
-    printf("  • Moves: e2e4, g1f3, e7e8q (promotion)\n");
-    printf("  • 'engine' or 'e' - get engine suggestion\n");
-    printf("  • 'quit' or 'q' - exit game\n\n");
+    char *response = read_uci("bestmove");
+    if (response) {
+        char bestmove[6] = {0};
+        sscanf(response, "bestmove %5s", bestmove);
+        printf("Engine plays: %s\n", bestmove);
+        apply_move(bestmove);
+    } else {
+        printf("Engine stopped responding.\n");
+        exit(1);
+    }
+}
+
+int main() {
+    init_board();
+    spawn_engine();
     
+    printf("\n=== Terminal Chess GUI (UCI) ===\n");
+    printf("Playing against: %s\n", ENGINE_PATH);
+    printf("Enter moves in UCI format (e.g., e2e4, e7e8q for promotion).\n");
+    printf("Type 'quit' to exit, 'new' to start a new game.\n\n");
+
+    send_uci("ucinewgame");
+    send_uci("isready");
+    read_uci("readyok");
+
+    char input[32];
     while (1) {
-        displayBoard(&pos);
-        printf("%s to move> ", pos.whiteToMove ? "White" : "Black");
+        print_board();
         
-        if (!fgets(input, sizeof(input), stdin)) break;
-        input[strcspn(input, "\n")] = 0;
-        
-        if (strcmp(input, "quit") == 0 || strcmp(input, "q") == 0) break;
-        
-        if (strcmp(input, "engine") == 0 || strcmp(input, "e") == 0) {
-            if (!useEngine) {
-                printf("No engine loaded!\n\n");
-                continue;
-            }
-            char bestMove[64];
-            printf("Thinking...\n");
-            getBestMove(&eng, &pos, bestMove, sizeof(bestMove));
-            printf("Engine suggests: %s\n\n", bestMove);
+        if (strlen(move_history) % 2 == 0 || strlen(move_history) == 0) {
+            printf("White's turn (You)\n");
+        } else {
+            printf("Black's turn (Engine)\n");
+            engine_play();
             continue;
         }
-        
-        int from, to, promotion;
-        if (parseMove(input, &from, &to, &promotion)) {
-            if (isLegalMove(&pos, from, to, promotion)) {
-                makeMove(&pos, from, to, promotion);
-            } else {
-                printf("Illegal move!\n\n");
-            }
-        } else {
-            printf("Invalid format. Use UCI notation (e.g., e2e4)\n\n");
+
+        printf("> ");
+        if (fgets(input, sizeof(input), stdin) == NULL) break;
+        input[strcspn(input, "\n")] = 0; // Remove newline
+
+        if (strcmp(input, "quit") == 0) {
+            break;
         }
+        
+        if (strcmp(input, "new") == 0) {
+            init_board();
+            send_uci("ucinewgame");
+            send_uci("isready");
+            read_uci("readyok");
+            printf("Starting new game.\n");
+            continue;
+        }
+
+        // Basic input validation (must be at least 4 chars, e.g., e2e4)
+        if (strlen(input) < 4 || 
+            input[0] < 'a' || input[0] > 'h' ||
+            input[1] < '1' || input[1] > '8' ||
+            input[2] < 'a' || input[2] > 'h' ||
+            input[3] < '1' || input[3] > '8') {
+            printf("Invalid move format. Use UCI format like 'e2e4'.\n");
+            continue;
+        }
+
+        apply_move(input);
     }
+
+    // Cleanup
+    send_uci("quit");
+    fclose(engine_write);
+    fclose(engine_read);
+    wait(NULL); // Wait for child process to exit
     
-    if (useEngine) cleanup(&eng);
-    printf("\nThanks for playing!\n");
+    printf("Goodbye!\n");
     return 0;
 }
