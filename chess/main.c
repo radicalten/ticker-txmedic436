@@ -1,362 +1,276 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <termios.h>
-#include <sys/types.h>
-#include <sys/wait.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <signal.h>
 
-#define MAX_MOVES 2048
+// Global State
+struct termios orig_termios;
+pid_t engine_pid = -1;
+int engine_in[2];
+int engine_out[2];
+bool engine_turn = false;
+bool engine_dead = false;
+char engine_path[256] = "stockfish";
 
-// Board state representation
 char board[8][8] = {
-    {'r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'},
-    {'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'},
-    {'.', '.', '.', '.', '.', '.', '.', '.'},
-    {'.', '.', '.', '.', '.', '.', '.', '.'},
-    {'.', '.', '.', '.', '.', '.', '.', '.'},
-    {'.', '.', '.', '.', '.', '.', '.', '.'},
-    {'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'},
-    {'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'}
+    {'r','n','b','q','k','b','n','r'},
+    {'p','p','p','p','p','p','p','p'},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {'P','P','P','P','P','P','P','P'},
+    {'R','N','B','Q','K','B','N','R'}
 };
 
-// UI Variables
-int cursor_x = 4; // Start cursor on e2/e1 area
-int cursor_y = 6;
-int selected_x = -1;
-int selected_y = -1;
+int cursor_x = 4, cursor_y = 6;
+int selected_x = -1, selected_y = -1;
+char last_move[10] = "None";
 
-// Engine Subprocess Variables
-int to_engine[2];
-int from_engine[2];
-pid_t engine_pid = -1;
+char history[1024][6];
+int history_count = 0;
 
-// Move history tracking
-char moves_history[MAX_MOVES][8];
-int num_moves = 0;
-int turn = 0; // 0 = Player (White), 1 = Engine (Black)
-char status_msg[256] = "Welcome to Terminal Chess! Use Arrows + Space/Enter to move.";
+char eng_buf[4096];
+int eng_buf_len = 0;
 
-// Terminal configurations
-struct termios orig_termios;
-
-void disable_raw_mode() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-    printf("\033[?25h"); // Show terminal cursor
+// Cleanup terminal and processes on exit
+void cleanup() {
+    if (engine_pid > 0) {
+        kill(engine_pid, SIGKILL);
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+    printf("\x1b[?25h\x1b[2J\x1b[H"); // Show cursor, clear screen
 }
 
-void enable_raw_mode() {
+void setup_terminal() {
     tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disable_raw_mode);
+    atexit(cleanup);
     struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    printf("\033[?25l"); // Hide standard cursor (we draw our own)
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+
+    // Set non-blocking input
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+    
+    printf("\x1b[?25l"); // Hide cursor
 }
 
-// Read keyboard inputs, including escape sequences for Arrow keys
-int read_key() {
-    char c;
-    int n = read(STDIN_FILENO, &c, 1);
-    if (n <= 0) return 0;
+void start_engine(const char* path) {
+    if (pipe(engine_in) < 0 || pipe(engine_out) < 0) exit(1);
     
-    if (c == 27) { // Escape sequence detected
+    engine_pid = fork();
+    if (engine_pid < 0) exit(1);
+    
+    if (engine_pid == 0) {
+        // Child process - engine
+        dup2(engine_in[0], STDIN_FILENO);
+        dup2(engine_out[1], STDOUT_FILENO);
+        close(engine_in[0]); close(engine_in[1]);
+        close(engine_out[0]); close(engine_out[1]);
+        execlp(path, path, NULL);
+        exit(1); // Exit if engine not found
+    }
+    
+    // Parent process
+    close(engine_in[0]);
+    close(engine_out[1]);
+    fcntl(engine_out[0], F_SETFL, O_NONBLOCK);
+    
+    write(engine_in[1], "uci\n", 4);
+    write(engine_in[1], "isready\n", 8);
+}
+
+const char* get_piece_str(char p) {
+    switch(p) {
+        case 'K': return "♔"; case 'Q': return "♕";
+        case 'R': return "♖"; case 'B': return "♗";
+        case 'N': return "♘"; case 'P': return "♙";
+        case 'k': return "♚"; case 'q': return "♛";
+        case 'r': return "♜"; case 'b': return "♝";
+        case 'n': return "♞"; case 'p': return "♟";
+        default:  return " ";
+    }
+}
+
+void draw_board() {
+    printf("\x1b[H"); // Move terminal cursor to top-left
+    printf("  \x1b[1mTerminal Chess GUI\x1b[0m (Engine: %s)\r\n", engine_path);
+    printf("  Arrows: Move | SPACE/ENTER: Select | 'q': Quit\r\n\r\n");
+
+    for (int y = 0; y < 8; ++y) {
+        printf(" \x1b[90m%d\x1b[0m ", 8 - y); // Rank label
+        for (int x = 0; x < 8; ++x) {
+            bool is_light = (x + y) % 2 == 0;
+            bool is_cursor = (x == cursor_x && y == cursor_y);
+            bool is_selected = (x == selected_x && y == selected_y);
+            
+            // Determine background ANSI color
+            if (is_selected) printf("\x1b[42m"); // Green
+            else if (is_cursor) printf("\x1b[43m"); // Yellow
+            else if (is_light) printf("\x1b[47m"); // White
+            else printf("\x1b[46m"); // Cyan (Dark Square)
+            
+            // Print piece in black text for contrast against colored backgrounds
+            printf("\x1b[30m %s \x1b[0m", get_piece_str(board[y][x]));
+        }
+        printf("\r\n");
+    }
+    printf("    \x1b[90ma  b  c  d  e  f  g  h\x1b[0m\r\n\r\n");
+    
+    if (engine_dead) printf(" \x1b[31mStatus: Engine died or not found in PATH!\x1b[0m            \r\n");
+    else if (engine_turn) printf(" Status: Engine is thinking...                        \r\n");
+    else printf(" Status: Your turn (You play White)                   \r\n");
+    
+    printf(" Last Move: %-10s                                \r\n", last_move);
+    fflush(stdout);
+}
+
+void apply_move(const char* m) {
+    if (strlen(m) < 4) return;
+    int sx = m[0] - 'a', sy = 7 - (m[1] - '1');
+    int dx = m[2] - 'a', dy = 7 - (m[3] - '1');
+    char p = board[sy][sx];
+
+    // Basic en passant clear (pawn moved diagonally to empty square)
+    if ((p == 'P' || p == 'p') && sx != dx && board[dy][dx] == ' ') board[sy][dx] = ' ';
+
+    // Basic castling rook move
+    if ((p == 'K' || p == 'k') && abs(sx - dx) == 2) {
+        if (dx == 6) { board[sy][5] = board[sy][7]; board[sy][7] = ' '; } // Kingside
+        if (dx == 2) { board[sy][3] = board[sy][0]; board[sy][0] = ' '; } // Queenside
+    }
+
+    board[dy][dx] = p;
+    board[sy][sx] = ' ';
+
+    // Promotion
+    if (m[4] != '\0' && m[4] != ' ' && m[4] != '\n') {
+        if (p == 'P') board[dy][dx] = (m[4] == 'q') ? 'Q' : (m[4] - 32);
+        else if (p == 'p') board[dy][dx] = m[4];
+    } else if ((p == 'P' && dy == 0) || (p == 'p' && dy == 7)) {
+        board[dy][dx] = (p == 'P') ? 'Q' : 'q'; // Default to Queen
+    }
+}
+
+void send_history_to_engine() {
+    char cmd[8192] = "position startpos moves";
+    for (int i = 0; i < history_count; ++i) {
+        strcat(cmd, " "); strcat(cmd, history[i]);
+    }
+    strcat(cmd, "\ngo movetime 1000\n"); // Give engine 1 second
+    write(engine_in[1], cmd, strlen(cmd));
+}
+
+void handle_input() {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) != 1) return;
+    
+    if (c == 'q' || c == 'Q' || c == 3) exit(0); // 3 is Ctrl-C
+    
+    if (c == '\x1b') { // Arrow keys generate a 3-byte escape sequence
         char seq[2];
-        struct termios raw;
-        tcgetattr(STDIN_FILENO, &raw);
-        struct termios temp = raw;
-        temp.c_cc[VMIN] = 0;
-        temp.c_cc[VTIME] = 1; // 100ms timeout
-        tcsetattr(STDIN_FILENO, TCSANOW, &temp);
-        
-        int r1 = read(STDIN_FILENO, &seq[0], 1);
-        int r2 = read(STDIN_FILENO, &seq[1], 1);
-        
-        tcsetattr(STDIN_FILENO, TCSANOW, &raw); // restore
-        
-        if (r1 == 1 && r2 == 1) {
+        if (read(STDIN_FILENO, &seq[0], 1) == 1 && read(STDIN_FILENO, &seq[1], 1) == 1) {
             if (seq[0] == '[') {
-                switch (seq[1]) {
-                    case 'A': return 'u'; // Up
-                    case 'B': return 'd'; // Down
-                    case 'C': return 'r'; // Right
-                    case 'D': return 'l'; // Left
+                switch(seq[1]) {
+                    case 'A': if (cursor_y > 0) cursor_y--; break; // Up
+                    case 'B': if (cursor_y < 7) cursor_y++; break; // Down
+                    case 'C': if (cursor_x < 7) cursor_x++; break; // Right
+                    case 'D': if (cursor_x > 0) cursor_x--; break; // Left
                 }
             }
         }
-        return 27;
-    }
-    return c;
-}
-
-// Helper to write to UCI engine
-void send_to_engine(const char *cmd) {
-    write(to_engine[1], cmd, strlen(cmd));
-}
-
-// Safely read output line-by-line from UCI Engine
-int read_line(int fd, char *buf, int max_len) {
-    int idx = 0;
-    while (idx < max_len - 1) {
-        char c;
-        int n = read(fd, &c, 1);
-        if (n <= 0) {
-            if (idx == 0) return -1;
-            break;
-        }
-        if (c == '\r') continue;
-        if (c == '\n') break;
-        buf[idx++] = c;
-    }
-    buf[idx] = '\0';
-    return idx;
-}
-
-// Spin up the background UCI Chess Engine
-int start_engine() {
-    if (pipe(to_engine) < 0 || pipe(from_engine) < 0) {
-        return 0;
-    }
-    engine_pid = fork();
-    if (engine_pid == 0) { // Child Process
-        dup2(to_engine[0], STDIN_FILENO);
-        dup2(from_engine[1], STDOUT_FILENO);
-        close(to_engine[0]); close(to_engine[1]);
-        close(from_engine[0]); close(from_engine[1]);
-
-        // Attempt to execute stockfish using common macOS paths
-        execlp("stockfish", "stockfish", (char*)NULL);
-        execlp("/opt/homebrew/bin/stockfish", "stockfish", (char*)NULL);
-        execlp("/usr/local/bin/stockfish", "stockfish", (char*)NULL);
-
-        fprintf(stderr, "Error: UCI Chess engine (Stockfish) not found.\n");
-        exit(1);
-    }
-    // Parent Process
-    close(to_engine[0]);
-    close(from_engine[1]);
-
-    // Fast check to see if child is running
-    usleep(150000);
-    int status;
-    if (waitpid(engine_pid, &status, WNOHANG) > 0) {
-        return 0; // Exited immediately (failed to find executable)
-    }
-
-    send_to_engine("uci\n");
-    send_to_engine("isready\n");
-    
-    char line[1024];
-    while (read_line(from_engine[0], line, sizeof(line)) >= 0) {
-        if (strstr(line, "readyok") != NULL) {
-            break;
-        }
-    }
-    return 1;
-}
-
-// Map characters to high-quality UTF-8 Chess Symbols
-const char* get_piece_symbol(char piece) {
-    switch (tolower(piece)) {
-        case 'p': return "♟";
-        case 'n': return "♞";
-        case 'b': return "♝";
-        case 'r': return "♜";
-        case 'q': return "♛";
-        case 'k': return "♚";
-        default: return " ";
-    }
-}
-
-// Render interface and Chess Board
-void draw_board() {
-    printf("\033[H\033[J"); // Clear Screen & Home cursor
-    printf("\n  \033[1;36mMac Terminal Chess GUI (UCI Engine Integration)\033[0m\n");
-    printf("  ------------------------------------------------\n\n");
-    
-    printf("     a  b  c  d  e  f  g  h\n");
-    for (int r = 0; r < 8; r++) {
-        printf("  %d ", 8 - r);
-        for (int c = 0; c < 8; c++) {
-            int is_cursor = (r == cursor_y && c == cursor_x);
-            int is_selected = (r == selected_y && c == selected_x);
-
-            // Select colors for cell backgrounds
-            if (is_cursor) {
-                printf("\033[48;5;208m"); // Orange cursor
-            } else if (is_selected) {
-                printf("\033[48;5;28m");  // Dark Green selected
-            } else if ((r + c) % 2 == 0) {
-                printf("\033[48;5;252m"); // Light square (Grey)
-            } else {
-                printf("\033[48;5;240m"); // Dark square (Charcoal)
+    } else if ((c == ' ' || c == '\r' || c == '\n') && !engine_turn) {
+        if (selected_x == -1) {
+            // Select piece (only allow selecting white pieces)
+            char p = board[cursor_y][cursor_x];
+            if (p != ' ' && p >= 'A' && p <= 'Z') {
+                selected_x = cursor_x; selected_y = cursor_y;
             }
-
-            // Text colors for White vs Black pieces
-            char piece = board[r][c];
-            if (isupper(piece)) {
-                printf("\033[38;5;231m\033[1m"); // Bright White for Player
+        } else {
+            // Deselect if same square is clicked
+            if (selected_x == cursor_x && selected_y == cursor_y) {
+                selected_x = -1; selected_y = -1;
             } else {
-                printf("\033[38;5;235m\033[1m"); // Charcoal Black for Engine
+                // Apply Move
+                char m[6];
+                m[0] = 'a' + selected_x; m[1] = '1' + (7 - selected_y);
+                m[2] = 'a' + cursor_x;   m[3] = '1' + (7 - cursor_y);
+                
+                // Auto promote to Queen if moving pawn to last rank
+                if (board[selected_y][selected_x] == 'P' && cursor_y == 0) {
+                    m[4] = 'q'; m[5] = '\0';
+                } else {
+                    m[4] = '\0';
+                }
+
+                apply_move(m);
+                strcpy(history[history_count++], m);
+                strcpy(last_move, m);
+                
+                selected_x = -1; selected_y = -1;
+                engine_turn = true;
+                send_history_to_engine();
             }
-
-            printf(" %s ", get_piece_symbol(piece));
-            printf("\033[0m"); // Reset styles
-        }
-        printf(" %d\n", 8 - r);
-    }
-    printf("     a  b  c  d  e  f  g  h\n\n");
-    printf("  \033[1;33mStatus:\033[0m %s\n", status_msg);
-    printf("  \033[1;32mControls:\033[0m ARROWS to navigate | SPACE/ENTER to Select/Move | 'q' to exit\n");
-}
-
-// Execute logic changes directly on local state
-void make_move_on_board(const char *move) {
-    int col1 = move[0] - 'a';
-    int row1 = 7 - (move[1] - '1');
-    int col2 = move[2] - 'a';
-    int row2 = 7 - (move[3] - '1');
-    char piece = board[row1][col1];
-
-    // Simple Castling verification & update
-    if ((piece == 'K' || piece == 'k') && abs(col1 - col2) == 2) {
-        if (col2 == 6) { // King Side
-            board[row1][5] = board[row1][7];
-            board[row1][7] = '.';
-        } else if (col2 == 2) { // Queen Side
-            board[row1][3] = board[row1][0];
-            board[row1][0] = '.';
         }
     }
-
-    // Simple En Passant verification & update
-    if ((piece == 'P' || piece == 'p') && col1 != col2 && board[row2][col2] == '.') {
-        board[row1][col2] = '.';
-    }
-
-    // Pawn Promotion check
-    if (move[4] != '\0') {
-        board[row2][col2] = (piece == 'P') ? toupper(move[4]) : move[4];
-    } else {
-        board[row2][col2] = piece;
-    }
-
-    board[row1][col1] = '.';
 }
 
-// Trigger CPU Engine turn and pull results
-void run_engine_turn() {
-    snprintf(status_msg, sizeof(status_msg), "Engine is thinking...");
-    draw_board();
-
-    // Reconstruct game states for the engine
-    char cmd[16384] = "position startpos moves";
-    for (int i = 0; i < num_moves; i++) {
-        strcat(cmd, " ");
-        strcat(cmd, moves_history[i]);
-    }
-    strcat(cmd, "\n");
-    send_to_engine(cmd);
-
-    // Limit execution time to 1.5 seconds per move
-    send_to_engine("go movetime 1500\n");
-
-    char line[1024];
-    char bestmove[16] = "";
-    while (read_line(from_engine[0], line, sizeof(line)) >= 0) {
-        if (strncmp(line, "bestmove ", 9) == 0) {
-            sscanf(line + 9, "%s", bestmove);
-            break;
+void poll_engine() {
+    char buf[256];
+    int n = read(engine_out[0], buf, sizeof(buf));
+    if (n == 0) engine_dead = true; // Engine pipe closed
+    if (n > 0) {
+        for (int i = 0; i < n; ++i) {
+            if (buf[i] == '\n') {
+                eng_buf[eng_buf_len] = '\0';
+                if (strncmp(eng_buf, "bestmove ", 9) == 0) {
+                    char best[6];
+                    if (sscanf(eng_buf + 9, "%5s", best) == 1 && strcmp(best, "(none)") != 0) {
+                        apply_move(best);
+                        strcpy(history[history_count++], best);
+                        strcpy(last_move, best);
+                        engine_turn = false;
+                    }
+                }
+                eng_buf_len = 0;
+            } else if (buf[i] != '\r') {
+                if (eng_buf_len < sizeof(eng_buf) - 1) eng_buf[eng_buf_len++] = buf[i];
+            }
         }
     }
-
-    if (strlen(bestmove) >= 4) {
-        strcpy(moves_history[num_moves++], bestmove);
-        make_move_on_board(bestmove);
-        snprintf(status_msg, sizeof(status_msg), "Engine played: %s", bestmove);
-    } else {
-        snprintf(status_msg, sizeof(status_msg), "Engine error or game over.");
-    }
-    turn = 0; // Return control back to human player
 }
 
-int main() {
-    if (!start_engine()) {
-        printf("\n\033[1;31mCould not locate stockfish engine!\033[0m\n");
-        printf("Please install Stockfish ('brew install stockfish') and try again.\n\n");
-        return 1;
-    }
-
-    enable_raw_mode();
-
+int main(int argc, char** argv) {
+    if (argc > 1) strncpy(engine_path, argv[1], sizeof(engine_path) - 1);
+    
+    printf("\x1b[2J"); // Clear screen initially
+    setup_terminal();
+    start_engine(engine_path);
+    
     while (1) {
         draw_board();
-
-        if (turn == 1) {
-            run_engine_turn();
-            continue;
-        }
-
-        int key = read_key();
-
-        if (key == 'q') {
-            break;
-        } else if (key == 'u') { // Up
-            if (cursor_y > 0) cursor_y--;
-        } else if (key == 'd') { // Down
-            if (cursor_y < 7) cursor_y++;
-        } else if (key == 'l') { // Left
-            if (cursor_x > 0) cursor_x--;
-        } else if (key == 'r') { // Right
-            if (cursor_x < 7) cursor_x++;
-        } else if (key == ' ' || key == 10 || key == 13) { // Space or Enter
-            if (selected_x == -1) {
-                // Select a piece (must be user's piece - Uppercase)
-                if (board[cursor_y][cursor_x] != '.' && isupper(board[cursor_y][cursor_x])) {
-                    selected_x = cursor_x;
-                    selected_y = cursor_y;
-                    snprintf(status_msg, sizeof(status_msg), "Selected piece on %c%d. Choose target square.", selected_x + 'a', 8 - selected_y);
-                } else {
-                    snprintf(status_msg, sizeof(status_msg), "Invalid selection: Select your white piece.");
-                }
-            } else {
-                // Move action
-                if (cursor_x == selected_x && cursor_y == selected_y) {
-                    // Deselect same tile
-                    selected_x = -1;
-                    selected_y = -1;
-                    snprintf(status_msg, sizeof(status_msg), "Deselected.");
-                } else {
-                    // Execute basic move
-                    char move_str[8];
-                    move_str[0] = selected_x + 'a';
-                    move_str[1] = (7 - selected_y) + '1';
-                    move_str[2] = cursor_x + 'a';
-                    move_str[3] = (7 - cursor_y) + '1';
-                    move_str[4] = '\0';
-
-                    // Automatic Queen Promotion for simplistic GUI flow
-                    if (board[selected_y][selected_x] == 'P' && cursor_y == 0) {
-                        move_str[4] = 'q';
-                        move_str[5] = '\0';
-                    }
-
-                    // Avoid illegal self-capture
-                    if (!isupper(board[cursor_y][cursor_x])) {
-                        strcpy(moves_history[num_moves++], move_str);
-                        make_move_on_board(move_str);
-                        turn = 1; // Transition turn logic to Stockfish
-                        snprintf(status_msg, sizeof(status_msg), "You moved: %s", move_str);
-                    } else {
-                        snprintf(status_msg, sizeof(status_msg), "Invalid target cell.");
-                    }
-                    selected_x = -1;
-                    selected_y = -1;
-                }
-            }
+        
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(STDIN_FILENO, &read_fds);
+        if (!engine_dead) FD_SET(engine_out[0], &read_fds);
+        
+        struct timeval tv = {0, 50000}; // Update screen/poll every 50ms
+        int max_fd = STDIN_FILENO > engine_out[0] ? STDIN_FILENO : engine_out[0];
+        
+        int ret = select(max_fd + 1, &read_fds, NULL, NULL, &tv);
+        if (ret > 0) {
+            if (FD_ISSET(STDIN_FILENO, &read_fds)) handle_input();
+            if (!engine_dead && FD_ISSET(engine_out[0], &read_fds)) poll_engine();
         }
     }
-    
     return 0;
 }
