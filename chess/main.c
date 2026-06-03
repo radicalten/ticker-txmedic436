@@ -73,7 +73,7 @@ ESC[48;5;⟨n⟩m Select background color
 For Chess:
 Dark Squares:  printf("\e[48;5;172m"); #d78700 (215, 135, 0) Harvest Gold color
 Light Squares: printf("\e[48;5;223m"); #ffd7af (255, 215, 175) Peach color
-White Pieces:  printf("\e[1;97m"); BrightWhite (255, 255, 255) White color 1; = bold
+White Pieces:  printf("\e[0;97m"); BrightWhite (255, 255, 255) White color 1; = bold
 Black Pieces:  printf("\e[0;30m"); Black (0, 0, 0) Black color 0; = no modifiers, default. 
 
 */
