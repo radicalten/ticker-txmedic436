@@ -78,6 +78,8 @@ White Pieces:  printf("\e[38;5;231m"); #ffffff (255, 255, 255) White color 1; = 
 White Pieces:  printf("\e[38;5;222m"); #FFD787 (255, 215, 135) White color 1; = bold | option 3 wood color of FIDE wood chess set actual: "RGBA(215, 182, 129, 1)" "#D7B681", visibility is too low here.
 Black Pieces:  printf("\e[30m"); Black (0, 0, 0) Black color 0; = reset modifiers.
 
+White Pieces:  printf("\e[1;38;5;231m"); #ffffff (255, 255, 255) White | 1; bold
+Black Pieces:  printf("\e[1;30m"); Black (0, 0, 0) | 1; bold
 */
 
 #include <stdio.h>
