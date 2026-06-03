@@ -1,3 +1,16 @@
+/*
+Below is a single-file C terminal chess “GUI” (text UI) that talks to a UCI engine (e.g., Stockfish) using pipes. It runs in the Mac Terminal and lets you play vs the engine (or engine vs engine, or human vs human).
+
+    Board is ASCII.
+    Moves are entered in UCI long algebraic like e2e4, g1f3, promotions e7e8q.
+    Uses UCI: uci, isready, ucinewgame, position startpos moves ..., go depth N (or movetime).
+    Includes basic pseudo-legal move checking + board updates (including castling + en passant + promotion). It does not fully validate “moving into check”.
+
+If you want a more “GUI-like” terminal experience
+
+Tell me what style you want (cursor-based selection, colors, arrow keys, etc.). I can adapt this to use ncurses while still keeping it single-file and UCI-driven.
+*/
+
 // uci_tui_chess.c - single-file terminal chess UI that speaks UCI (macOS-friendly)
 // Build: cc -O2 -Wall -Wextra -std=c11 uci_tui_chess.c -o chess
 // Run:   ./chess [engine] [engine_args...]
