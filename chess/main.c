@@ -299,7 +299,7 @@ void draw_square(int r, int c) {
     if (p != '.') {
         // Foreground styling (White pieces are White, Black pieces are Black)
         if (isupper(p)) {
-            White Pieces:  printf("\e[38;5;231m");
+            printf("\e[38;5;231m");
         } else {
             printf("\e[30m"); 
         }
