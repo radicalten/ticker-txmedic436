@@ -33,6 +33,37 @@ How to Run and Play
     Type quit at any point to exit cleanly.
 */
 
+/* 
+Ansi-Colors here https://en.wikipedia.org/wiki/ANSI_escape_code
+ANSI sets background and foreground colors independently so you can have a white page (BG) with black text (FG) on top, or any combination. 
+
+Select Graphic Redition Parameters
+The control sequence CSI n m, named Select Graphic Rendition (SGR), sets display attributes. Several attributes can be set in the same sequence, separated by semicolons.[25] Each display attribute remains in effect until a following occurrence of SGR resets it.[16] If no codes are given, CSI m is treated as CSI 0 m (reset / normal). 
+
+The original specification only had 8 colors, and just gave them names. The SGR parameters 30–37 selected the foreground color, while 40–47 selected the background. Quite a few terminals implemented "bold" (SGR code 1) as a brighter color rather than a different font, thus providing 8 additional foreground colors. Usually you could not get these as background colors, though sometimes inverse video (SGR code 7) would allow that. Examples: to get black letters on white background use ESC[30;47m, to get red use ESC[31m, to get bright red use ESC[1;31m. To reset colors to their defaults, use ESC[39;49m (not supported on some terminals), or reset all attributes with ESC[0m. Later terminals added the ability to directly specify the "bright" colors with 90–97 and 100–107.  The chart below shows a few examples of how classical standards and modern terminal emulators translate the 4-bit color codes into 24-bit color codes. 
+
+Examples: to get black letters on white background use ESC[30;47m
+
+Black:  FG30, BG40
+Red:    FG31, BG41
+Green:  FG32, BG42
+Yellow: FG33, BG43
+Blue:   FG34, BG44
+Magenta:FG35, BG45
+Cyan:   FG36, BG46
+White:  FG37, BG47
+
+BrightBlack:  FG90, BG100
+BrightRed:    FG91, BG101
+BrightGreen:  FG92, BG102
+BrightYellow: FG93, BG103
+BrightBlue:   FG94, BG104
+BrightMagenta:FG95, BG105
+BrightCyan:   FG96, BG106
+BrightWhite:  FG97, BG107
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
