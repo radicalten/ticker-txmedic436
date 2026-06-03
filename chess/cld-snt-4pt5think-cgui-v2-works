@@ -1,3 +1,31 @@
+/*
+Features:
+
+    ✅ Full chess board display with Unicode pieces
+    ✅ Color-coded squares (light/dark)
+    ✅ UCI protocol implementation
+    ✅ Move input in algebraic notation (e.g., e2e4)
+    ✅ Engine move requests
+    ✅ Castling support
+    ✅ Promotion support (e.g., e7e8q)
+    ✅ Move history tracking
+
+Commands:
+
+    e2e4 - Make a move (from e2 to e4)
+    engine or e - Let the engine calculate and play a move
+    quit or q - Exit the program
+
+Notes:
+
+    You need a UCI-compatible chess engine (like Stockfish, Leela, etc.)
+    Install Stockfish on Mac: brew install stockfish
+    The engine path is typically /opt/homebrew/bin/stockfish on Apple Silicon Macs or /usr/local/bin/stockfish on Intel Macs
+
+This is a fully functional terminal-based chess interface that communicates with any UCI engine!
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
