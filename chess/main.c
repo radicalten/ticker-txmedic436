@@ -62,6 +62,13 @@ BrightMagenta:FG95, BG105
 BrightCyan:   FG96, BG106
 BrightWhite:  FG97, BG107
 
+256-color mode
+ESC[38;5;⟨n⟩m Select foreground color      where n is a number from the table below
+ESC[48;5;⟨n⟩m Select background color
+  0-  7:  standard colors (as in ESC [ 30–37 m)
+  8- 15:  high intensity colors (as in ESC [ 90–97 m)
+ 16-231:  6 × 6 × 6 cube (216 colors): 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+232-255:  grayscale from dark to light in 24 steps
 */
 
 #include <stdio.h>
@@ -281,11 +288,11 @@ void draw_square(int r, int c) {
 
     char p = board[r][c];
     if (p != '.') {
-        // Foreground styling (White pieces are White, Black pieces are bright Blue)
+        // Foreground styling (White pieces are White, Black pieces are Black)
         if (isupper(p)) {
             printf("\e[1;97m"); 
         } else {
-            printf("\e[1;34m"); 
+            printf("\e[1;30"); 
         }
         printf(" %s ", get_piece_char(p));
     } else {
