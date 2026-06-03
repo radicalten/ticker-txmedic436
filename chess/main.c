@@ -73,8 +73,8 @@ ESC[48;5;⟨n⟩m Select background color
 For Chess:
 Dark Squares:  printf("\e[48;5;172m"); #d78700 (215, 135, 0) Harvest Gold color
 Light Squares: printf("\e[48;5;223m"); #ffd7af (255, 215, 175) Peach color
-White Pieces:  printf("\e[0;97m"); BrightWhite (255, 255, 255) White color 1; = bold
-Black Pieces:  printf("\e[0;30m"); Black (0, 0, 0) Black color 0; = no modifiers, default. 
+White Pieces:  printf("\e[97m"); BrightWhite (255, 255, 255) White color 1; = bold
+Black Pieces:  printf("\e[30m"); Black (0, 0, 0) Black color 0; = reset modifiers.
 
 */
 
@@ -297,9 +297,9 @@ void draw_square(int r, int c) {
     if (p != '.') {
         // Foreground styling (White pieces are White, Black pieces are Black)
         if (isupper(p)) {
-            printf("\e[0;97m"); 
+            printf("\e[97m"); 
         } else {
-            printf("\e[0;30m"); 
+            printf("\e[30m"); 
         }
         printf(" %s ", get_piece_char(p));
     } else {
