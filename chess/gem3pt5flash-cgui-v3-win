@@ -1,3 +1,8 @@
+/*
+Here is a complete, single-file C program designed specifically for macOS Terminal. It implements a chess board GUI using Unix system APIs (termios.h, fork, exec, and pipes), processes raw keyboard arrow keys, supports full sub-process communication with a UCI chess engine like Stockfish, and updates the state of the game in real time.
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
