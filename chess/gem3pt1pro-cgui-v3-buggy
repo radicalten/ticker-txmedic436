@@ -1,3 +1,24 @@
+/*
+Here is a complete, single-file C program that acts as a GUI for any UCI-compliant chess engine (like Stockfish). It is designed to run beautifully in the macOS Terminal.
+
+It handles ANSI coloring for the board, reads arrow keys for navigation, uses SPACE or ENTER to select and move pieces, and communicates via pipes to the chess engine.
+Prerequisites
+
+    You must have a UCI chess engine installed. The easiest way on a Mac is to install Stockfish via Homebrew:
+
+Note: If Stockfish is installed somewhere not in your default $PATH, or you want to use a different engine (like Lc0), pass the path as an argument: ./chess /path/to/engine
+How to Play
+
+    Move: Use the UP, DOWN, LEFT, and RIGHT arrow keys to move the yellow cursor around the board.
+    Select: Place the cursor over a white piece and press SPACE or ENTER. The square will turn Green to indicate selection. (Pressing again on the same square deselects it).
+    Move: Move the cursor to the desired destination square and press SPACE or ENTER again to commit the move.
+    Engine: The engine will take roughly 1 second to think of its response and will move its piece automatically.
+    Quit: Press q at any point to exit and clear the GUI.
+
+(Note: Move validation is kept minimal in the GUI for brevity. The game relies on the user making legal chess moves. If you make an illegal move, the engine may become unsynced).
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
