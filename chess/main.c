@@ -2,248 +2,475 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <ctype.h>
 
-#define ENGINE_PATH "stockfish" // Assumes stockfish is in your PATH. Change to absolute path if needed.
-#define MOVE_HISTORY_SIZE 4096
-#define BUFFER_SIZE 1024
+#define BOARD_SIZE 8
+#define MAX_MOVES 512
+#define BUFFER_SIZE 4096
 
-// Global board state
-char board[8][8];
-char move_history[MOVE_HISTORY_SIZE];
+// Piece definitions
+#define EMPTY 0
+#define PAWN 1
+#define KNIGHT 2
+#define BISHOP 3
+#define ROOK 4
+#define QUEEN 5
+#define KING 6
+#define WHITE 8
+#define BLACK 16
 
-// Pipe file descriptors
-int parent_to_child[2];
-int child_to_parent[2];
+// UCI Engine communication
+typedef struct {
+    int to_engine[2];
+    int from_engine[2];
+    pid_t pid;
+    FILE *write_fp;
+    FILE *read_fp;
+} UCIEngine;
 
-FILE *engine_write;
-FILE *engine_read;
+// Game state
+typedef struct {
+    int board[BOARD_SIZE][BOARD_SIZE];
+    char move_history[MAX_MOVES][8];
+    int move_count;
+    int white_to_move;
+    int white_castle_k, white_castle_q;
+    int black_castle_k, black_castle_q;
+    int en_passant_file;
+} GameState;
 
-void init_board() {
-    char initial[8][8] = {
-        {'r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'},
-        {'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'},
-        {'.', '.', '.', '.', '.', '.', '.', '.'},
-        {'.', '.', '.', '.', '.', '.', '.', '.'},
-        {'.', '.', '.', '.', '.', '.', '.', '.'},
-        {'.', '.', '.', '.', '.', '.', '.', '.'},
-        {'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P'},
-        {'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'}
-    };
-    memcpy(board, initial, sizeof(board));
-    move_history[0] = '\0';
+UCIEngine engine;
+GameState game;
+
+// Unicode chess pieces
+const char *piece_symbols[] = {
+    " ", "♟", "♞", "♝", "♜", "♛", "♚", " ",
+    " ", "♙", "♘", "♗", "♖", "♕", "♔"
+};
+
+// Function prototypes
+void init_board(GameState *g);
+void display_board(GameState *g);
+int start_engine(UCIEngine *e, const char *engine_path);
+void send_to_engine(UCIEngine *e, const char *cmd);
+char *read_from_engine(UCIEngine *e, char *buffer, int size);
+void close_engine(UCIEngine *e);
+int parse_move(const char *move_str, int *from_row, int *from_col, int *to_row, int *to_col, char *promotion);
+int is_valid_move(GameState *g, int fr, int fc, int tr, int tc);
+void make_move(GameState *g, const char *move_str);
+void get_fen(GameState *g, char *fen);
+void wait_for_ready(UCIEngine *e);
+char *get_engine_move(UCIEngine *e, GameState *g);
+
+// Initialize board to starting position
+void init_board(GameState *g) {
+    // Clear board
+    for (int i = 0; i < BOARD_SIZE; i++)
+        for (int j = 0; j < BOARD_SIZE; j++)
+            g->board[i][j] = EMPTY;
+    
+    // Black pieces (row 0 = 8th rank)
+    g->board[0][0] = g->board[0][7] = BLACK | ROOK;
+    g->board[0][1] = g->board[0][6] = BLACK | KNIGHT;
+    g->board[0][2] = g->board[0][5] = BLACK | BISHOP;
+    g->board[0][3] = BLACK | QUEEN;
+    g->board[0][4] = BLACK | KING;
+    
+    // Black pawns
+    for (int i = 0; i < BOARD_SIZE; i++)
+        g->board[1][i] = BLACK | PAWN;
+    
+    // White pawns
+    for (int i = 0; i < BOARD_SIZE; i++)
+        g->board[6][i] = WHITE | PAWN;
+    
+    // White pieces (row 7 = 1st rank)
+    g->board[7][0] = g->board[7][7] = WHITE | ROOK;
+    g->board[7][1] = g->board[7][6] = WHITE | KNIGHT;
+    g->board[7][2] = g->board[7][5] = WHITE | BISHOP;
+    g->board[7][3] = WHITE | QUEEN;
+    g->board[7][4] = WHITE | KING;
+    
+    g->move_count = 0;
+    g->white_to_move = 1;
+    g->white_castle_k = g->white_castle_q = 1;
+    g->black_castle_k = g->black_castle_q = 1;
+    g->en_passant_file = -1;
 }
 
-void print_board() {
-    printf("\n  ");
-    for (char c = 'a'; c <= 'h'; c++) printf("  %c ", c);
-    printf("\n  +---+---+---+---+---+---+---+---+\n");
+// Display the chess board
+void display_board(GameState *g) {
+    printf("\n\033[2J\033[H"); // Clear screen
+    printf("  ╔═══╤═══╤═══╤═══╤═══╤═══╤═══╤═══╗\n");
     
-    for (int r = 0; r < 8; r++) {
-        printf("%d |", 8 - r);
-        for (int c = 0; c < 8; c++) {
-            char piece = board[r][c];
-            // ANSI colors: White pieces are Bold Green, Black pieces are Bold Red, Empty is grey
-            if (piece == '.') {
-                printf("   |");
-            } else if (isupper(piece)) {
-                printf(" \033[1;32m%c\033[0m |", piece);
-            } else {
-                printf(" \033[1;31m%c\033[0m |", toupper(piece));
+    for (int row = 0; row < BOARD_SIZE; row++) {
+        printf("%d ║", 8 - row);
+        for (int col = 0; col < BOARD_SIZE; col++) {
+            int piece = g->board[row][col];
+            int is_light = (row + col) % 2 == 0;
+            
+            // Background color
+            if (is_light)
+                printf("\033[47m"); // White background
+            else
+                printf("\033[100m"); // Dark gray background
+            
+            // Piece color
+            if (piece & WHITE)
+                printf("\033[97m"); // Bright white
+            else if (piece & BLACK)
+                printf("\033[30m"); // Black
+            
+            int piece_type = piece & 7;
+            int color_offset = (piece & WHITE) ? 9 : 1;
+            printf(" %s ", piece_symbols[color_offset + piece_type - 1]);
+            
+            printf("\033[0m"); // Reset colors
+            
+            if (col < BOARD_SIZE - 1)
+                printf("│");
+        }
+        printf("║\n");
+        
+        if (row < BOARD_SIZE - 1)
+            printf("  ╟───┼───┼───┼───┼───┼───┼───┼───╢\n");
+    }
+    
+    printf("  ╚═══╧═══╧═══╧═══╧═══╧═══╧═══╧═══╝\n");
+    printf("    a   b   c   d   e   f   g   h\n\n");
+    printf("%s to move\n", g->white_to_move ? "White" : "Black");
+}
+
+// Start UCI engine
+int start_engine(UCIEngine *e, const char *engine_path) {
+    if (pipe(e->to_engine) == -1 || pipe(e->from_engine) == -1) {
+        perror("pipe");
+        return 0;
+    }
+    
+    e->pid = fork();
+    if (e->pid == -1) {
+        perror("fork");
+        return 0;
+    }
+    
+    if (e->pid == 0) {
+        // Child process - run engine
+        dup2(e->to_engine[0], STDIN_FILENO);
+        dup2(e->from_engine[1], STDOUT_FILENO);
+        dup2(e->from_engine[1], STDERR_FILENO);
+        
+        close(e->to_engine[0]);
+        close(e->to_engine[1]);
+        close(e->from_engine[0]);
+        close(e->from_engine[1]);
+        
+        execl(engine_path, engine_path, NULL);
+        perror("execl");
+        exit(1);
+    }
+    
+    // Parent process
+    close(e->to_engine[0]);
+    close(e->from_engine[1]);
+    
+    e->write_fp = fdopen(e->to_engine[1], "w");
+    e->read_fp = fdopen(e->from_engine[0], "r");
+    
+    if (!e->write_fp || !e->read_fp) {
+        perror("fdopen");
+        return 0;
+    }
+    
+    // Initialize UCI
+    send_to_engine(e, "uci\n");
+    wait_for_ready(e);
+    send_to_engine(e, "isready\n");
+    
+    char buffer[BUFFER_SIZE];
+    while (read_from_engine(e, buffer, BUFFER_SIZE)) {
+        if (strstr(buffer, "readyok"))
+            break;
+    }
+    
+    return 1;
+}
+
+// Send command to engine
+void send_to_engine(UCIEngine *e, const char *cmd) {
+    fprintf(e->write_fp, "%s", cmd);
+    fflush(e->write_fp);
+}
+
+// Read line from engine
+char *read_from_engine(UCIEngine *e, char *buffer, int size) {
+    if (fgets(buffer, size, e->read_fp) == NULL)
+        return NULL;
+    return buffer;
+}
+
+// Wait for UCI ready
+void wait_for_ready(UCIEngine *e) {
+    char buffer[BUFFER_SIZE];
+    while (read_from_engine(e, buffer, BUFFER_SIZE)) {
+        if (strstr(buffer, "uciok"))
+            break;
+    }
+}
+
+// Close engine
+void close_engine(UCIEngine *e) {
+    send_to_engine(e, "quit\n");
+    fclose(e->write_fp);
+    fclose(e->read_fp);
+    waitpid(e->pid, NULL, 0);
+}
+
+// Parse move from algebraic notation (e.g., "e2e4")
+int parse_move(const char *move_str, int *from_row, int *from_col, int *to_row, int *to_col, char *promotion) {
+    if (strlen(move_str) < 4)
+        return 0;
+    
+    *from_col = move_str[0] - 'a';
+    *from_row = 8 - (move_str[1] - '0');
+    *to_col = move_str[2] - 'a';
+    *to_row = 8 - (move_str[3] - '0');
+    
+    if (strlen(move_str) >= 5)
+        *promotion = move_str[4];
+    else
+        *promotion = '\0';
+    
+    if (*from_col < 0 || *from_col >= 8 || *from_row < 0 || *from_row >= 8)
+        return 0;
+    if (*to_col < 0 || *to_col >= 8 || *to_row < 0 || *to_row >= 8)
+        return 0;
+    
+    return 1;
+}
+
+// Basic move validation
+int is_valid_move(GameState *g, int fr, int fc, int tr, int tc) {
+    int piece = g->board[fr][fc];
+    if (piece == EMPTY)
+        return 0;
+    
+    // Check if it's the right color's turn
+    if (g->white_to_move && !(piece & WHITE))
+        return 0;
+    if (!g->white_to_move && !(piece & BLACK))
+        return 0;
+    
+    // Can't capture own piece
+    int target = g->board[tr][tc];
+    if (target != EMPTY && ((piece & WHITE) && (target & WHITE)) || 
+        ((piece & BLACK) && (target & BLACK)))
+        return 0;
+    
+    return 1; // Simplified validation
+}
+
+// Make a move on the board
+void make_move(GameState *g, const char *move_str) {
+    int fr, fc, tr, tc;
+    char promotion;
+    
+    if (!parse_move(move_str, &fr, &fc, &tr, &tc, &promotion))
+        return;
+    
+    int piece = g->board[fr][fc];
+    
+    // Handle castling
+    if ((piece & 7) == KING && abs(tc - fc) == 2) {
+        // Move king
+        g->board[tr][tc] = piece;
+        g->board[fr][fc] = EMPTY;
+        
+        // Move rook
+        if (tc > fc) { // Kingside
+            g->board[tr][5] = g->board[tr][7];
+            g->board[tr][7] = EMPTY;
+        } else { // Queenside
+            g->board[tr][3] = g->board[tr][0];
+            g->board[tr][0] = EMPTY;
+        }
+    } else {
+        // Regular move
+        g->board[tr][tc] = piece;
+        g->board[fr][fc] = EMPTY;
+        
+        // Handle promotion
+        if (promotion && (piece & 7) == PAWN) {
+            int color = piece & (WHITE | BLACK);
+            switch (tolower(promotion)) {
+                case 'q': g->board[tr][tc] = color | QUEEN; break;
+                case 'r': g->board[tr][tc] = color | ROOK; break;
+                case 'b': g->board[tr][tc] = color | BISHOP; break;
+                case 'n': g->board[tr][tc] = color | KNIGHT; break;
             }
         }
-        printf(" %d\n  +---+---+---+---+---+---+---+---+\n", 8 - r);
     }
-    printf("  ");
-    for (char c = 'a'; c <= 'h'; c++) printf("  %c ", c);
-    printf("\n\n");
-}
-
-void apply_move(const char *move) {
-    int c1 = move[0] - 'a';
-    int r1 = 8 - (move[1] - '0');
-    int c2 = move[2] - 'a';
-    int r2 = 8 - (move[3] - '0');
-
-    char piece = board[r1][c1];
-    char captured = board[r2][c2];
-
-    // Handle Castling (move the rook too)
-    if (toupper(piece) == 'K' && abs(c2 - c1) == 2) {
-        if (c2 == 6) { // Kingside
-            board[r1][5] = board[r1][7];
-            board[r1][7] = '.';
-        } else if (c2 == 2) { // Queenside
-            board[r1][3] = board[r1][0];
-            board[r1][0] = '.';
+    
+    // Update castling rights
+    if ((piece & 7) == KING) {
+        if (piece & WHITE) {
+            g->white_castle_k = g->white_castle_q = 0;
+        } else {
+            g->black_castle_k = g->black_castle_q = 0;
         }
     }
+    
+    strcpy(g->move_history[g->move_count++], move_str);
+    g->white_to_move = !g->white_to_move;
+}
 
-    // Handle Promotion
-    if (strlen(move) == 5) {
-        char promo = move[4];
-        if (isupper(piece)) promo = toupper(promo);
-        else promo = tolower(promo);
-        board[r2][c2] = promo;
-    } else {
-        board[r2][c2] = piece;
+// Get FEN string (simplified)
+void get_fen(GameState *g, char *fen) {
+    char *p = fen;
+    
+    for (int row = 0; row < 8; row++) {
+        int empty_count = 0;
+        for (int col = 0; col < 8; col++) {
+            int piece = g->board[row][col];
+            if (piece == EMPTY) {
+                empty_count++;
+            } else {
+                if (empty_count > 0) {
+                    *p++ = '0' + empty_count;
+                    empty_count = 0;
+                }
+                
+                char piece_char;
+                switch (piece & 7) {
+                    case PAWN: piece_char = 'p'; break;
+                    case KNIGHT: piece_char = 'n'; break;
+                    case BISHOP: piece_char = 'b'; break;
+                    case ROOK: piece_char = 'r'; break;
+                    case QUEEN: piece_char = 'q'; break;
+                    case KING: piece_char = 'k'; break;
+                    default: piece_char = ' ';
+                }
+                
+                if (piece & WHITE)
+                    piece_char = toupper(piece_char);
+                
+                *p++ = piece_char;
+            }
+        }
+        
+        if (empty_count > 0)
+            *p++ = '0' + empty_count;
+        
+        if (row < 7)
+            *p++ = '/';
     }
-
-    board[r1][c1] = '.';
-
-    // Update move history
-    if (strlen(move_history) > 0) strcat(move_history, " ");
-    strcat(move_history, move);
+    
+    sprintf(p, " %c KQkq - 0 1", g->white_to_move ? 'w' : 'b');
 }
 
-void send_uci(const char *cmd) {
-    fprintf(engine_write, "%s\n", cmd);
-    fflush(engine_write);
-}
-
-char* read_uci(const char *expected_prefix) {
-    static char line[BUFFER_SIZE];
-    while (fgets(line, sizeof(line), engine_read)) {
-        // Remove trailing newline
-        line[strcspn(line, "\n")] = 0;
-        if (strncmp(line, expected_prefix, strlen(expected_prefix)) == 0) {
-            return line;
+// Get best move from engine
+char *get_engine_move(UCIEngine *e, GameState *g) {
+    static char move[16];
+    char cmd[BUFFER_SIZE];
+    char fen[256];
+    
+    get_fen(g, fen);
+    sprintf(cmd, "position fen %s", fen);
+    
+    if (g->move_count > 0) {
+        strcat(cmd, " moves");
+        for (int i = 0; i < g->move_count; i++) {
+            strcat(cmd, " ");
+            strcat(cmd, g->move_history[i]);
         }
     }
+    
+    strcat(cmd, "\n");
+    send_to_engine(e, cmd);
+    send_to_engine(e, "go movetime 1000\n");
+    
+    char buffer[BUFFER_SIZE];
+    while (read_from_engine(e, buffer, BUFFER_SIZE)) {
+        if (strstr(buffer, "bestmove")) {
+            char *token = strtok(buffer, " ");
+            token = strtok(NULL, " ");
+            if (token) {
+                strncpy(move, token, 15);
+                move[15] = '\0';
+                // Remove any trailing newline
+                char *newline = strchr(move, '\n');
+                if (newline) *newline = '\0';
+                return move;
+            }
+        }
+    }
+    
     return NULL;
 }
 
-void spawn_engine() {
-    if (pipe(parent_to_child) == -1 || pipe(child_to_parent) == -1) {
-        perror("pipe");
-        exit(1);
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <path_to_uci_engine>\n", argv[0]);
+        printf("Example: %s /usr/local/bin/stockfish\n", argv[0]);
+        return 1;
     }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(1);
-    }
-
-    if (pid == 0) { // Child process (Engine)
-        close(parent_to_child[1]); // Close write end of parent->child
-        close(child_to_parent[0]); // Close read end of child->parent
-        
-        dup2(parent_to_child[0], STDIN_FILENO);
-        dup2(child_to_parent[1], STDOUT_FILENO);
-        
-        close(parent_to_child[0]);
-        close(child_to_parent[1]);
-        
-        execlp(ENGINE_PATH, ENGINE_PATH, NULL);
-        
-        // If execlp fails
-        perror("Failed to launch engine. Is '" ENGINE_PATH "' in your PATH?");
-        exit(1);
-    }
-
-    // Parent process (GUI)
-    close(parent_to_child[0]); // Close read end of parent->child
-    close(child_to_parent[1]); // Close write end of child->parent
     
-    engine_write = fdopen(parent_to_child[1], "w");
-    engine_read = fdopen(child_to_parent[0], "r");
-
-    // UCI Handshake
-    send_uci("uci");
-    read_uci("uciok");
-    send_uci("isready");
-    read_uci("readyok");
-}
-
-void engine_play() {
-    char cmd[BUFFER_SIZE];
-    if (strlen(move_history) > 0) {
-        snprintf(cmd, sizeof(cmd), "position startpos moves %s", move_history);
-    } else {
-        snprintf(cmd, sizeof(cmd), "position startpos");
+    init_board(&game);
+    
+    printf("Starting UCI engine: %s\n", argv[1]);
+    if (!start_engine(&engine, argv[1])) {
+        printf("Failed to start engine\n");
+        return 1;
     }
-    send_uci(cmd);
-    send_uci("isready");
-    read_uci("readyok");
     
-    // Ask engine to calculate (depth 15 is reasonably fast)
-    send_uci("go depth 15");
+    printf("Engine started successfully!\n");
+    printf("Commands: move (e.g., 'e2e4'), 'engine' (let engine play), 'quit'\n");
+    sleep(1);
     
-    char *response = read_uci("bestmove");
-    if (response) {
-        char bestmove[6] = {0};
-        sscanf(response, "bestmove %5s", bestmove);
-        printf("Engine plays: %s\n", bestmove);
-        apply_move(bestmove);
-    } else {
-        printf("Engine stopped responding.\n");
-        exit(1);
-    }
-}
-
-int main() {
-    init_board();
-    spawn_engine();
+    char input[256];
     
-    printf("\n=== Terminal Chess GUI (UCI) ===\n");
-    printf("Playing against: %s\n", ENGINE_PATH);
-    printf("Enter moves in UCI format (e.g., e2e4, e7e8q for promotion).\n");
-    printf("Type 'quit' to exit, 'new' to start a new game.\n\n");
-
-    send_uci("ucinewgame");
-    send_uci("isready");
-    read_uci("readyok");
-
-    char input[32];
     while (1) {
-        print_board();
+        display_board(&game);
         
-        if (strlen(move_history) % 2 == 0 || strlen(move_history) == 0) {
-            printf("White's turn (You)\n");
-        } else {
-            printf("Black's turn (Engine)\n");
-            engine_play();
-            continue;
-        }
-
-        printf("> ");
-        if (fgets(input, sizeof(input), stdin) == NULL) break;
-        input[strcspn(input, "\n")] = 0; // Remove newline
-
-        if (strcmp(input, "quit") == 0) {
+        printf("\nEnter move or command: ");
+        if (fgets(input, sizeof(input), stdin) == NULL)
             break;
-        }
         
-        if (strcmp(input, "new") == 0) {
-            init_board();
-            send_uci("ucinewgame");
-            send_uci("isready");
-            read_uci("readyok");
-            printf("Starting new game.\n");
-            continue;
+        // Remove trailing newline
+        input[strcspn(input, "\n")] = 0;
+        
+        if (strcmp(input, "quit") == 0 || strcmp(input, "q") == 0) {
+            break;
+        } else if (strcmp(input, "engine") == 0 || strcmp(input, "e") == 0) {
+            printf("Engine thinking...\n");
+            char *move = get_engine_move(&engine, &game);
+            if (move) {
+                printf("Engine plays: %s\n", move);
+                make_move(&game, move);
+                sleep(1);
+            }
+        } else if (strlen(input) >= 4) {
+            // Assume it's a move
+            int fr, fc, tr, tc;
+            char promotion;
+            if (parse_move(input, &fr, &fc, &tr, &tc, &promotion)) {
+                if (is_valid_move(&game, fr, fc, tr, tc)) {
+                    make_move(&game, input);
+                } else {
+                    printf("Invalid move!\n");
+                    sleep(1);
+                }
+            } else {
+                printf("Invalid move format! Use format like 'e2e4'\n");
+                sleep(1);
+            }
         }
-
-        // Basic input validation (must be at least 4 chars, e.g., e2e4)
-        if (strlen(input) < 4 || 
-            input[0] < 'a' || input[0] > 'h' ||
-            input[1] < '1' || input[1] > '8' ||
-            input[2] < 'a' || input[2] > 'h' ||
-            input[3] < '1' || input[3] > '8') {
-            printf("Invalid move format. Use UCI format like 'e2e4'.\n");
-            continue;
-        }
-
-        apply_move(input);
     }
-
-    // Cleanup
-    send_uci("quit");
-    fclose(engine_write);
-    fclose(engine_read);
-    wait(NULL); // Wait for child process to exit
     
-    printf("Goodbye!\n");
+    close_engine(&engine);
+    printf("Game ended.\n");
+    
     return 0;
 }
