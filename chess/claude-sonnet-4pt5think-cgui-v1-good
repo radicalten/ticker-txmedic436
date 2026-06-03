@@ -1,3 +1,34 @@
+/*
+Terminal Chess with UCI Engine Support
+
+Here's a complete single-file chess program in C for Mac Terminal with UCI engine support:
+3. Run:
+Without engine (two-player):
+./chess
+
+With a UCI engine (like Stockfish):
+./chess stockfish
+
+Or with full path:
+./chess /usr/local/bin/stockfish
+
+4. Install Stockfish (optional):
+brew install stockfish
+
+Features:
+
+    ✅ Unicode chess board display
+    ✅ UCI engine communication
+    ✅ Move validation (basic)
+    ✅ Castling, en passant, promotion support
+    ✅ Move history tracking
+    ✅ Engine suggestions on demand
+    ✅ Works entirely in the terminal
+    ✅ Single C file - no dependencies
+
+The program displays the board, accepts moves in UCI format (e.g., e2e4), and can request suggestions from any UCI-compatible engine!
+
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
