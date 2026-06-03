@@ -1,3 +1,10 @@
+// my commentary: amazing GUI using only the terminal and unicode chess peices. 
+// The black and white squares are quite nice as is filling in the white and black pieces with color similarly inspired
+// The only change I would make is change white and black squares to true white and black instead of the gray tones used "charcoal"
+// Likewise the Blue aka black peices should be bright red ]/ ANSI format instead of bright blue for visibility reasons. 
+// Or could change square colors to white and green or white and blue or brown and peach, or some other such visible color. 
+// Winning chess gui so far, it auto reads the stockfish path and can allegedly be updated with a new path, that will come in handy. 
+
 /*
 Here is a complete, single-file C program that implements a fully functional, beautiful command-line Chess GUI for the macOS Terminal. It communicates with any UCI-compliant engine (like Stockfish) using UNIX pipes, manages game flow, renders a color-coded board with Unicode pieces, handles flips based on player color, and detects checkmates.
 Prerequisites
