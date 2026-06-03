@@ -359,10 +359,10 @@ int main() {
     }
 
     // Engine subprocess clean up
-    if (engine_pid > 0) {
-        send_to_engine("quit\n");
-        kill(engine_pid, SIGTERM);
-    }
+  //  if (engine_pid > 0) {
+  //      send_to_engine("quit\n");
+  //      kill(engine_pid, SIGTERM);
+  //  }
 
     return 0;
 }
