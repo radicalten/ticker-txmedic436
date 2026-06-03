@@ -1,3 +1,27 @@
+/*
+Here is a complete, single-file Chess GUI in C. It uses standard POSIX system calls (fork, pipe, dup2) to communicate with a UCI chess engine (like Stockfish) via inter-process communication (IPC). It runs directly in the Mac Terminal and uses ANSI color codes to draw the board.
+Prerequisites
+
+    You need a UCI chess engine installed. The most common is Stockfish. If you don't have it, install it via Homebrew:
+
+How It Works
+
+    Process Spawning (spawn_engine): The program uses fork() to create a child process. It then uses pipe() and dup2() to wire the child's standard input and output to the parent process. Finally, it replaces the child process with the chess engine (execlp("stockfish", ...)).
+    UCI Handshake: It sends uci, waits for uciok, sends isready, and waits for readyok to ensure the engine is initialized.
+    Game Loop:
+        It prints the board using ASCII and ANSI colors (Green = White pieces, Red = Black pieces).
+        On your turn, you type moves in UCCI format (e.g., e2e4, e7e8q for pawn promotion to queen).
+        On the engine's turn, it sends your move history via position startpos moves ..., tells it to calculate via go depth 15, and reads the output until it sees bestmove.
+    Move Application (apply_move): It updates the internal 8x8 array. It includes logic to detect and execute castling (moving the rook automatically when the king moves 2 squares) and promotions.
+    Commands: You can type quit to exit the game cleanly (shutting down the engine process), or new to reset the board.
+
+Notes
+
+    Engine Speed: The depth is set to 15 (go depth 15), which usually takes a fraction of a second. You can change this in the engine_play() function to go movetime 1000 (1 second per move) if you prefer time-based calculation.
+    Illegal Moves: The GUI does not validate moves itself—it trusts you. If you input an illegal move, Stockfish will reject it internally, and the game state will desync. Make sure your moves are legal!
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
