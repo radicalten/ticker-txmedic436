@@ -1,3 +1,31 @@
+/*
+Here is a complete, single-file C program that implements a fully functional, beautiful command-line Chess GUI for the macOS Terminal. It communicates with any UCI-compliant engine (like Stockfish) using UNIX pipes, manages game flow, renders a color-coded board with Unicode pieces, handles flips based on player color, and detects checkmates.
+Prerequisites
+
+To play against a real chess engine, you should have Stockfish installed. On macOS, you can easily install it via Homebrew:
+
+brew install stockfish
+
+Compilation
+You can compile this code directly inside your Mac Terminal using clang or gcc:
+clang -O3 -o chess_gui chess_gui.c
+
+How to Run and Play
+
+    Run the compiled executable:
+./chess_gui
+
+    The game will auto-detect Stockfish. If not found, it will ask you to supply your custom binary path.
+    Choose your color (w for White, b for Black).
+    Enter the engine's processing time (default is 1000 milliseconds for a fast but challenging opponent).
+    Input your moves using standard UCI algebraic notation:
+        e2e4 (Move Pawn from e2 to e4)
+        g1f3 (Move Knight from g1 to f3)
+        e1g1 (White Kingside Castle)
+        e7e8q (Pawn promotion to Queen)
+    Type quit at any point to exit cleanly.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
