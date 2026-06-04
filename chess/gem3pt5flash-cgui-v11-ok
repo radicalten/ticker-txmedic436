@@ -1,3 +1,29 @@
+//V11 Gui Prompt 6-3-26
+//Can you create a single file chess GUI program in C without external dependencies that takes moves from Universal Chess Interface (UCI) compliant engines, and works in the Mac Terminal? Additionally, make it so the user can use keys to select and move pieces with appropriate square highlighting. Enable move take backs (undo), and display all moves played using PGN notation. Allow user to set UCI time controls for depth, nodes, or time. 
+
+/*
+Here is a complete, feature-rich, single-file C chess GUI that runs inside your Mac Terminal without any external library dependencies. It interfaces with any Universal Chess Interface (UCI) engine (like Stockfish), supports fully interactive cursor-based keyboard navigation, highlights selected/last moves, displays real-time PGN moves on a side panel, and provides options for move undos (take backs) and adjustable UCI search parameters.
+Features Included:
+
+    Interactive Keyboard Controls: Use Arrow keys or WASD to navigate. Press Space or Enter to select and move.
+    Move Takeback (Undo): Press U to undo the last move pair (your move + engine's response).
+    Smart Rendering & Highlights: Uses high-fidelity 256-color ANSI codes to render a beautiful wood-grained chessboard. Highlights the cursor, selected piece, and last played move.
+    Time Controls: Press T to dynamically set depth limits, search node limits, or custom move times (in milliseconds).
+    Robust UCI Integration: Communicates via standard IPC pipes. It defaults to looking for stockfish in your system PATH, but you can pass any custom engine executable path as a command-line argument.
+
+UI Control Cheat Sheet
+
+    Movement: Use W A S D or the Arrow Keys to move the cursor (Electric Blue).
+    Selection: Hover over a white piece and hit Space or Enter (the square changes to Red).
+    Move execution: Hover over your target destination and hit Space or Enter to commit.
+    Takeback: Press U to undo your move and the engine's last reply instantly.
+    Adjust Engine Thinking: Press T to switch search configurations between milliseconds-per-move, search-depth, or calculation nodes.
+    Exit: Press Q to restore the normal terminal environment and quit.
+
+
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
