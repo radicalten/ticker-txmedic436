@@ -1,3 +1,22 @@
+//Prompt:V9 Gui Prompt 6-3-26
+//Can you create a single file chess GUI program in C without external dependencies that accepts moves from Universal Chess Interface (UCI) compliant engines, and works in the Mac Terminal? Additionally, the user should be able to use the arrow keys and terminal cursor along with one of the keyboard keys to select and move pieces as appropriate with square highlighting. Also the moves played should be displayed using PGN notation, and take backs (undo) should be enabled. 
+
+/*
+Below, you'll find the complete C source code for a single-file, zero-dependency Chess GUI designed for the macOS Terminal. It includes:
+
+    POSIX Pipe/Fork IPC to connect to any standard UCI engine (like Stockfish).
+    A built-in lightweight move generator to enforce legal moves, manage game states, detect checkmate/stalemate, and filter highlights.
+    Fully standard SAN (Standard Algebraic Notation) PGN generator that resolves piece ambiguities (e.g., Nbd2).
+    Full take-back/undo (rolling back both engine and user moves seamlessly).
+    A modern ANSI 256-color interface with square highlighting for the cursor, selected pieces, and valid move destinations.
+
+To Play:
+You can specify a custom engine binary as a command-line parameter, or the program will search your system path and standard Homebrew installation directories for stockfish automatically. If no engine is found, it falls back gracefully to a polished local Human-vs-Human mode.
+./chess [/path/to/uci-engine]
+
+*/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
