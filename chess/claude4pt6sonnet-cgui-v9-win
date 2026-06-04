@@ -1,4 +1,33 @@
 /*
+How to Compile & Run
+# Compile
+gcc -o chess_gui chess_gui.c
+
+# Play solo (two-player on same terminal)
+./chess_gui
+
+# Play against a UCI engine (e.g. stockfish)
+./chess_gui /usr/local/bin/stockfish
+
+Feature Overview
+Feature	Details
+Board display	UTF-8 chess pieces on coloured squares
+Cursor	Arrow keys move a blue cursor
+Selection	Enter/Space selects a piece, highlights legal destinations in green
+Move	Enter/Space again on a highlighted square executes the move
+Last move	From/to squares shown in amber
+Check	King square turns red
+Flip	F flips the board for Black's perspective
+Undo	U takes back one move (two if playing an engine)
+PGN	Full SAN notation with check/checkmate symbols displayed live
+UCI engine	Pass engine path as argument; engine plays on its side asynchronously
+Promotion	Popup appears asking Q/R/B/N
+New game	N resets everything
+Quit	Q exits cleanly
+
+*/
+
+/*
  * chess_gui.c - Terminal Chess GUI for Mac
  * 
  * Compile: gcc -o chess_gui chess_gui.c
