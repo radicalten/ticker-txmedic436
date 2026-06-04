@@ -1,3 +1,17 @@
+/*
+Here is a complete, single-file terminal chess GUI written in standard C without any external dependencies. It uses standard POSIX APIs (fork, dup2, pipe, exec) to communicate bidirectionally with any standard UCI chess engine (such as Stockfish), manages terminal raw mode for smooth keyboard interaction, renders a modern colorized board, supports move undo, shows the game history in PGN format, and allows configuration of engine search limits.
+
+Running the Program
+
+By default, the program will look for the stockfish command in your system path. If your engine is located elsewhere or named differently, pass the path as a command-line argument:
+
+./chess_gui
+# Or with an explicit engine path:
+./chess_gui /opt/homebrew/bin/stockfish
+
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
