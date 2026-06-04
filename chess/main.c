@@ -895,7 +895,7 @@ int main(int argc, char **argv) {
     }
 
     if (engine_pid > 0) {
-        kill(engine_pid, SIGTERM);
+        //kill(engine_pid, SIGTERM);
         waitpid(engine_pid, NULL, 0);
     }
     return 0;
