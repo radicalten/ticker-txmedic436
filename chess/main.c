@@ -349,7 +349,7 @@ int generate_legal_moves(const BoardState *state, Move *moves) {
             for (int i = 0; i < 4; i++) {
                 int nr = r, nc = c;
                 while (1) {
-                    nr += dr[i]; nc += b_dc[i];
+                    nr += b_dr[i]; nc += b_dc[i];
                     if (!IN_BOUNDS(nr, nc)) break;
                     int t_sq = nr * 8 + nc;
                     int tp = state->board[t_sq];
