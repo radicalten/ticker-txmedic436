@@ -422,7 +422,7 @@ static void apply_move_temp(GameState *g, int fr, int fc, int tr, int tc,
         int ep_row = (color == WHITE) ? 4 : 3;
         g->board[ep_row][tc] = EMPTY;
         g->en_passant_col = -1;
-        g->is_en_passant = 1; /* temp flag - not a real field, abuse */
+//        g->is_en_passant = 1; /* temp flag - not a real field, abuse */
     } else {
         g->en_passant_col = -1;
     }
