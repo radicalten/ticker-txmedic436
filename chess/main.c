@@ -136,7 +136,7 @@ void pgn_append(const Move *m, int move_num, int side);
 void engine_send(const char *msg);
 void engine_start(const char *path);
 void engine_go(void);
-void engine_read_response(void);
+int engine_read_response(int);
 void cleanup(void);
 
 /* ─── Terminal helpers ───────────────────────────────────────── */
@@ -820,7 +820,7 @@ void engine_go(void){
 }
 
 /* Parse engine output, return 1 if bestmove found */
-void engine_read_response(void){
+int engine_read_response(int){
     if(!g_engine_active) return 0;
     char rbuf[2048];
     int got=(int)read(g_engine.out_fd,rbuf,sizeof(rbuf)-1);
