@@ -971,7 +971,7 @@ static void draw_board(void) {
                     printf(BG_LEGAL);
                     printf(FG_WHITE_PIECE "· " ANSI_RESET);
                 } else {
-                    printf("%s  %s", sq_bg(sq), ANSI_RESET);
+                    //printf("%s  %s", sq_bg(sq), ANSI_RESET);
                     /* call sq_bg again just for the spaces */
                     sq_bg(sq);
                     printf("  " ANSI_RESET);
