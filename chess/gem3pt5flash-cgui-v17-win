@@ -1,3 +1,42 @@
+// V17 Gui Prompt 6-4-26
+// Can you create a single file chess GUI program in C without external dependencies that accepts moves from Universal Chess Interface (UCI) compliant engines, enforces legal moves and works in the Mac Terminal? Additionally, the user should be able to select and move pieces using keys while highlighting legal moves to the appropriate squares. Enable move take backs (undo), and display all moves played using PGN notation. 
+
+/*
+This is a complete, single-file, production-grade terminal-based Chess GUI written in C. It runs natively in the macOS Terminal without external dependencies (no ncurses, SDL, or GLib needed), uses raw POSIX terminal handling for highly responsive keyboard inputs, communicates asynchronously with any UCI-compliant engine (such as Stockfish), and validates and enforces complete chess rules.
+Key Features Included:
+
+    Interactive UI: Gorgeous colored chess board styling using standard ANSI escape codes. Supports full keyboard navigation (WASD or Arrow keys) and selection highlights.
+    Move Validation: Comprehensive internal chess rule validation engine (including sliding pieces, pawn jumps, en passant, promotion, castling, check, checkmate, and stalemate).
+    Move Highlighting: Highlighting of all valid squares when selecting a piece, and distinct red/orange highlights for legal capture options.
+    Asynchronous UCI Communication: Multi-channel pipeline architecture designed to interface with engines seamlessly using non-blocking I/O.
+    Move Undo: Fully reversible move history tracking state frames.
+    PGN Notation: Dynamically formats played moves into complete, legal SAN (Standard Algebraic Notation) and displays them wrap-formatted on a side-pane.
+
+2. Run the Game
+
+You can launch the chess game in three distinct configurations depending on engine usage:
+
+    Option A: Automated Search (Stockfish Engine Auto-Detection)
+    If you installed Stockfish using Homebrew (brew install stockfish), the game will auto-detect the path /opt/homebrew/bin/stockfish (for Apple Silicon Macs) or /usr/local/bin/stockfish (for Intel Macs). Simply launch:
+./chess_gui
+
+Option B: Pass Custom Engine Location
+If your Stockfish or UCI binary is located in a custom directory, pass its absolute path as an argument:
+./chess_gui /usr/games/stockfish
+
+Option C: Passive Local 2-Player (Hotseat)
+If no engine is specified or detected, the program runs in local player vs. player mode, allowing manual input of moves on both sides while enforcing all chess rules.
+
+Controls Reference Guide
+Key Command	Action
+W / A / S / D or Arrow Keys	Move selection cursor around the board grid
+Space or Enter	Select a piece under the cursor, or execute a legal move
+Backspace or U	Undo last executed move (reverts both your and engine's moves)
+E	Ask Engine to make a manual move for the active side
+Q or Esc	Exit the Chess terminal application safely
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
