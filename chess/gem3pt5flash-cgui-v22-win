@@ -1,3 +1,41 @@
+// V22 Gui Prompt 6-4-26
+// Can you create a single file chess GUI program in C without external dependencies that updates all its graphics in place and accepts moves from Universal Chess Interface (UCI) compliant engines, enforces legal moves, and works in the Mac Terminal? Additionally, the user should be able to select and move unicode chess pieces using keys while highlighting legal moves. The most recent move should also be highlighted so it is clear which piece was moved on the next turn. Enable move take backs (undo), and display the most recently played moves using PGN notation. Finally, give the option to change time controls from nodes, depth, or time. 
+
+/*
+This is a complete, single-file C program that implements a fully-functional interactive terminal Chess GUI for macOS (and other Unix-like environments). It does not use any external dependencies like ncurses or SDL; instead, it leverages raw terminal I/O (via termios.h), POSIX multiprocessing (pipes, fork(), exec()) to communicate with any UCI engine (such as Stockfish), and ANSI escape sequences to draw a highly stylized visual board.
+Key Features
+
+    Interactive Controls: Move around the board with Arrow Keys (or WASD) and select/move pieces with Space or Enter.
+    In-Place Graphics: Automatically overwrites previous frames seamlessly to prevent terminal screen flicker.
+    Full Legal Move Enforcer: A complete, lightweight, mailbox-based chess rules engine computes checks, pawn promotions, castling, and en passant.
+    Smart UI Highlights: Highlights selected piece (Gold), legal moves of that piece (Green), and the last-played move (Blue).
+    UCI Engine Pipeline: Communicates asynchronously with Stockfish (or other engines) in the background via non-blocking pipes.
+    Game Management: Allows on-the-fly toggling of play modes (PvP, PvEngine as White, PvEngine as Black, or Engine vs Engine), custom path configuration for engines, undo move support (take-backs), dynamic scrolling PGN (Standard Algebraic Notation) feed, and customizable Time Control modes (Nodes, Depth, or Time budget).
+
+Setup Stockfish (Optional)
+
+This GUI program defaults to searching for "stockfish" inside your system's $PATH. If you do not have Stockfish installed globally, you can install it using Homebrew:
+brew install stockfish
+Alternatively, if you have a downloaded binary somewhere on your system, you can connect it at runtime inside the GUI by pressing C and entering its full absolute path (e.g. /Users/Username/Downloads/stockfish-macos).
+How to Play
+Run the compiled executable:
+./terminal_chess
+
+Navigate Cursor: Use the Arrow Keys or W, A, S, D.
+Select/Move Pieces: Press Space or Enter over a piece of your color. The background of legal destination tiles will immediately turn green. Select any green square to move there.
+Undo Moves: Press U. (In Player vs Engine mode, this automatically takes back both the engine's last response and your last move).
+Switch Play Modes: Press E to cycle between:
+
+    Player vs Player
+    Player vs Engine (Black) (Default)
+    Engine (White) vs Player
+    Engine vs Engine
+
+Set Engine Time Control: Press T. You can choose search boundaries dynamically (e.g., maximum depth, maximum nodes, or explicit milliseconds per move).
+Quit: Press Q.
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
