@@ -1,4 +1,31 @@
 /*
+
+Features
+Feature	Details
+Board Display	Unicode chess glyphs, colored light/dark squares
+Cursor Navigation	Arrow keys move cursor around board
+Piece Selection	Enter/Space selects; valid moves shown with yellow dots
+Highlights	Cursor (cyan), selected (green), valid moves (yellow), last move, check (red)
+UCI Engine	Full UCI protocol: uci, isready, position, go, bestmove
+Time Controls	Movetime (ms), Depth, or Nodes configurable
+Engine Path	Auto-detects Stockfish; fully configurable via menu
+PGN	Live PGN with headers, algebraic notation, result
+Takeback/Undo	U key undoes moves (also undoes engine reply)
+Flip Board	F key flips orientation
+Promotion	Interactive Q/R/B/N dialog
+Check Detection	King highlighted red when in check
+Game Over	Detects checkmate, stalemate, 50-move, insufficient material
+New Game	N key with confirmation
+Help Screen	H shows full help + current PGN
+
+
+
+*/
+
+
+
+
+/*
  * chess_gui.c - Terminal Chess GUI with UCI Engine Support
  * 
  * Compile: gcc -o chess_gui chess_gui.c
