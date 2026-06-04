@@ -344,8 +344,8 @@ int generate_legal_moves(const BoardState *state, Move *moves) {
                 }
             }
         } else if (type == BISHOP || type == QUEEN) {
-            int dr[] = {-1, -1, 1, 1};
-            int dc[] = {-1, 1, -1, 1};
+            int b_dr[] = {-1, -1, 1, 1};
+            int b_dc[] = {-1, 1, -1, 1};
             for (int i = 0; i < 4; i++) {
                 int nr = r, nc = c;
                 while (1) {
