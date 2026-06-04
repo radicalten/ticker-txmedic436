@@ -1,857 +1,542 @@
+/*
+ * Single-file Terminal Chess GUI with UCI Engine Support
+ * 
+ * Compile: gcc -O3 chess.c -o chess
+ * Run:     ./chess [path_to_stockfish]
+ *          (Defaults to "stockfish" if no path is provided)
+ *
+ * Controls:
+ *   Arrow Keys : Move cursor
+ *   Space/Enter: Select piece / Make move
+ *   u          : Undo move
+ *   t          : Cycle time control mode (Depth -> Time -> Nodes)
+ *   + / -      : Adjust time control value
+ *   q          : Quit
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <termios.h>
 #include <fcntl.h>
-#include <sys/types.h>
-#include <sys/select.h>
+#include <termios.h>
+#include <sys/wait.h>
+#include <ctype.h>
 #include <signal.h>
-#include <stdint.h>
 
-// Piece representations
+// --- Constants & Macros ---
 #define EMPTY 0
-#define PAWN 1
-#define KNIGHT 2
-#define BISHOP 3
-#define ROOK 4
-#define QUEEN 5
-#define KING 6
+#define W_P 1
+#define W_N 2
+#define W_B 3
+#define W_R 4
+#define W_Q 5
+#define W_K 6
+#define B_P -1
+#define B_N -2
+#define B_B -3
+#define B_R -4
+#define B_Q -5
+#define B_K -6
 
-#define WHITE 8
-#define BLACK 16
+#define COL_RESET   "\033[0m"
+#define COL_LIGHT   "\033[48;5;250m"
+#define COL_DARK    "\033[48;5;238m"
+#define COL_SEL     "\033[48;5;220m"
+#define COL_LEGAL   "\033[48;5;114m"
+#define COL_LAST    "\033[48;5;117m"
+#define COL_CHECK   "\033[48;5;196m"
+#define COL_W_PIECE "\033[38;5;255m"
+#define COL_B_PIECE "\033[38;5;0m"
 
-#define COLOR_MASK 24
-#define TYPE_MASK 7
+// --- Global State ---
+int board[128];
+int side; // 0 = White, 1 = Black
+int castle; // 1=WK, 2=WQ, 4=BK, 8=BQ
+int ep; // En passant square
+int hply; // History ply
+int king_sq[2];
 
-// ANSI Colors for GUI
-#define BG_LIGHT  "\033[48;5;223m" // Cream
-#define BG_DARK   "\033[48;5;130m" // Brown
-#define BG_SELECT "\033[48;5;226m" // Yellow
-#define BG_LEGAL  "\033[48;5;121m" // Light Green
-#define BG_LAST   "\033[48;5;153m" // Light Blue
-#define BG_CHECK  "\033[48;5;196m" // Red
+struct Hist {
+    int move;
+    int castle;
+    int ep;
+    int cap;
+    int king_sq;
+} hist[1024];
 
-#define FG_WHITE  "\033[38;5;15m\033[1m" // Bold White
-#define FG_BLACK  "\033[38;5;232m"       // Dark Black
+int pseudo_moves[256];
+int num_pseudo;
+int legal_moves[256];
+int num_legal;
+char san_history[1024][16];
 
-typedef enum { TC_DEPTH, TC_NODES, TC_TIME } TCType;
+// UCI Engine State
+int to_engine[2], from_engine[2];
+pid_t engine_pid;
+char engine_path[256] = "stockfish";
+int tc_mode = 0; // 0=depth, 1=time, 2=nodes
+int tc_val[3] = {10, 1000, 100000};
 
-typedef struct {
-    TCType type;
-    int depth;
-    int nodes;
-    int time_ms;
-    char engine_path[512];
-    int player_color; // WHITE, BLACK, or 0 (PVP)
-} Config;
-
-typedef struct {
-    uint8_t board[64];
-    int turn;          // WHITE or BLACK
-    int castling;     // Bits: 1: WK, 2: WQ, 4: BK, 8: BQ
-    int en_passant;   // Square index or -1
-    int halfmove;
-    int fullmove;
-} BoardState;
-
-typedef struct {
-    int from;
-    int to;
-    int promotion;
-} Move;
-
-// Globals for engine process
-int to_engine[2];
-int from_engine[2];
-pid_t engine_pid = -1;
-int engine_online = 0;
+// GUI State
+int cursor_sq = 0;
+int selected_sq = -1;
+int game_over = 0;
 struct termios orig_termios;
 
-// Forward Declarations
-void disable_raw_mode(void);
-int is_square_attacked(BoardState *state, int sq, int attacker_color);
-int get_legal_moves(BoardState *state, int from, int *tos);
-
-// Termios Management
-void enable_raw_mode(void) {
+// --- Terminal Functions ---
+void disable_raw_mode() { tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios); }
+void enable_raw_mode() {
     tcgetattr(STDIN_FILENO, &orig_termios);
     atexit(disable_raw_mode);
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    printf("\033[?25l"); // Hide cursor
 }
 
-void disable_raw_mode(void) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-    printf("\033[?25h\033[0m\n"); // Show cursor, reset styling
+int get_key() {
+    int c = getchar();
+    if (c == 27) {
+        if (getchar() == '[') {
+            c = getchar();
+            if (c == 'A') return 'U';
+            if (c == 'B') return 'D';
+            if (c == 'C') return 'R';
+            if (c == 'D') return 'L';
+        }
+    }
+    return c;
 }
 
-// UCI Engine I/O
-void start_engine(const char *path) {
-    pipe(to_engine);
-    pipe(from_engine);
-    engine_pid = fork();
-    if (engine_pid == 0) {
-        dup2(to_engine[0], STDIN_FILENO);
-        dup2(from_engine[1], STDOUT_FILENO);
-        close(to_engine[1]);
-        close(from_engine[0]);
-        execlp(path, path, NULL);
-        exit(1);
+// --- Chess Core ---
+void init_board() {
+    const char *fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    memset(board, 0, sizeof(board));
+    int sq = 112; // a8
+    for (int i = 0; fen[i] && fen[i] != ' '; i++) {
+        if (fen[i] == '/') sq -= 24;
+        else if (isdigit(fen[i])) sq += fen[i] - '0';
+        else {
+            int p = EMPTY;
+            switch (tolower(fen[i])) {
+                case 'p': p = B_P; break; case 'n': p = B_N; break;
+                case 'b': p = B_B; break; case 'r': p = B_R; break;
+                case 'q': p = B_Q; break; case 'k': p = B_K; break;
+            }
+            if (isupper(fen[i])) p = -p; // White pieces are positive
+            board[sq++] = p;
+        }
     }
-    close(to_engine[0]);
-    close(from_engine[1]);
-    int flags = fcntl(from_engine[0], F_GETFL, 0);
-    fcntl(from_engine[0], F_SETFL, flags | O_NONBLOCK);
+    side = 0; castle = 15; ep = -1; hply = 0;
+    king_sq[0] = 4; king_sq[1] = 116;
 }
 
-void stop_engine(void) {
-    if (engine_pid > 0) {
-        write(to_engine[1], "quit\n", 5);
-        close(to_engine[1]);
-        close(from_engine[0]);
-        kill(engine_pid, SIGTERM);
-        engine_pid = -1;
-    }
-    engine_online = 0;
-}
-
-void send_engine(const char *cmd) {
-    if (engine_pid > 0) {
-        write(to_engine[1], cmd, strlen(cmd));
-        write(to_engine[1], "\n", 1);
-    }
-}
-
-int read_engine(char *buf, int max_len) {
-    static char internal_buf[4096];
-    static int internal_len = 0;
-    int n = read(from_engine[0], internal_buf + internal_len, sizeof(internal_buf) - internal_len - 1);
-    if (n > 0) {
-        internal_len += n;
-        internal_buf[internal_len] = '\0';
-    }
-    char *eol = strchr(internal_buf, '\n');
-    if (eol) {
-        int len = eol - internal_buf;
-        if (len >= max_len) len = max_len - 1;
-        strncpy(buf, internal_buf, len);
-        buf[len] = '\0';
-        if (len > 0 && buf[len - 1] == '\r') buf[len - 1] = '\0';
-        memmove(internal_buf, eol + 1, internal_len - len - 1);
-        internal_len -= (len + 1);
-        return 1;
-    }
+int is_attacked(int sq, int by_side) {
+    // Pawns
+    int p_dir = by_side ? -16 : 16;
+    if (!(sq + p_dir + 1 & 0x88) && board[sq + p_dir + 1] == (by_side ? B_P : W_P)) return 1;
+    if (!(sq + p_dir - 1 & 0x88) && board[sq + p_dir - 1] == (by_side ? B_P : W_P)) return 1;
+    // Knights
+    int knight_dir[8] = {-33, -31, -18, -14, 14, 18, 31, 33};
+    for(int i=0; i<8; i++) { int t = sq + knight_dir[i]; if (!(t & 0x88) && board[t] == (by_side ? B_N : W_N)) return 1; }
+    // Kings
+    int king_dir[8] = {-17, -16, -15, -1, 1, 15, 16, 17};
+    for(int i=0; i<8; i++) { int t = sq + king_dir[i]; if (!(t & 0x88) && board[t] == (by_side ? B_K : W_K)) return 1; }
+    // Bishops/Queens
+    int diag_dir[4] = {-17, -15, 15, 17};
+    for(int i=0; i<4; i++) { int t = sq + diag_dir[i]; while(!(t & 0x88)) { int p = board[t]; if (p) { if (p == (by_side ? B_B : W_B) || p == (by_side ? B_Q : W_Q)) return 1; break; } t += diag_dir[i]; } }
+    // Rooks/Queens
+    int straight_dir[4] = {-16, -1, 1, 16};
+    for(int i=0; i<4; i++) { int t = sq + straight_dir[i]; while(!(t & 0x88)) { int p = board[t]; if (p) { if (p == (by_side ? B_R : W_R) || p == (by_side ? B_Q : W_Q)) return 1; break; } t += straight_dir[i]; } }
     return 0;
 }
 
-int restart_engine(const char *path) {
-    stop_engine();
-    start_engine(path);
-    send_engine("uci");
-    char buf[1024];
-    int got_uciok = 0;
-    for (int i = 0; i < 500; i++) {
-        if (read_engine(buf, sizeof(buf)) && strcmp(buf, "uciok") == 0) {
-            got_uciok = 1;
-            break;
-        }
-        usleep(1000);
-    }
-    if (!got_uciok) return 0;
-    send_engine("isready");
-    int got_readyok = 0;
-    for (int i = 0; i < 500; i++) {
-        if (read_engine(buf, sizeof(buf)) && strcmp(buf, "readyok") == 0) {
-            got_readyok = 1;
-            break;
-        }
-        usleep(1000);
-    }
-    engine_online = got_readyok;
-    return engine_online;
+void add_move(int from, int to, int promo, int flags) {
+    pseudo_moves[num_pseudo++] = from | (to << 8) | (promo << 16) | (flags << 24);
 }
 
-// Chess Board Initialization
-void init_board(BoardState *state) {
-    memset(state->board, EMPTY, 64);
-    for (int i = 8; i < 16; i++) state->board[i] = BLACK | PAWN;
-    for (int i = 48; i < 56; i++) state->board[i] = WHITE | PAWN;
+void gen_pseudo_moves() {
+    num_pseudo = 0;
+    for (int sq = 0; sq < 128; sq++) {
+        if (sq & 0x88) continue;
+        int p = board[sq];
+        if (p == EMPTY || (side == 0 && p < 0) || (side == 1 && p > 0)) continue;
+        int type = abs(p);
 
-    state->board[0] = state->board[7] = BLACK | ROOK;
-    state->board[56] = state->board[63] = WHITE | ROOK;
-    state->board[1] = state->board[6] = BLACK | KNIGHT;
-    state->board[57] = state->board[62] = WHITE | KNIGHT;
-    state->board[2] = state->board[5] = BLACK | BISHOP;
-    state->board[58] = state->board[61] = WHITE | BISHOP;
-    state->board[3] = BLACK | QUEEN;
-    state->board[59] = WHITE | QUEEN;
-    state->board[4] = BLACK | KING;
-    state->board[60] = WHITE | KING;
-
-    state->turn = WHITE;
-    state->castling = 15;
-    state->en_passant = -1;
-    state->halfmove = 0;
-    state->fullmove = 1;
-}
-
-const char *get_piece_char(int piece) {
-    switch (piece & TYPE_MASK) {
-        case PAWN:   return "♟";
-        case KNIGHT: return "♞";
-        case BISHOP: return "♝";
-        case ROOK:   return "♜";
-        case QUEEN:  return "♛";
-        case KING:   return "♚";
-    }
-    return " ";
-}
-
-// Move Rules & Logic
-int find_king(BoardState *state, int color) {
-    for (int i = 0; i < 64; i++) {
-        if (state->board[i] == (color | KING)) return i;
-    }
-    return -1;
-}
-
-int is_in_check(BoardState *state, int color) {
-    int king_sq = find_king(state, color);
-    if (king_sq == -1) return 0;
-    return is_square_attacked(state, king_sq, color == WHITE ? BLACK : WHITE);
-}
-
-int is_square_attacked(BoardState *state, int sq, int attacker_color) {
-    int r = sq / 8, c = sq % 8;
-
-    // Knight Attacks
-    int kn_offsets[8][2] = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
-    for (int i = 0; i < 8; i++) {
-        int nr = r + kn_offsets[i][0], nc = c + kn_offsets[i][1];
-        if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            int p = state->board[nr * 8 + nc];
-            if ((p & COLOR_MASK) == attacker_color && (p & TYPE_MASK) == KNIGHT) return 1;
-        }
-    }
-
-    // Sliding Attacks (Rook, Bishop, Queen)
-    int dirs[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{-1,1},{1,-1},{1,1}};
-    for (int i = 0; i < 8; i++) {
-        int dr = dirs[i][0], dc = dirs[i][1], nr = r + dr, nc = c + dc;
-        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            int p = state->board[nr * 8 + nc];
-            if (p != EMPTY) {
-                if ((p & COLOR_MASK) == attacker_color) {
-                    int type = p & TYPE_MASK;
-                    if (i < 4 && (type == ROOK || type == QUEEN)) return 1;
-                    if (i >= 4 && (type == BISHOP || type == QUEEN)) return 1;
-                }
-                break;
-            }
-            nr += dr; nc += dc;
-        }
-    }
-
-    // King Attacks
-    for (int dr = -1; dr <= 1; dr++) {
-        for (int dc = -1; dc <= 1; dc++) {
-            if (dr == 0 && dc == 0) continue;
-            int nr = r + dr, nc = c + dc;
-            if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-                int p = state->board[nr * 8 + nc];
-                if ((p & COLOR_MASK) == attacker_color && (p & TYPE_MASK) == KING) return 1;
-            }
-        }
-    }
-
-    // Pawn Attacks
-    if (attacker_color == WHITE) {
-        int pr = r + 1;
-        if (pr < 8) {
-            if (c > 0 && state->board[pr * 8 + c - 1] == (WHITE | PAWN)) return 1;
-            if (c < 7 && state->board[pr * 8 + c + 1] == (WHITE | PAWN)) return 1;
-        }
-    } else {
-        int pr = r - 1;
-        if (pr >= 0) {
-            if (c > 0 && state->board[pr * 8 + c - 1] == (BLACK | PAWN)) return 1;
-            if (c < 7 && state->board[pr * 8 + c + 1] == (BLACK | PAWN)) return 1;
-        }
-    }
-    return 0;
-}
-
-int generate_pseudo_moves(BoardState *state, int from, int *tos) {
-    int count = 0, piece = state->board[from];
-    if (piece == EMPTY) return 0;
-    int type = piece & TYPE_MASK, color = piece & COLOR_MASK;
-    if (color != state->turn) return 0;
-    int r = from / 8, c = from % 8;
-
-    if (type == PAWN) {
-        int dir = (color == WHITE) ? -1 : 1;
-        int start_row = (color == WHITE) ? 6 : 1;
-        int nr = r + dir;
-        if (nr >= 0 && nr < 8) {
-            if (state->board[nr * 8 + c] == EMPTY) {
-                tos[count++] = nr * 8 + c;
-                if (r == start_row && state->board[(r + 2 * dir) * 8 + c] == EMPTY) {
-                    tos[count++] = (r + 2 * dir) * 8 + c;
-                }
-            }
-            int cap_cols[2] = {c - 1, c + 1};
-            for (int i = 0; i < 2; i++) {
-                int nc = cap_cols[i];
-                if (nc >= 0 && nc < 8) {
-                    int target = nr * 8 + nc;
-                    if (state->board[target] != EMPTY && (state->board[target] & COLOR_MASK) != color) {
-                        tos[count++] = target;
-                    } else if (target == state->en_passant) {
-                        tos[count++] = target;
+        if (type == 1) { // Pawn
+            int p_dir = side ? -16 : 16;
+            int to = sq + p_dir;
+            if (!(to & 0x88) && board[to] == EMPTY) {
+                if ((to >> 4) == (side ? 0 : 7)) {
+                    add_move(sq, to, 5, 0); add_move(sq, to, 4, 0); add_move(sq, to, 3, 0); add_move(sq, to, 2, 0);
+                } else {
+                    add_move(sq, to, 0, 0);
+                    if ((sq >> 4) == (side ? 6 : 1)) {
+                        int to2 = sq + 2 * p_dir;
+                        if (board[to2] == EMPTY) add_move(sq, to2, 0, 4);
                     }
                 }
             }
-        }
-    } else if (type == KNIGHT) {
-        int offsets[8][2] = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
-        for (int i = 0; i < 8; i++) {
-            int nr = r + offsets[i][0], nc = c + offsets[i][1];
-            if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-                int target = nr * 8 + nc;
-                if (state->board[target] == EMPTY || (state->board[target] & COLOR_MASK) != color) tos[count++] = target;
+            int cap_dirs[2] = {p_dir - 1, p_dir + 1};
+            for (int i = 0; i < 2; i++) {
+                int c_to = sq + cap_dirs[i];
+                if (c_to & 0x88) continue;
+                int target = board[c_to];
+                if ((target != EMPTY && ((side == 0 && target < 0) || (side == 1 && target > 0))) || c_to == ep) {
+                    if ((c_to >> 4) == (side ? 0 : 7)) {
+                        add_move(sq, c_to, 5, c_to == ep ? 1 : 0); add_move(sq, c_to, 4, c_to == ep ? 1 : 0);
+                        add_move(sq, c_to, 3, c_to == ep ? 1 : 0); add_move(sq, c_to, 2, c_to == ep ? 1 : 0);
+                    } else {
+                        add_move(sq, c_to, 0, c_to == ep ? 1 : 0);
+                    }
+                }
             }
-        }
-    } else if (type == KING) {
-        for (int dr = -1; dr <= 1; dr++) {
-            for (int dc = -1; dc <= 1; dc++) {
-                if (dr == 0 && dc == 0) continue;
-                int nr = r + dr, nc = c + dc;
-                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-                    int target = nr * 8 + nc;
-                    if (state->board[target] == EMPTY || (state->board[target] & COLOR_MASK) != color) tos[count++] = target;
+        } else if (type == 2) { // Knight
+            int d[] = {-33, -31, -18, -14, 14, 18, 31, 33};
+            for(int i=0; i<8; i++) { int t = sq + d[i]; if(!(t&0x88)) { int target=board[t]; if(target==EMPTY || (side==0&&target<0)||(side==1&&target>0)) add_move(sq,t,0,0); } }
+        } else if (type == 6) { // King
+            int d[] = {-17, -16, -15, -1, 1, 15, 16, 17};
+            for(int i=0; i<8; i++) { int t = sq + d[i]; if(!(t&0x88)) { int target=board[t]; if(target==EMPTY || (side==0&&target<0)||(side==1&&target>0)) add_move(sq,t,0,0); } }
+            if (side == 0 && sq == 4) {
+                if ((castle & 1) && board[5]==EMPTY && board[6]==EMPTY && !is_attacked(4,1) && !is_attacked(5,1) && !is_attacked(6,1)) add_move(4, 6, 0, 2);
+                if ((castle & 2) && board[3]==EMPTY && board[2]==EMPTY && board[1]==EMPTY && !is_attacked(4,1) && !is_attacked(3,1) && !is_attacked(2,1)) add_move(4, 2, 0, 2);
+            }
+            if (side == 1 && sq == 116) {
+                if ((castle & 4) && board[117]==EMPTY && board[118]==EMPTY && !is_attacked(116,0) && !is_attacked(117,0) && !is_attacked(118,0)) add_move(116, 118, 0, 2);
+                if ((castle & 8) && board[115]==EMPTY && board[114]==EMPTY && board[113]==EMPTY && !is_attacked(116,0) && !is_attacked(115,0) && !is_attacked(114,0)) add_move(116, 114, 0, 2);
+            }
+        } else { // Sliding
+            int dirs[8]; int num_dirs = 0;
+            if (type == 3 || type == 5) { int d[] = {-17, -15, 15, 17}; for(int i=0;i<4;i++) dirs[num_dirs++]=d[i]; }
+            if (type == 4 || type == 5) { int d[] = {-16, 16, -1, 1}; for(int i=0;i<4;i++) dirs[num_dirs++]=d[i]; }
+            for(int i=0; i<num_dirs; i++) {
+                int t = sq + dirs[i];
+                while(!(t & 0x88)) {
+                    int target = board[t];
+                    if (target != EMPTY) {
+                        if ((side == 0 && target < 0) || (side == 1 && target > 0)) add_move(sq, t, 0, 0);
+                        break;
+                    }
+                    add_move(sq, t, 0, 0);
+                    t += dirs[i];
                 }
             }
         }
-        // Castling logic
-        if (color == WHITE) {
-            if ((state->castling & 1) && state->board[61] == EMPTY && state->board[62] == EMPTY) {
-                if (!is_square_attacked(state, 60, BLACK) && !is_square_attacked(state, 61, BLACK) && !is_square_attacked(state, 62, BLACK)) tos[count++] = 62;
-            }
-            if ((state->castling & 2) && state->board[59] == EMPTY && state->board[58] == EMPTY && state->board[57] == EMPTY) {
-                if (!is_square_attacked(state, 60, BLACK) && !is_square_attacked(state, 59, BLACK) && !is_square_attacked(state, 58, BLACK)) tos[count++] = 58;
-            }
-        } else {
-            if ((state->castling & 4) && state->board[5] == EMPTY && state->board[6] == EMPTY) {
-                if (!is_square_attacked(state, 4, WHITE) && !is_square_attacked(state, 5, WHITE) && !is_square_attacked(state, 6, WHITE)) tos[count++] = 6;
-            }
-            if ((state->castling & 8) && state->board[3] == EMPTY && state->board[2] == EMPTY && state->board[1] == EMPTY) {
-                if (!is_square_attacked(state, 4, WHITE) && !is_square_attacked(state, 3, WHITE) && !is_square_attacked(state, 2, WHITE)) tos[count++] = 2;
+    }
+}
+
+void make_move(int move) {
+    int from = move & 0xFF, to = (move >> 8) & 0xFF, promo = (move >> 16) & 0xFF, flags = (move >> 24) & 0xFF;
+    int piece = board[from], cap = board[to];
+    hist[hply] = (struct Hist){move, castle, ep, cap, king_sq[side]};
+    board[to] = piece; board[from] = EMPTY;
+    if (flags & 1) board[to + (side ? 16 : -16)] = EMPTY; // EP
+    if (flags & 2) { // Castle
+        if (to == 6) { board[5] = board[7]; board[7] = EMPTY; }
+        else if (to == 2) { board[3] = board[0]; board[0] = EMPTY; }
+        else if (to == 118) { board[117] = board[119]; board[119] = EMPTY; }
+        else if (to == 114) { board[115] = board[112]; board[112] = EMPTY; }
+    }
+    if (promo) board[to] = side ? -promo : promo;
+    ep = -1;
+    if (abs(piece) == 1 && abs(to - from) == 32) ep = (from + to) / 2;
+    if (from == 0 || to == 0) castle &= ~2; if (from == 7 || to == 7) castle &= ~1;
+    if (from == 112 || to == 112) castle &= ~8; if (from == 119 || to == 119) castle &= ~4;
+    if (from == 4 || to == 4) castle &= ~3; if (from == 116 || to == 116) castle &= ~12;
+    if (abs(piece) == 6) king_sq[side] = to;
+    side ^= 1; hply++;
+}
+
+void unmake_move() {
+    hply--; side ^= 1;
+    int move = hist[hply].move, from = move & 0xFF, to = (move >> 8) & 0xFF, flags = (move >> 24) & 0xFF;
+    int piece = board[to], cap = hist[hply].cap;
+    castle = hist[hply].castle; ep = hist[hply].ep; king_sq[side] = hist[hply].king_sq;
+    if ((move >> 16) & 0xFF) piece = side ? B_P : W_P;
+    board[from] = piece; board[to] = cap;
+    if (flags & 1) { board[to + (side ? 16 : -16)] = side ? W_P : B_P; board[to] = EMPTY; }
+    if (flags & 2) {
+        if (to == 6) { board[7] = board[5]; board[5] = EMPTY; }
+        else if (to == 2) { board[0] = board[3]; board[3] = EMPTY; }
+        else if (to == 118) { board[119] = board[117]; board[117] = EMPTY; }
+        else if (to == 114) { board[112] = board[115]; board[115] = EMPTY; }
+    }
+}
+
+void gen_legal_moves() {
+    num_legal = 0; gen_pseudo_moves();
+    for(int i=0; i<num_pseudo; i++) {
+        make_move(pseudo_moves[i]);
+        if(!is_attacked(king_sq[side^1], side)) legal_moves[num_legal++] = pseudo_moves[i];
+        unmake_move();
+    }
+}
+
+void gen_fen(char *fen) {
+    char *p = fen;
+    for (int r = 7; r >= 0; r--) {
+        int empty = 0;
+        for (int c = 0; c < 8; c++) {
+            int sq = r * 16 + c, piece = board[sq];
+            if (piece == EMPTY) empty++;
+            else {
+                if (empty) { *p++ = '0' + empty; empty = 0; }
+                char pc = " PNBRQK"[abs(piece)];
+                if (piece < 0) pc = tolower(pc);
+                *p++ = pc;
             }
         }
-    } else {
-        int dirs[8][2] = {{-1,0},{1,0},{0,-1},{0,1},{-1,-1},{-1,1},{1,-1},{1,1}};
-        int start = (type == BISHOP) ? 4 : 0;
-        int end = (type == ROOK) ? 4 : 8;
-        for (int d = start; d < end; d++) {
-            int nr = r + dirs[d][0], nc = c + dirs[d][1];
-            while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-                int target = nr * 8 + nc;
-                if (state->board[target] == EMPTY) {
-                    tos[count++] = target;
-                } else {
-                    if ((state->board[target] & COLOR_MASK) != color) tos[count++] = target;
+        if (empty) *p++ = '0' + empty;
+        if (r > 0) *p++ = '/';
+    }
+    sprintf(p, " %c %s%s%s%s %s 0 1", side ? 'b' : 'w',
+        castle & 1 ? "K" : "", castle & 2 ? "Q" : "", castle & 4 ? "k" : "", castle & 8 ? "q" : "",
+        ep == -1 ? "-" : (char[]){'a' + (ep & 7), '1' + (ep >> 4), 0});
+}
+
+void get_san(int move, char *san) {
+    int from = move & 0xFF, to = (move >> 8) & 0xFF, promo = (move >> 16) & 0xFF, flags = (move >> 24) & 0xFF;
+    int piece = board[from], cap = board[to];
+    if (flags & 1) cap = 1;
+    char *p = san;
+    if (flags & 2) { strcpy(p, to > from ? "O-O" : "O-O-O"); p += strlen(p); }
+    else {
+        if (abs(piece) != 1) {
+            *p++ = " PNBRQK"[abs(piece)];
+            for(int i=0; i<num_legal; i++) {
+                int m = legal_moves[i];
+                if (m == move) continue;
+                int f = m & 0xFF, t = (m >> 8) & 0xFF;
+                if (t == to && board[f] == piece) {
+                    if ((f & 7) != (from & 7)) *p++ = 'a' + (from & 7);
+                    else if ((f >> 4) != (from >> 4)) *p++ = '1' + (from >> 4);
+                    else { *p++ = 'a' + (from & 7); *p++ = '1' + (from >> 4); }
                     break;
                 }
-                nr += dirs[d][0]; nc += dirs[d][1];
             }
-        }
+        } else if (cap) *p++ = 'a' + (from & 7);
+        if (cap) *p++ = 'x';
+        *p++ = 'a' + (to & 7); *p++ = '1' + (to >> 4);
+        if (promo) *p++ = " PNBRQK"[promo];
     }
-    return count;
+    make_move(move);
+    if (is_attacked(king_sq[side], side^1)) {
+        gen_legal_moves();
+        *p++ = num_legal == 0 ? '#' : '+';
+    }
+    unmake_move();
+    *p = '\0';
 }
 
-void make_move(const BoardState *src, BoardState *dst, Move move) {
-    *dst = *src;
-    int piece = dst->board[move.from];
-    int ptype = piece & TYPE_MASK, pcolor = piece & COLOR_MASK;
-
-    if (ptype == PAWN && move.to == dst->en_passant) {
-        dst->board[(pcolor == WHITE) ? move.to + 8 : move.to - 8] = EMPTY;
+// --- UCI Engine ---
+int read_line(int fd, char *buf, int max) {
+    int i = 0;
+    while (i < max - 1) {
+        char c;
+        if (read(fd, &c, 1) <= 0) return i;
+        if (c == '\n') { buf[i] = '\0'; return i; }
+        buf[i++] = c;
     }
-
-    dst->en_passant = -1;
-    if (ptype == PAWN) {
-        if (pcolor == WHITE && move.from - move.to == 16) dst->en_passant = move.from - 8;
-        else if (pcolor == BLACK && move.to - move.from == 16) dst->en_passant = move.from + 8;
-    }
-
-    if (ptype == KING) {
-        if (move.from == 60 && move.to == 62 && pcolor == WHITE) { dst->board[61] = dst->board[63]; dst->board[63] = EMPTY; }
-        else if (move.from == 60 && move.to == 58 && pcolor == WHITE) { dst->board[59] = dst->board[56]; dst->board[56] = EMPTY; }
-        else if (move.from == 4 && move.to == 6 && pcolor == BLACK) { dst->board[5] = dst->board[7]; dst->board[7] = EMPTY; }
-        else if (move.from == 4 && move.to == 2 && pcolor == BLACK) { dst->board[3] = dst->board[0]; dst->board[0] = EMPTY; }
-        dst->castling &= (pcolor == WHITE) ? ~3 : ~12;
-    }
-
-    if (move.from == 56 || move.to == 56) dst->castling &= ~2;
-    if (move.from == 63 || move.to == 63) dst->castling &= ~1;
-    if (move.from == 0 || move.to == 0) dst->castling &= ~8;
-    if (move.from == 7 || move.to == 7) dst->castling &= ~4;
-
-    dst->board[move.to] = move.promotion ? (pcolor | move.promotion) : piece;
-    dst->board[move.from] = EMPTY;
-    dst->turn = (dst->turn == WHITE) ? BLACK : WHITE;
+    buf[i] = '\0'; return i;
 }
 
-int get_legal_moves(BoardState *state, int from, int *tos) {
-    int pseudo[64], p_count = generate_pseudo_moves(state, from, pseudo), l_count = 0;
-    for (int i = 0; i < p_count; i++) {
-        BoardState next;
-        Move m = {from, pseudo[i], 0};
-        make_move(state, &next, m);
-        if (!is_in_check(&next, state->turn)) tos[l_count++] = pseudo[i];
+void uci_init() {
+    pipe(to_engine); pipe(from_engine);
+    engine_pid = fork();
+    if (engine_pid == 0) {
+        dup2(to_engine[0], STDIN_FILENO); dup2(from_engine[1], STDOUT_FILENO);
+        close(to_engine[0]); close(to_engine[1]); close(from_engine[0]); close(from_engine[1]);
+        execlp(engine_path, engine_path, NULL); exit(1);
     }
-    return l_count;
+    close(to_engine[0]); close(from_engine[1]);
+    write(to_engine[1], "uci\n", 4);
+    char line[1024];
+    while(read_line(from_engine[0], line, sizeof(line)) > 0) if (strstr(line, "uciok")) break;
+    write(to_engine[1], "isready\n", 8);
+    while(read_line(from_engine[0], line, sizeof(line)) > 0) if (strstr(line, "readyok")) break;
 }
 
-int has_legal_moves(BoardState *state) {
-    for (int from = 0; from < 64; from++) {
-        if ((state->board[from] & COLOR_MASK) == state->turn) {
-            int tos[64];
-            if (get_legal_moves(state, from, tos) > 0) return 1;
-        }
+void uci_quit() {
+    write(to_engine[1], "quit\n", 5);
+    waitpid(engine_pid, NULL, 0);
+}
+
+int uci_get_bestmove(char *uci_move) {
+    char fen[256], cmd[512];
+    gen_fen(fen);
+    sprintf(cmd, "position fen %s\n", fen);
+    write(to_engine[1], cmd, strlen(cmd));
+    if (tc_mode == 0) sprintf(cmd, "go depth %d\n", tc_val[0]);
+    else if (tc_mode == 1) sprintf(cmd, "go movetime %d\n", tc_val[1]);
+    else sprintf(cmd, "go nodes %d\n", tc_val[2]);
+    write(to_engine[1], cmd, strlen(cmd));
+    char line[1024];
+    while (read_line(from_engine[0], line, sizeof(line)) > 0) {
+        if (strncmp(line, "bestmove ", 9) == 0) { sscanf(line, "bestmove %s", uci_move); return 1; }
     }
     return 0;
 }
 
-// Notation Generators
-void get_san(BoardState *prev_state, Move move, char *san) {
-    int piece = prev_state->board[move.from];
-    int type = piece & TYPE_MASK, color = piece & COLOR_MASK;
-
-    if (type == KING) {
-        if (move.from == 60 && move.to == 62 && color == WHITE) { strcpy(san, "O-O"); return; }
-        if (move.from == 60 && move.to == 58 && color == WHITE) { strcpy(san, "O-O-O"); return; }
-        if (move.from == 4 && move.to == 6 && color == BLACK) { strcpy(san, "O-O"); return; }
-        if (move.from == 4 && move.to == 2 && color == BLACK) { strcpy(san, "O-O-O"); return; }
-    }
-
-    char p_char = '\0';
-    if (type == KNIGHT) p_char = 'N';
-    else if (type == BISHOP) p_char = 'B';
-    else if (type == ROOK) p_char = 'R';
-    else if (type == QUEEN) p_char = 'Q';
-    else if (type == KING) p_char = 'K';
-
-    char f_file = 'a' + (move.from % 8), f_rank = '8' - (move.from / 8);
-    char t_file = 'a' + (move.to % 8), t_rank = '8' - (move.to / 8);
-    int is_cap = (prev_state->board[move.to] != EMPTY) || (type == PAWN && move.to == prev_state->en_passant);
-
-    int idx = 0;
-    if (type == PAWN) {
-        if (is_cap) { san[idx++] = f_file; san[idx++] = 'x'; }
-    } else {
-        san[idx++] = p_char;
-        int amb_file = 0, amb_rank = 0;
-        for (int i = 0; i < 64; i++) {
-            if (i != move.from && prev_state->board[i] == piece) {
-                int tos[64], cnt = get_legal_moves(prev_state, i, tos);
-                for (int j = 0; j < cnt; j++) {
-                    if (tos[j] == move.to) {
-                        if (i % 8 == move.from % 8) amb_rank = 1;
-                        else amb_file = 1;
-                    }
-                }
+void do_engine_move() {
+    gen_legal_moves();
+    if (num_legal == 0) { game_over = 1; return; }
+    char uci_move[16];
+    if (uci_get_bestmove(uci_move)) {
+        int from = (uci_move[0]-'a') + (uci_move[1]-'1')*16;
+        int to = (uci_move[2]-'a') + (uci_move[3]-'1')*16;
+        int promo = 0;
+        if (uci_move[4] == 'q') promo = 5; else if (uci_move[4] == 'r') promo = 4;
+        else if (uci_move[4] == 'b') promo = 3; else if (uci_move[4] == 'n') promo = 2;
+        int move = -1;
+        for(int i=0; i<num_legal; i++) {
+            int m = legal_moves[i];
+            if ((m & 0xFF) == from && ((m >> 8) & 0xFF) == to) {
+                if (promo == 0 || ((m >> 16) & 0xFF) == promo) { move = m; break; }
             }
         }
-        if (amb_file) san[idx++] = f_file;
-        if (amb_rank) san[idx++] = f_rank;
-        if (is_cap) san[idx++] = 'x';
+        if (move != -1) {
+            char san[16]; get_san(move, san); strcpy(san_history[hply], san);
+            make_move(move);
+        }
     }
-    san[idx++] = t_file; san[idx++] = t_rank;
-
-    if (move.promotion) {
-        san[idx++] = '=';
-        if (move.promotion == QUEEN) san[idx++] = 'Q';
-        else if (move.promotion == ROOK) san[idx++] = 'R';
-        else if (move.promotion == BISHOP) san[idx++] = 'B';
-        else if (move.promotion == KNIGHT) san[idx++] = 'N';
-    }
-
-    BoardState next;
-    make_move(prev_state, &next, move);
-    if (is_in_check(&next, next.turn)) {
-        san[idx++] = has_legal_moves(&next) ? '+' : '#';
-    }
-    san[idx] = '\0';
+    gen_legal_moves();
+    if (num_legal == 0) game_over = 1;
 }
 
-Move parse_move(BoardState *state, const char *str) {
-    Move m = {-1, -1, 0};
-    if (strlen(str) < 4) return m;
-    int f_col = str[0] - 'a', f_row = '8' - str[1];
-    int t_col = str[2] - 'a', t_row = '8' - str[3];
-    if (f_col >= 0 && f_col < 8 && f_row >= 0 && f_row < 8 && t_col >= 0 && t_col < 8 && t_row >= 0 && t_row < 8) {
-        m.from = f_row * 8 + f_col;
-        m.to = t_row * 8 + t_col;
-    }
-    if (strlen(str) == 5) {
-        char p = str[4];
-        if (p == 'q') m.promotion = QUEEN;
-        else if (p == 'r') m.promotion = ROOK;
-        else if (p == 'b') m.promotion = BISHOP;
-        else if (p == 'n') m.promotion = KNIGHT;
-    }
-    return m;
-}
-
-void move_to_str(Move m, char *str) {
-    sprintf(str, "%c%c%c%c", 'a' + (m.from % 8), '8' - (m.from / 8), 'a' + (m.to % 8), '8' - (m.to / 8));
-    if (m.promotion) {
-        char p = ' ';
-        if (m.promotion == QUEEN) p = 'q';
-        else if (m.promotion == ROOK) p = 'r';
-        else if (m.promotion == BISHOP) p = 'b';
-        else if (m.promotion == KNIGHT) p = 'n';
-        sprintf(str + 4, "%c", p);
+// --- GUI ---
+char *piece_char(int p) {
+    switch(p) {
+        case W_K: return "♔"; case W_Q: return "♕"; case W_R: return "♖";
+        case W_B: return "♗"; case W_N: return "♘"; case W_P: return "♙";
+        case B_K: return "♚"; case B_Q: return "♛"; case B_R: return "♜";
+        case B_B: return "♝"; case B_N: return "♞"; case B_P: return "♟";
+        default: return " ";
     }
 }
 
-// User Interface and Drawing
-void draw_board(BoardState *state, int cursor_idx, int selected_idx, int *legal_moves, int legal_count, Move last_move, Config *config, int history_count, char PGN[2048][20]) {
-    printf("\033[H\033[2J"); // Refresh Terminal In-Place
-    printf("\n  \033[1;36m=== C-CHESS TERMINAL GUI ===\033[0m\n\n");
+void draw() {
+    printf("\033[H\033[2J");
+    int last_from = hply > 0 ? hist[hply-1].move & 0xFF : -1;
+    int last_to = hply > 0 ? (hist[hply-1].move >> 8) & 0xFF : -1;
+    int in_check = is_attacked(king_sq[side], side^1);
 
-    int w_check = is_in_check(state, WHITE), b_check = is_in_check(state, BLACK);
-
-    for (int r = 0; r < 8; r++) {
-        printf("  \033[1;30m%d\033[0m ", 8 - r);
+    for (int r = 7; r >= 0; r--) {
+        printf("  %d ", r + 1);
         for (int c = 0; c < 8; c++) {
-            int sq = r * 8 + c, piece = state->board[sq];
-            const char *bg = ((r + c) % 2 == 0) ? BG_LIGHT : BG_DARK;
-
-            if ((piece == (WHITE | KING) && w_check) || (piece == (BLACK | KING) && b_check)) bg = BG_CHECK;
-            else if (sq == selected_idx) bg = BG_SELECT;
-            else {
-                for (int i = 0; i < legal_count; i++) {
-                    if (legal_moves[i] == sq) { bg = BG_LEGAL; break; }
+            int sq = r * 16 + c;
+            char *bg = (r + c) % 2 != 0 ? COL_LIGHT : COL_DARK;
+            if (sq == cursor_sq) bg = COL_SEL;
+            else if (sq == last_from || sq == last_to) bg = COL_LAST;
+            else if (in_check && sq == king_sq[side]) bg = COL_CHECK;
+            else if (selected_sq != -1) {
+                for(int i=0; i<num_legal; i++) {
+                    if ((legal_moves[i] & 0xFF) == selected_sq && ((legal_moves[i] >> 8) & 0xFF) == sq) { bg = COL_LEGAL; break; }
                 }
-                if (bg != BG_LEGAL && (sq == last_move.from || sq == last_move.to)) bg = BG_LAST;
             }
-
-            printf("%s", bg);
-            printf(sq == cursor_idx ? "\033[1;31m>" : " ");
-
-            if (piece != EMPTY) {
-                printf("%s%s", ((piece & COLOR_MASK) == WHITE) ? FG_WHITE : FG_BLACK, get_piece_char(piece));
-            } else {
-                int is_leg = 0;
-                for (int i = 0; i < legal_count; i++) { if (legal_moves[i] == sq) { is_leg = 1; break; } }
-                printf(is_leg ? "\033[38;5;34m•" : " ");
-            }
-            printf("%s%s\033[0m", bg, sq == cursor_idx ? "\033[1;31m<" : " ");
+            int p = board[sq];
+            char *fg = p > 0 ? COL_W_PIECE : (p < 0 ? COL_B_PIECE : "");
+            printf("%s%s %s %s", bg, fg, piece_char(p), COL_RESET);
         }
         printf("\n");
     }
-    printf("     \033[1;30ma  b  c  d  e  f  g  h\033[0m\n\n");
+    printf("    a  b  c  d  e  f  g  h\n\n");
 
-    printf("  \033[1mTurn\033[0m: %s | \033[1mEngine\033[0m: %s\n",
-           state->turn == WHITE ? "\033[1;37mWHITE" : "\033[1;30mBLACK",
-           !engine_online ? "\033[1;31mOFFLINE (PVP Mode)" : "\033[1;32mONLINE");
+    printf("Turn: %s %s\n", side == 0 ? "White" : "Black", game_over ? "(GAME OVER)" : (in_check ? "(CHECK!)" : ""));
+    printf("Engine: %s | ", engine_path);
+    if (tc_mode == 0) printf("Depth: %d", tc_val[0]);
+    else if (tc_mode == 1) printf("Time: %d ms", tc_val[1]);
+    else printf("Nodes: %d", tc_val[2]);
+    printf("  [t] cycle, [+/-] adjust\n");
 
-    printf("  \033[1mTime Control\033[0m: ");
-    if (config->type == TC_DEPTH) printf("Depth %d\n", config->depth);
-    else if (config->type == TC_NODES) printf("Nodes %d\n", config->nodes);
-    else printf("Time %d ms\n", config->time_ms);
-
-    printf("\n  \033[1mPGN History\033[0m: ");
-    for (int i = 0; i < history_count; i++) {
-        if (i % 2 == 0) printf("%d. %s ", (i / 2) + 1, PGN[i]);
-        else printf("%s  ", PGN[i]);
-        if (i > 0 && i % 8 == 7) printf("\n               ");
+    printf("Moves: ");
+    int start = hply > 20 ? hply - 20 : 0;
+    for(int i=start; i<hply; i++) {
+        if (i % 2 == 0) printf("%d. ", i/2 + 1);
+        printf("%s ", san_history[i]);
     }
-    printf("\n\n  [Arrows/WASD]: Move Cursor  | [Space/Enter]: Select/Place\n");
-    printf("  [U]: Undo Step               | [C]: Settings  | [Q]: Quit\n\n");
+    printf("\n\nControls: Arrows=Move, Space=Select/Place, u=Undo, q=Quit\n");
 }
 
-void configure_game(Config *config) {
-    disable_raw_mode();
-    printf("\033[H\033[2J");
-    printf("\033[1;33m=== CONFIGURATION MENU ===\033[0m\n\n");
-    printf("1. Set Engine Executable Path\n   (Current: %s)\n\n", config->engine_path);
-    printf("2. Set Limit Controls\n   (Current: %s)\n\n", config->type == TC_DEPTH ? "Depth" : (config->type == TC_NODES ? "Nodes" : "Time Limit"));
-    printf("3. Select Player Color\n   (Current: %s)\n\n", config->player_color == WHITE ? "White" : (config->player_color == BLACK ? "Black" : "PVP Mode"));
-    printf("4. Return to game\n\nOption (1-4): ");
-    fflush(stdout);
+void handle_sigint(int sig) { disable_raw_mode(); uci_quit(); exit(0); }
 
-    char line[512];
-    if (fgets(line, sizeof(line), stdin)) {
-        int opt = atoi(line);
-        if (opt == 1) {
-            printf("Enter absolute path: ");
-            fflush(stdout);
-            if (fgets(line, sizeof(line), stdin)) {
-                line[strcspn(line, "\n")] = 0;
-                if (strlen(line) > 0) strcpy(config->engine_path, line);
-            }
-        } else if (opt == 2) {
-            printf("Select Limiter (1: Depth, 2: Nodes, 3: Time limit MS): ");
-            fflush(stdout);
-            if (fgets(line, sizeof(line), stdin)) {
-                int choice = atoi(line);
-                if (choice == 1) {
-                    config->type = TC_DEPTH;
-                    printf("Depth levels (1-99): "); fflush(stdout);
-                    if (fgets(line, sizeof(line), stdin)) config->depth = atoi(line);
-                } else if (choice == 2) {
-                    config->type = TC_NODES;
-                    printf("Node count limit: "); fflush(stdout);
-                    if (fgets(line, sizeof(line), stdin)) config->nodes = atoi(line);
-                } else if (choice == 3) {
-                    config->type = TC_TIME;
-                    printf("Calculation duration limit (ms): "); fflush(stdout);
-                    if (fgets(line, sizeof(line), stdin)) config->time_ms = atoi(line);
-                }
-            }
-        } else if (opt == 3) {
-            printf("Select color profile (1: White, 2: Black, 3: Player Vs Player): ");
-            fflush(stdout);
-            if (fgets(line, sizeof(line), stdin)) {
-                int col = atoi(line);
-                if (col == 1) config->player_color = WHITE;
-                else if (col == 2) config->player_color = BLACK;
-                else config->player_color = 0;
-            }
-        }
-    }
+int main(int argc, char **argv) {
+    if (argc > 1) strncpy(engine_path, argv[1], sizeof(engine_path)-1);
+    signal(SIGINT, handle_sigint);
+    
+    init_board();
+    uci_init();
     enable_raw_mode();
-}
-
-int get_promotion_piece(void) {
-    disable_raw_mode();
-    int piece = QUEEN;
-    while (1) {
-        printf("\nPromote Pawn! Choose Piece (q: Queen, r: Rook, b: Bishop, n: Knight): ");
-        fflush(stdout);
-        char line[256];
-        if (fgets(line, sizeof(line), stdin)) {
-            char choice = line[0];
-            if (choice == 'q' || choice == 'Q') { piece = QUEEN; break; }
-            if (choice == 'r' || choice == 'R') { piece = ROOK; break; }
-            if (choice == 'b' || choice == 'B') { piece = BISHOP; break; }
-            if (choice == 'n' || choice == 'N') { piece = KNIGHT; break; }
-        }
-    }
-    enable_raw_mode();
-    return piece;
-}
-
-int get_key(void) {
-    char c;
-    if (read(STDIN_FILENO, &c, 1) == 1) {
-        if (c == '\033') {
-            char seq[2];
-            if (read(STDIN_FILENO, &seq[0], 1) == 1 && read(STDIN_FILENO, &seq[1], 1) == 1) {
-                if (seq[0] == '[') {
-                    switch (seq[1]) {
-                        case 'A': return 'w';
-                        case 'B': return 's';
-                        case 'C': return 'd';
-                        case 'D': return 'a';
-                    }
-                }
-            }
-            return '\033';
-        }
-        return c;
-    }
-    return 0;
-}
-
-int get_engine_move(char *bestmove_str) {
-    char buf[1024];
-    while (1) {
-        if (read_engine(buf, sizeof(buf))) {
-            if (strncmp(buf, "bestmove", 8) == 0) {
-                sscanf(buf, "bestmove %s", bestmove_str);
-                return 1;
-            }
-        }
-        usleep(1000);
-    }
-    return 0;
-}
-
-// Entry Point
-int main(int argc, char *argv[]) {
-    signal(SIGPIPE, SIG_IGN); // Ignore crash on faulty engine pipes
-
-    Config config;
-    config.type = TC_DEPTH;
-    config.depth = 10;
-    config.nodes = 100000;
-    config.time_ms = 1000;
-    config.player_color = WHITE;
-    strcpy(config.engine_path, "/opt/homebrew/bin/stockfish"); // Default brew location
-
-    if (argc > 1) strncpy(config.engine_path, argv[1], sizeof(config.engine_path) - 1);
-
-    BoardState state_history[2048];
-    char pgn_history[2048][20];
-    char uci_history[2048][10];
-    int history_count = 0;
-
-    BoardState current_state;
-    init_board(&current_state);
-    state_history[history_count] = current_state;
-
-    restart_engine(config.engine_path);
-    enable_raw_mode();
-
-    int cursor_idx = 60; // Start selection hovering on e1
-    int selected_idx = -1;
-    int legal_moves[64];
-    int legal_count = 0;
-    Move last_move = {-1, -1, 0};
+    gen_legal_moves();
+    draw();
 
     while (1) {
-        int checkmate = 0, stalemate = 0;
-        if (!has_legal_moves(&current_state)) {
-            if (is_in_check(&current_state, current_state.turn)) checkmate = 1;
-            else stalemate = 1;
-        }
-
-        draw_board(&current_state, cursor_idx, selected_idx, legal_moves, legal_count, last_move, &config, history_count, pgn_history);
-
-        if (checkmate) {
-            printf("  \033[1;31m*** CHECKMATE! %s Wins. ***\033[0m\n\n", current_state.turn == WHITE ? "BLACK" : "WHITE");
-        } else if (stalemate) {
-            printf("  \033[1;33m*** STALEMATE! Draw Game. ***\033[0m\n\n");
-        }
-
-        int is_engine_turn = (config.player_color != 0) && (current_state.turn != config.player_color);
-        if (is_engine_turn && !checkmate && !stalemate) {
-            if (!engine_online) {
-                printf("  [ERROR] Engine Offline! Reverting to PVP.\n");
-                config.player_color = 0;
-                fflush(stdout);
-                sleep(2);
-                continue;
-            }
-            printf("  \033[5mEngine is planning strategy...\033[0m\n");
-            fflush(stdout);
-
-            char position_cmd[8192] = "position startpos moves";
-            for (int i = 0; i < history_count; i++) {
-                strcat(position_cmd, " ");
-                strcat(position_cmd, uci_history[i]);
-            }
-            send_engine(position_cmd);
-
-            char go_cmd[128];
-            if (config.type == TC_DEPTH) sprintf(go_cmd, "go depth %d", config.depth);
-            else if (config.type == TC_NODES) sprintf(go_cmd, "go nodes %d", config.nodes);
-            else sprintf(go_cmd, "go movetime %d", config.time_ms);
-            send_engine(go_cmd);
-
-            char best_move_str[10];
-            if (get_engine_move(best_move_str)) {
-                Move m = parse_move(&current_state, best_move_str);
-                if (m.from != -1) {
-                    get_san(&current_state, m, pgn_history[history_count]);
-                    strcpy(uci_history[history_count], best_move_str);
-
-                    BoardState next;
-                    make_move(&current_state, &next, m);
-                    current_state = next;
-                    history_count++;
-                    state_history[history_count] = current_state;
-                    last_move = m;
-                }
-            }
-            selected_idx = -1;
-            legal_count = 0;
-            continue;
-        }
-
         int key = get_key();
-        if (key == 'q' || key == 'Q') break;
-        if (key == 'c' || key == 'C') {
-            configure_game(&config);
-            restart_engine(config.engine_path);
-        } else if (key == 'u' || key == 'U') {
-            int takebacks = (config.player_color == 0) ? 1 : 2;
-            if (history_count >= takebacks) {
-                history_count -= takebacks;
-                current_state = state_history[history_count];
-                selected_idx = -1;
-                legal_count = 0;
-                if (history_count > 0) {
-                    last_move = parse_move(&state_history[history_count - 1], uci_history[history_count - 1]);
-                } else {
-                    last_move.from = last_move.to = -1;
-                }
-            }
-        } else if (key == 'w') { // Up
-            if (cursor_idx >= 8) cursor_idx -= 8;
-        } else if (key == 's') { // Down
-            if (cursor_idx < 56) cursor_idx += 8;
-        } else if (key == 'a') { // Left
-            if (cursor_idx % 8 > 0) cursor_idx -= 1;
-        } else if (key == 'd') { // Right
-            if (cursor_idx % 8 < 7) cursor_idx += 1;
-        } else if (key == ' ' || key == '\r' || key == '\n') {
-            if (checkmate || stalemate) continue;
+        if (key == 'q') break;
+        
+        if (!game_over && side == 0) { // Player is White
+            if (key == 'U' && !(cursor_sq + 16 & 0x88)) cursor_sq += 16;
+            if (key == 'D' && !(cursor_sq - 16 & 0x88)) cursor_sq -= 16;
+            if (key == 'R' && !(cursor_sq + 1 & 0x88)) cursor_sq += 1;
+            if (key == 'L' && !(cursor_sq - 1 & 0x88)) cursor_sq -= 1;
 
-            if (selected_idx == -1) {
-                int piece = current_state.board[cursor_idx];
-                if (piece != EMPTY && (piece & COLOR_MASK) == current_state.turn) {
-                    selected_idx = cursor_idx;
-                    legal_count = get_legal_moves(&current_state, selected_idx, legal_moves);
-                }
-            } else {
-                int is_leg = 0;
-                for (int i = 0; i < legal_count; i++) {
-                    if (legal_moves[i] == cursor_idx) { is_leg = 1; break; }
-                }
-
-                if (is_leg) {
-                    Move m = {selected_idx, cursor_idx, 0};
-                    int piece = current_state.board[selected_idx];
-                    if ((piece & TYPE_MASK) == PAWN && (cursor_idx / 8 == 0 || cursor_idx / 8 == 7)) {
-                        m.promotion = get_promotion_piece();
+            if (key == ' ' || key == '\n') {
+                if (selected_sq == -1) {
+                    if (board[cursor_sq] != EMPTY && board[cursor_sq] > 0) {
+                        selected_sq = cursor_sq;
                     }
-
-                    char move_str[10];
-                    move_to_str(m, move_str);
-                    strcpy(uci_history[history_count], move_str);
-                    get_san(&current_state, m, pgn_history[history_count]);
-
-                    BoardState next;
-                    make_move(&current_state, &next, m);
-                    current_state = next;
-                    history_count++;
-                    state_history[history_count] = current_state;
-
-                    last_move = m;
-                    selected_idx = -1;
-                    legal_count = 0;
                 } else {
-                    int clicked_piece = current_state.board[cursor_idx];
-                    if (clicked_piece != EMPTY && (clicked_piece & COLOR_MASK) == current_state.turn) {
-                        selected_idx = cursor_idx;
-                        legal_count = get_legal_moves(&current_state, selected_idx, legal_moves);
+                    int move = -1;
+                    for(int i=0; i<num_legal; i++) {
+                        if ((legal_moves[i] & 0xFF) == selected_sq && ((legal_moves[i] >> 8) & 0xFF) == cursor_sq) {
+                            move = legal_moves[i]; break;
+                        }
+                    }
+                    if (move != -1) {
+                        if (((move >> 16) & 0xFF) != 0) { // Auto-promote to Queen
+                            for(int i=0; i<num_legal; i++) {
+                                if ((legal_moves[i] & 0xFFFF) == (move & 0xFFFF) && ((legal_moves[i] >> 16) & 0xFF) == 5) { move = legal_moves[i]; break; }
+                            }
+                        }
+                        char san[16]; get_san(move, san); strcpy(san_history[hply], san);
+                        make_move(move);
+                        selected_sq = -1;
+                        gen_legal_moves();
+                        if (num_legal == 0) game_over = 1;
                     } else {
-                        selected_idx = -1;
-                        legal_count = 0;
+                        selected_sq = -1;
                     }
                 }
             }
         }
+
+        if (key == 'u') {
+            if (hply > 0) {
+                unmake_move();
+                if (side == 0 && hply > 0) unmake_move(); // Undo engine move too
+                game_over = 0; selected_sq = -1; gen_legal_moves();
+            }
+        }
+
+        if (key == 't') tc_mode = (tc_mode + 1) % 3;
+        if (key == '+' || key == '=') {
+            if (tc_mode == 0) tc_val[0] += 2;
+            else if (tc_mode == 1) tc_val[1] += 500;
+            else tc_val[2] += 50000;
+        }
+        if (key == '-') {
+            if (tc_mode == 0 && tc_val[0] > 2) tc_val[0] -= 2;
+            else if (tc_mode == 1 && tc_val[1] > 500) tc_val[1] -= 500;
+            else if (tc_mode == 2 && tc_val[2] > 50000) tc_val[2] -= 50000;
+        }
+
+        draw();
+
+        if (!game_over && side == 1) { // Engine is Black
+            do_engine_move();
+            draw();
+        }
     }
 
-    stop_engine();
+    uci_quit();
     return 0;
 }
