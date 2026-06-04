@@ -820,7 +820,7 @@ void engine_go(void){
 }
 
 /* Parse engine output, return 1 if bestmove found */
-engine_read_response(void){
+void engine_read_response(void){
     if(!g_engine_active) return 0;
     char rbuf[2048];
     int got=(int)read(g_engine.out_fd,rbuf,sizeof(rbuf)-1);
