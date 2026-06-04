@@ -1,3 +1,20 @@
+// V8 Gui Prompt 6-3-26
+// Can you create a single file chess GUI program in C without external dependencies that accepts moves from Universal Chess Interface (UCI) compliant engines, and works in the Mac Terminal? Additionally, the user should be able to use the arrow keys and terminal cursor along with one of the keyboard keys to select and move pieces as appropriate. Also the moves played should be displayed using PGN notation, and take backs (undo) should be enabled. 
+
+/*
+How to Play
+
+    Movement: Use the Arrow Keys on your keyboard to navigate the red cursor block across the chess board.
+    Selection/Move: Press Space or Enter to select a piece. The selected piece's coordinate background turns blue. Navigate the red cursor to the destination square and hit Space or Enter again to complete your move.
+    Take back (Undo): Press U to roll back your last turn. If playing against the engine, it will intelligently undo both the engine's response and your last move.
+    Cycle Play Modes: Press C to shift between modes:
+        Engine plays Black (Default): Play as White against Stockfish.
+        Engine plays White: Play as Black against Stockfish.
+        Engine vs Engine: Watch Stockfish play against itself.
+        Player vs Player: Standard manual two-player pass-and-play.
+    Quit Game: Press Q to exit and safely shut down the background subprocess pipes cleanly.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
