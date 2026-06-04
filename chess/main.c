@@ -1512,9 +1512,9 @@ static void draw_box(int r, int c, int w, int h, const char *title) {
     printf(FG_TITLE "┌");
     int tl=strlen(title);
     int pad=(w-2-tl)/2;
-    for(int i=0;i<pad;i++) putchar('─');
+    for(int i=0;i<pad;i++) putchar('-');
     printf(ANSI_BOLD "%s" ANSI_RESET FG_TITLE, title);
-    for(int i=0;i<w-2-pad-tl;i++) putchar('─');
+    for(int i=0;i<w-2-pad-tl;i++) putchar('-');
     printf("┐" ANSI_RESET);
     for(int i=1;i<h-1;i++) {
         move_cursor(r+i,c);
@@ -1524,7 +1524,7 @@ static void draw_box(int r, int c, int w, int h, const char *title) {
     }
     move_cursor(r+h-1,c);
     printf(FG_TITLE "└");
-    for(int i=0;i<w-2;i++) putchar('─');
+    for(int i=0;i<w-2;i++) putchar('-');
     printf("┘" ANSI_RESET);
 }
 
