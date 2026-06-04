@@ -1,3 +1,21 @@
+// V5 Gui Prompt 6-3-26
+// Can you create a single file chess GUI program in C with no dependencies that accepts moves from Universal Chess Interface (UCI) compliant engines and works in the Mac Terminal? Additionally, moves played should be displayed using PGN notation, take backs (undo) should be enabled, and the user should be able to use the arrow keys and terminal cursor along with one of the keyboard keys to select and move pieces as appropriate with square highlighting. 
+
+/*
+Here is a complete, single-file C chess GUI program designed for the Mac Terminal. It is completely self-contained, has zero external dependencies, handles raw terminal input/output, generates proper PGN move notation, supports unlimited Undos, uses ANSI escape colors for custom square highlights (for pieces, selected squares, valid moves, and cursor), and asynchronous IPC communication to interact with any UCI-compliant chess engine (like Stockfish).
+
+Features & Implementation Details
+
+    Custom Board Styling & ANSI Highlights: Displays dark and light squares using 256-color escape sequences. Moves are navigated using your terminal's arrow keys. Selected cells are highlighted in Gold, and legal destination squares dynamically highlight in Muted Green.
+    Mac Terminal Universal Compatibility: Directly interfaces with termios.h to convert standard terminal controls into custom non-blocking input listeners without requiring heavy library frameworks like ncurses.
+    Subprocess Redirection: Establishes asynchronous dual-pipe reading (select()) to safely spawn, read, and write engine configurations (stdin/stdout) in standard UCI formats.
+    Full Castling, EP, and Promotion Support: Automatically detects Castling rights, captures across adjacent files (En Passant), and triggers a visual raw-mode picker for Pawn Promotions.
+    PGN Formatting & Unlimited Undo (U key): Generates complete PGN strings (e.g., checks: +, mates: #, pieces: Nf3, or pawns: exd5). Pressing U reverts the board, truncates history logs, and immediately commands position startpos moves ... to align the underlying engine's state with your GUI.
+
+
+*/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
