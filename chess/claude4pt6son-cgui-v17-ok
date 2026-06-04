@@ -1,3 +1,34 @@
+/*
+# Compile
+gcc -O2 -o chess chess.c
+
+# Play against yourself (no engine)
+./chess
+
+# Play against Stockfish (engine plays Black)
+./chess /usr/local/bin/stockfish
+
+# Engine plays White
+./chess /usr/local/bin/stockfish --white
+
+# Install Stockfish via Homebrew
+brew install stockfish
+
+Feature Summary
+Feature	Details
+Board rendering	Unicode pieces, ANSI 256-color squares, rank/file labels
+Cursor navigation	Arrow keys or WASD move the cursor
+Piece selection	Enter/Space selects piece, highlights legal move squares
+Legal move enforcement	Full pseudo-legal + legality filter (pins, checks, etc.)
+Special moves	Castling, en passant, pawn promotion (auto-queen)
+Highlighting	Cursor (blue), selected (green), legal moves (dots), last move (brown), check (red)
+Undo (U)	Undoes 1 ply (2 plies when engine is active) and rebuilds PGN
+PGN display	Live word-wrapped SAN move list with check/checkmate symbols
+UCI engine	Spawns engine process, reads bestmove, sends position + go movetime 1000
+Board flip (F)	Flip board perspective
+Game over detection	Checkmate, stalemate, 50-move rule
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
