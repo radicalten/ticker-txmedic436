@@ -1283,7 +1283,7 @@ static void draw_info_panel(void) {
     /* Engine info line */
     move_cursor(row++, col);
     if (g_engine_info[0])
-        printf(FG_DIM "%.48s" ANSI_RESET, g_engine_info);
+        printf( "%.48s" ANSI_RESET, g_engine_info);
     else
         printf("                                                ");
 
@@ -1375,7 +1375,7 @@ static void draw_info_panel(void) {
     /* Scroll indicator */
     row += PGN_ROWS;
     move_cursor(row++, col);
-    printf(FG_DIM "[PgUp/PgDn scroll] [%d moves]" ANSI_RESET, G.history_count);
+    printf( "[PgUp/PgDn scroll] [%d moves]" ANSI_RESET, G.history_count);
 
     row++;
     move_cursor(row++, col);
@@ -1560,7 +1560,7 @@ static int run_menu(const char **items, int count, const char *title,
             printf("                              ");
         }
         move_cursor(start_r+count+1, start_c);
-        printf(FG_DIM "(↑↓ navigate, Enter select, Q quit)" ANSI_RESET);
+        printf( "(↑↓ navigate, Enter select, Q quit)" ANSI_RESET);
         fflush(stdout);
 
         /* Wait for key */
