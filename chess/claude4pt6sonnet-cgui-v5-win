@@ -1,4 +1,39 @@
 /*
+I'll create a comprehensive chess GUI for the Mac Terminal. This is a complex program, so let me build it carefully.
+
+Usage
+Run (Human vs Human):
+./chess_gui
+Run with UCI engine (engine plays Black):
+./chess_gui /usr/local/bin/stockfish
+Run with UCI engine (engine plays White):
+./chess_gui /usr/local/bin/stockfish white
+
+Controls
+Key	Action
+↑↓←→ or WASD	Move cursor
+Enter or Space	Select piece / confirm move
+Esc	Deselect piece
+U	Undo last move
+F	Flip board
+N	New game
+H	Toggle help overlay
+Q	Quit
+Features
+
+    Full chess rules: castling, en passant, promotion dialog, check/checkmate/stalemate, 50-move rule
+    Color-coded squares: cursor (orange), selected (gold), valid moves (blue), last move (green), king in check (red)
+    PGN move list with move numbers, piece notation, check/mate symbols, and disambiguation
+    UCI engine support with 1-second think time per move
+    Undo: takes back both your move and the engine's response
+    Board flip: view from either side
+    Clean exit: restores terminal state and prints final PGN
+
+*/
+
+
+
+/*
  * chess_gui.c - Terminal Chess GUI with UCI Engine Support
  *
  * Compile: gcc -o chess_gui chess_gui.c
