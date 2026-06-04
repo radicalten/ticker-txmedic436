@@ -1,3 +1,34 @@
+/*
+Features Overview
+Feature	Details
+Board rendering	True-color Unicode pieces, light/dark squares
+Square highlighting	Cursor (yellow), selected (green), legal moves (light green), last move (olive), check (red)
+Keyboard controls	Arrow keys or WASD/HJKL to move cursor
+UCI engine	Spawns any UCI engine via fork/exec, full I/O piping
+Engine info	Displays depth, score, and PV live
+Move takeback	U undoes one full move-pair (human + engine)
+PGN display	Live PGN with move numbers, +/# colored, scrollable
+Time controls	14 presets: Bullet/Blitz/Rapid/Fixed/Infinite
+Promotion	Interactive promotion piece selection
+Game over	Detects checkmate, stalemate, 50-move rule
+Controls In-Game
+Key	Action
+↑↓←→ or WASD	Move cursor
+Enter / Space	Select piece / make move
+U	Undo last move
+F	Flip board
+S	Stop engine thinking
+N	New game (back to setup)
+Q	Quit
+PgUp/PgDn	Scroll PGN
+Usage with Stockfish
+# Install Stockfish via Homebrew
+brew install stockfish
+
+# Run and enter path at prompt:
+/opt/homebrew/bin/stockfish
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
