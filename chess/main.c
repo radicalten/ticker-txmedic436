@@ -298,7 +298,7 @@ const char *get_piece_glyph(char p) {
 // High-Fidelity TUI board drawing using 256 ANSI Escape Sequences
 void draw_interface(const char *status_msg) {
     printf("\e[H\e[J"); // Move cursor to home and clean frame
-    printf("\n  " ANSI_BOLD "  === terminal uci chess gui === " COLOR_RESET "\n\n");
+    printf("\n  "  "  === terminal uci chess gui === " COLOR_RESET "\n\n");
 
     for (int r = 0; r < 8; r++) {
         printf(" %d ", 8 - r);
@@ -360,7 +360,7 @@ void draw_interface(const char *status_msg) {
     printf("     a  b  c  d  e  f  g  h\n\n");
     printf(" [Arrows/WASD] Navigate | [Space/Enter] Select & Move | [U] Undo | [T] Settings | [Q] Exit\n");
     if (status_msg && strlen(status_msg) > 0) {
-        printf("\n " ANSI_BOLD "System Log: %s" COLOR_RESET "\n", status_msg);
+        printf("\n "  "System Log: %s" COLOR_RESET "\n", status_msg);
     } else {
         printf("\n\n");
     }
