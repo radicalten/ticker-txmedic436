@@ -849,8 +849,8 @@ int main() {
     }
 
     disable_raw_mode();
-    if (engine_pid > 0) {
-        kill(engine_pid, SIGTERM);
-    }
+    //if (engine_pid > 0) {
+        //kill(engine_pid, SIGTERM);
+    //}
     return 0;
 }
