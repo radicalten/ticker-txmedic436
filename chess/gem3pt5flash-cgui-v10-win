@@ -1,3 +1,16 @@
+/*
+
+Here is a complete, production-grade, single-file C program that implements a fully-featured, gorgeous terminal-based chess GUI for macOS.
+
+It handles raw terminal input, ANSI 256-color rendering, legal move calculations, PGN tracking, time controls, and interfaces natively with any UCI-compliant chess engine (like Stockfish).
+
+Run it. By default, it will look for Stockfish in common paths (such as those installed via brew install stockfish). You can also pass a custom engine path as an argument:
+
+./chess_gui /path/to/your/custom/stockfish
+
+*/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
