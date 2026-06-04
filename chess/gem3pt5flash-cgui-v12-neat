@@ -1,0 +1,493 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <termios.h>
+#include <signal.h>
+#include <sys/types.h>
+
+#define MAX_MOVES 1024
+
+// Key Definitions
+#define KEY_UP 1000
+#define KEY_DOWN 1001
+#define KEY_LEFT 1002
+#define KEY_RIGHT 1003
+#define KEY_ENTER 10
+#define KEY_SPACE ' '
+
+// Global State
+struct termios orig_termios;
+int engine_thinking = 0;
+int game_over = 0;
+
+// Chess Board State
+const char initial_board[8][8] = {
+    {'r','n','b','q','k','b','n','r'},
+    {'p','p','p','p','p','p','p','p'},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {' ',' ',' ',' ',' ',' ',' ',' '},
+    {'P','P','P','P','P','P','P','P'},
+    {'R','N','B','Q','K','B','N','R'}
+};
+char board[8][8];
+
+// Move History
+char move_history[MAX_MOVES][8];
+int move_count = 0;
+
+// UI Variables
+int cursor_x = 4;
+int cursor_y = 6;
+int selected_x = -1;
+int selected_y = -1;
+
+// Engine Configuration Variables
+int max_depth = 10;
+int max_nodes = 0;    // 0 means disabled
+int max_time = 1000;  // Milliseconds
+
+// Bidirectional Engine Pipes
+FILE *to_engine = NULL;
+FILE *from_engine = NULL;
+pid_t engine_pid = -1;
+
+// Function Declarations
+void disable_raw_mode();
+void enable_raw_mode();
+void handle_sigint(int sig);
+int start_engine(const char* path);
+void stop_engine();
+void apply_move_to_board(const char* move);
+void rebuild_board();
+void print_pgn();
+void draw_ui();
+int read_key();
+void prompt_input(const char* prompt, char* buffer, int max_len);
+
+int main(int argc, char* argv[]) {
+    const char* engine_path = "stockfish";
+    if (argc > 1) {
+        engine_path = argv[1];
+    }
+
+    signal(SIGINT, handle_sigint);
+    signal(SIGTERM, handle_sigint);
+
+    if (!start_engine(engine_path)) {
+        fprintf(stderr, "\033[1;31mError:\033[0m Could not launch or initialize the UCI engine at '%s'.\n", engine_path);
+        fprintf(stderr, "Please verify that the engine is installed and accessible.\n");
+        fprintf(stderr, "Usage: %s [path_to_uci_engine]\n", argv[0]);
+        return 1;
+    }
+
+    enable_raw_mode();
+    rebuild_board();
+
+    while (1) {
+        draw_ui();
+        int key = read_key();
+
+        if (key == 'q' || key == 'Q') {
+            break;
+        }
+
+        if (game_over) {
+            if (key == 'u' || key == 'U') {
+                if (move_count >= 2) {
+                    move_count -= 2;
+                    game_over = 0;
+                    rebuild_board();
+                }
+            }
+            continue;
+        }
+
+        if (key == KEY_UP && cursor_y > 0) cursor_y--;
+        else if (key == KEY_DOWN && cursor_y < 7) cursor_y++;
+        else if (key == KEY_LEFT && cursor_x > 0) cursor_x--;
+        else if (key == KEY_RIGHT && cursor_x < 7) cursor_x++;
+        else if (key == 'u' || key == 'U') {
+            if (move_count >= 2) {
+                move_count -= 2;
+                rebuild_board();
+            }
+        } else if (key == 'd' || key == 'D') {
+            char buf[32];
+            prompt_input("Enter Max Depth (1-99, or 0 to disable): ", buf, sizeof(buf));
+            int val = atoi(buf);
+            if (val >= 0 && val <= 99) max_depth = val;
+        } else if (key == 'n' || key == 'N') {
+            char buf[32];
+            prompt_input("Enter Max Nodes (e.g. 100000, or 0 to disable): ", buf, sizeof(buf));
+            int val = atoi(buf);
+            if (val >= 0) max_nodes = val;
+        } else if (key == 't' || key == 'T') {
+            char buf[32];
+            prompt_input("Enter Max Time in ms (e.g. 1000, or 0 to disable): ", buf, sizeof(buf));
+            int val = atoi(buf);
+            if (val >= 0) max_time = val;
+        } else if (key == KEY_SPACE || key == KEY_ENTER) {
+            if (selected_x == -1) {
+                // Select a piece
+                if (board[cursor_y][cursor_x] != ' ') {
+                    selected_x = cursor_x;
+                    selected_y = cursor_y;
+                }
+            } else {
+                // Move action
+                if (selected_x == cursor_x && selected_y == cursor_y) {
+                    // Deselect
+                    selected_x = -1;
+                    selected_y = -1;
+                } else {
+                    // Construct coordinate move format (e.g. e2e4)
+                    char move_str[8];
+                    move_str[0] = 'a' + selected_x;
+                    move_str[1] = '8' - selected_y;
+                    move_str[2] = 'a' + cursor_x;
+                    move_str[3] = '8' - cursor_y;
+                    move_str[4] = '\0';
+
+                    // Simple auto-promotion handling to Queen
+                    char moving_piece = board[selected_y][selected_x];
+                    if ((moving_piece == 'P' && cursor_y == 0) || (moving_piece == 'p' && cursor_y == 7)) {
+                        move_str[4] = 'q';
+                        move_str[5] = '\0';
+                    }
+
+                    // Log move locally
+                    strcpy(move_history[move_count++], move_str);
+                    rebuild_board();
+                    selected_x = -1;
+                    selected_y = -1;
+
+                    // Trigger Engine Move
+                    engine_thinking = 1;
+                    draw_ui();
+
+                    // Send moves history to the engine
+                    fprintf(to_engine, "position startpos moves");
+                    for (int i = 0; i < move_count; i++) {
+                        fprintf(to_engine, " %s", move_history[i]);
+                    }
+                    fprintf(to_engine, "\n");
+
+                    // Send calculation limits
+                    fprintf(to_engine, "go");
+                    if (max_depth > 0) fprintf(to_engine, " depth %d", max_depth);
+                    if (max_nodes > 0) fprintf(to_engine, " nodes %d", max_nodes);
+                    if (max_time > 0) fprintf(to_engine, " movetime %d", max_time);
+                    fprintf(to_engine, "\n");
+                    fflush(to_engine);
+
+                    // Blockingly read engine output
+                    char line[1024];
+                    char best_move[16] = {0};
+                    while (fgets(line, sizeof(line), from_engine)) {
+                        if (strncmp(line, "bestmove", 8) == 0) {
+                            sscanf(line, "bestmove %s", best_move);
+                            break;
+                        }
+                    }
+
+                    // Process Engine Move
+                    if (strlen(best_move) > 0 && strcmp(best_move, "(none)") != 0) {
+                        strcpy(move_history[move_count++], best_move);
+                        rebuild_board();
+                    } else {
+                        game_over = 1;
+                    }
+                    engine_thinking = 0;
+                }
+            }
+        }
+    }
+
+    stop_engine();
+    disable_raw_mode();
+    return 0;
+}
+
+// POSIX Pipe and Fork handling for Bi-directional UCI Communication
+int start_engine(const char* path) {
+    int pipe_to_engine[2];
+    int pipe_from_engine[2];
+
+    if (pipe(pipe_to_engine) < 0 || pipe(pipe_from_engine) < 0) {
+        return 0;
+    }
+
+    engine_pid = fork();
+    if (engine_pid < 0) {
+        return 0;
+    }
+
+    if (engine_pid == 0) { // Child Process
+        dup2(pipe_to_engine[0], STDIN_FILENO);
+        dup2(pipe_from_engine[1], STDOUT_FILENO);
+        close(pipe_to_engine[1]);
+        close(pipe_from_engine[0]);
+
+        // Attempt execution
+        execlp(path, path, NULL);
+
+        // Fallback to local directory if relative path
+        char local_path[256];
+        snprintf(local_path, sizeof(local_path), "./%s", path);
+        execlp(local_path, local_path, NULL);
+
+        exit(1);
+    }
+
+    // Parent Process
+    close(pipe_to_engine[0]);
+    close(pipe_from_engine[1]);
+
+    to_engine = fdopen(pipe_to_engine[1], "w");
+    from_engine = fdopen(pipe_from_engine[0], "r");
+    setbuf(to_engine, NULL);
+
+    // Verify UCI handshake
+    fprintf(to_engine, "uci\n");
+    char line[1024];
+    int ok = 0;
+    while (fgets(line, sizeof(line), from_engine)) {
+        if (strncmp(line, "uciok", 5) == 0) {
+            ok = 1;
+            break;
+        }
+    }
+    if (!ok) return 0;
+
+    fprintf(to_engine, "isready\n");
+    ok = 0;
+    while (fgets(line, sizeof(line), from_engine)) {
+        if (strncmp(line, "readyok", 7) == 0) {
+            ok = 1;
+            break;
+        }
+    }
+    return ok;
+}
+
+void stop_engine() {
+    if (engine_pid > 0) {
+        kill(engine_pid, SIGTERM);
+        engine_pid = -1;
+    }
+}
+
+// Restore Raw terminal configurations on sudden exits
+void disable_raw_mode() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    printf("\033[?25h"); // Show terminal cursor
+    fflush(stdout);
+}
+
+void enable_raw_mode() {
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    atexit(disable_raw_mode);
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    printf("\033[?25l"); // Hide terminal cursor
+    fflush(stdout);
+}
+
+void handle_sigint(int sig) {
+    (void)sig;
+    exit(0);
+}
+
+// Custom simple chess-movement player to reconstruct board state visually
+void apply_move_to_board(const char* move) {
+    int x1 = move[0] - 'a';
+    int y1 = 8 - (move[1] - '0');
+    int x2 = move[2] - 'a';
+    int y2 = 8 - (move[3] - '0');
+
+    if (x1 < 0 || x1 > 7 || y1 < 0 || y1 > 7 || x2 < 0 || x2 > 7 || y2 < 0 || y2 > 7) {
+        return;
+    }
+
+    char piece = board[y1][x1];
+    board[y2][x2] = piece;
+    board[y1][x1] = ' ';
+
+    // Promotions
+    if (move[4] != '\0' && move[4] != ' ' && move[4] != '\r' && move[4] != '\n') {
+        char promo = move[4];
+        if (piece == 'P') board[y2][x2] = toupper(promo);
+        else if (piece == 'p') board[y2][x2] = tolower(promo);
+    }
+
+    // White Kingside/Queenside Castling
+    if (piece == 'K' && y1 == 7) {
+        if (x1 == 4 && x2 == 6) { board[7][5] = 'R'; board[7][7] = ' '; }
+        else if (x1 == 4 && x2 == 2) { board[7][3] = 'R'; board[7][0] = ' '; }
+    }
+    // Black Kingside/Queenside Castling
+    else if (piece == 'k' && y1 == 0) {
+        if (x1 == 4 && x2 == 6) { board[0][5] = 'r'; board[0][7] = ' '; }
+        else if (x1 == 4 && x2 == 2) { board[0][3] = 'r'; board[0][0] = ' '; }
+    }
+
+    // En Passant
+    if ((piece == 'P' || piece == 'p') && x1 != x2 && board[y2][x2] == ' ') {
+        if (piece == 'P') board[y2 + 1][x2] = ' ';
+        else board[y2 - 1][x2] = ' ';
+    }
+}
+
+void rebuild_board() {
+    memcpy(board, initial_board, sizeof(board));
+    for (int i = 0; i < move_count; i++) {
+        apply_move_to_board(move_history[i]);
+    }
+}
+
+// Standard Key Input parser with escaping handling for Arrow Keys
+int read_key() {
+    char c;
+    int nread = read(STDIN_FILENO, &c, 1);
+    if (nread <= 0) return 0;
+
+    if (c == '\033') {
+        char seq[3];
+        if (read(STDIN_FILENO, &seq[0], 1) <= 0) return '\033';
+        if (read(STDIN_FILENO, &seq[1], 1) <= 0) return '\033';
+        if (seq[0] == '[') {
+            switch (seq[1]) {
+                case 'A': return KEY_UP;
+                case 'B': return KEY_DOWN;
+                case 'C': return KEY_RIGHT;
+                case 'D': return KEY_LEFT;
+            }
+        }
+        return '\033';
+    }
+    return c;
+}
+
+// Temporary escape terminal raw mode to grab clean text parameters
+void prompt_input(const char* prompt, char* buffer, int max_len) {
+    disable_raw_mode();
+    printf("\033[?25h"); // Show terminal cursor
+    printf("\n\033[1;33m%s\033[0m", prompt);
+    fflush(stdout);
+    if (fgets(buffer, max_len, stdin)) {
+        buffer[strcspn(buffer, "\n")] = 0;
+    }
+    enable_raw_mode();
+}
+
+// Color and rendering logic
+const char* get_bg_color(int x, int y, int cx, int cy, int sx, int sy) {
+    if (x == cx && y == cy) {
+        return "\033[48;5;75m"; // Cursor Blue
+    }
+    if (x == sx && y == sy) {
+        return "\033[48;5;178m"; // Selected Gold
+    }
+    if ((x + y) % 2 == 0) {
+        return "\033[48;5;223m"; // Light Wood/Sand
+    } else {
+        return "\033[48;5;137m"; // Dark Wood/Brown
+    }
+}
+
+const char* get_piece_symbol(char piece) {
+    switch (piece) {
+        case 'P': return " ♙ ";
+        case 'R': return " ♖ ";
+        case 'N': return " ♘ ";
+        case 'B': return " ♗ ";
+        case 'Q': return " ♕ ";
+        case 'K': return " ♔ ";
+        case 'p': return " ♟ ";
+        case 'r': return " ♜ ";
+        case 'n': return " ♞ ";
+        case 'b': return " ♝ ";
+        case 'q': return " ♛ ";
+        case 'k': return " ♚ ";
+        default:  return "   ";
+    }
+}
+
+const char* get_piece_color(char piece) {
+    if (piece >= 'A' && piece <= 'Z') {
+        return "\033[38;5;231m\033[1m"; // White pieces
+    } else if (piece >= 'a' && piece <= 'z') {
+        return "\033[38;5;234m";        // Black pieces
+    }
+    return "";
+}
+
+void print_pgn() {
+    printf("\033[1;36m[ Move History ]\033[0m\n");
+    for (int i = 0; i < move_count; i += 2) {
+        printf("%d. %s ", (i / 2) + 1, move_history[i]);
+        if (i + 1 < move_count) {
+            printf("%s  ", move_history[i + 1]);
+        }
+        if ((i / 2 + 1) % 5 == 0 && i + 1 < move_count) {
+            printf("\n");
+        }
+    }
+    printf("\n");
+}
+
+void draw_ui() {
+    // Clear screen and lock cursor home
+    printf("\033[2J\033[H");
+    printf("\033[1;35m========================================================\033[0m\n");
+    printf("\033[1;32m                 MAC TERMINAL CHESS GUI                 \033[0m\n");
+    printf("\033[1;35m========================================================\033[0m\n\n");
+
+    for (int y = 0; y < 8; y++) {
+        // Print Side coordinates rank indicators
+        printf("  %d ", 8 - y);
+
+        // Chess board row cells
+        for (int x = 0; x < 8; x++) {
+            const char* bg = get_bg_color(x, y, cursor_x, cursor_y, selected_x, selected_y);
+            char piece = board[y][x];
+            const char* fg = get_piece_color(piece);
+            const char* symbol = get_piece_symbol(piece);
+            printf("%s%s%s\033[0m", bg, fg, symbol);
+        }
+
+        // Configuration and info layout panel on the right side
+        if (y == 0)      printf("    \033[1;33m[ CONTROLS ]\033[0m");
+        else if (y == 1) printf("    Arrows     : Move cursor");
+        else if (y == 2) printf("    Space/Enter: Select & Move piece");
+        else if (y == 3) printf("    U          : Undo Move");
+        else if (y == 4) printf("    D / N / T  : Set Depth / Nodes / Time");
+        else if (y == 5) printf("    Q          : Exit Chess GUI");
+        else if (y == 6) {
+            printf("    \033[1;34m[ Engine Config ]\033[0m Max Depth: %d | Nodes: %d | Time: %d ms",
+                   max_depth, max_nodes, max_time);
+        } else if (y == 7) {
+            if (game_over) {
+                printf("    \033[1;31m[ Game Status ]: Checkmate / Game Over!\033[0m");
+            } else {
+                printf("    \033[1;34m[ Engine Status ]:\033[0m %s", engine_thinking ? "\033[5;1;33mThinking...\033[0m" : "Idle");
+            }
+        }
+        printf("\n");
+    }
+
+    // Print bottom File coordinates index
+    printf("     ");
+    for (int x = 0; x < 8; x++) {
+        printf(" %c ", 'A' + x);
+    }
+    printf("\n\n");
+
+    print_pgn();
+    printf("\n");
+}
