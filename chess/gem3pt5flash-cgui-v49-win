@@ -1,3 +1,37 @@
+// V49 Gui prompt 6-4-26
+// Create a single file chess GUI program in C without external dependencies that updates all its graphics in place. It should accept moves from Universal Chess Interface (UCI) compliant engines, enforce legal moves, and work in the Mac Terminal. The UI should be elegant, with labeled USCF chessboard, unicode chess pieces, PGN notation (displaying only the most recently played moves), and basic settings. These settings should include an undo function, the option to change time controls to nodes, depth, or time, and the ability to change board orientation, as well as switch sides.  
+
+/*
+An elegant, responsive, single-file chess GUI written in C that runs beautifully in the macOS Terminal (or any POSIX terminal). It features zero external dependencies, real-time graphics update-in-place (flicker-free), a fully compliant rule generator that validates legal moves (including castling, en-passant, check validation, and stalemate/checkmate detection), and an asynchronous UCI engine bridge (interacts smoothly with Stockfish without freezing the UI).
+Key Features
+
+    Visual Board Representation: A 256-color green/cream modern layout with centered Unicode pieces.
+    Interactive Cursor System: Navigate with the Arrow keys and select pieces with Enter or Space (no typing coordinate strings required!).
+    Move Validation Visuals: When you select a piece, all legal destination squares on the board are highlighted in light blue.
+    On-the-fly Custom Settings:
+        Undo function (automatically reverts both human & engine moves).
+        Time Control cycling (Time per move, Depth limit, or Node limit).
+        Orientation Flipping (flips board coordinates visually).
+        Side-switching (Switch from playing White to Black, Hotseat Mode, or Engine vs. Engine!).
+    Live PGN side panel: Displays the active side, game status, and live-scrolling PGN/UCI move history.
+
+How to Connect to a Chess Engine
+
+By default, the program looks for a system-wide installation of stockfish. If you have Stockfish installed via Homebrew, you can hook it up by doing the following:
+
+    Ensure Stockfish is installed on your Mac:
+brew install stockfish
+
+Inside the GUI application, press the E key on your keyboard.
+Enter your homebrew stockfish path and press Enter:
+
+    On Apple Silicon Macs (M1/M2/M3), type: /opt/homebrew/bin/stockfish
+    On Intel-based Macs, type: /usr/local/bin/stockfish
+
+The GUI will link automatically, transition its status to Active, and begin generating responses dynamically!
+
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
