@@ -507,7 +507,8 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     }
 
     if (abs(p) == 1 && m.to == dst->ep) {
-        int cap = m.to + (dst->turn == 1 ? 8 : -8);
+        int p_dir = (dst->turn == 1 ? 8 : -8);
+        int cap = m.to + p_dir;
         dst->board[cap] = 0;
     }
 
@@ -680,7 +681,10 @@ void draw_ui() {
     printf(" \033[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
     printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
     printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
-    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    
+    // Safety Net: \033[J at the end of the engine status line ensures any leftover 
+    // text below the board interface (including promotion choices) is wiped instantly.
+    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n\033[J", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
     fflush(stdout);
 }
 
@@ -730,17 +734,22 @@ void print_recent_moves(int row) {
 
 // Blocks and prompts user synchronously to select an under-promotion piece
 int get_promo_choice() {
-    printf("\r\n \033[1;33mPromote pawn to: [Q]ueen, [R]ook, [B]ishop, [N]ight\033[0m\r\n");
+    printf("\r\n \033[1;33mPromote pawn to: [Q]ueen, [R]ook, [B]ishop, [N]ight\033[0m");
     fflush(stdout);
     char c;
+    int choice = 5;
     while (1) {
         if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == 'q' || c == 'Q') return 5;
-            if (c == 'r' || c == 'R') return 4;
-            if (c == 'b' || c == 'B') return 3;
-            if (c == 'n' || c == 'N' || c == 'k' || c == 'K') return 2;
+            if (c == 'q' || c == 'Q') { choice = 5; break; }
+            if (c == 'r' || c == 'R') { choice = 4; break; }
+            if (c == 'b' || c == 'B') { choice = 3; break; }
+            if (c == 'n' || c == 'N' || c == 'k' || c == 'K') { choice = 2; break; }
         }
     }
+    // Erase the prompt from screen right after selection is made
+    printf("\r\033[K\033[A\033[K");
+    fflush(stdout);
+    return choice;
 }
 
 // GUI Action / Setting Handlers
