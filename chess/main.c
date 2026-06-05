@@ -61,7 +61,7 @@ int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
 int is_square_attacked(const BoardState *state, int sq, int attacker);
 void make_move(const BoardState *src, BoardState *dst, Move m);
-void print_side_panel(int r);
+void print_side_panel_line(int panel_row);
 void print_recent_moves(int row);
 void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
@@ -560,12 +560,14 @@ void draw_ui() {
     }
     printf("\033[K\r\n\r\n");
 
-    // 2. Column Coordinates Header
+    // 2. Column Coordinates Header (Padded to 31 characters to align side panel perfectly)
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h\033[K\r\n");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h  g  f  e  d  c  b  a\033[K\r\n");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
+    print_side_panel_line(0);
+    printf("\033[K\r\n");
 
     // Determine if either king is in check
     int king_in_check = -1;
@@ -577,6 +579,7 @@ void draw_ui() {
         king_in_check = b_king;
     }
 
+    // 3. Render 8 Board Rows (Side panel index 1 to 8)
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -643,15 +646,18 @@ void draw_ui() {
         }
 
         printf(" %d ", rank_lbl);
-        print_side_panel(r);
+        print_side_panel_line(r + 1);
         printf("\033[K\r\n"); // Wipe leftover characters to prevent screen residue
     }
 
+    // 4. Column Coordinates Footer (Padded to 31 characters, side panel index 9)
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h\033[K\r\n\r\n");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h  g  f  e  d  c  b  a\033[K\r\n\r\n");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
+    print_side_panel_line(9);
+    printf("\033[K\r\n\r\n");
 
     printf(" \033[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
     printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
@@ -660,10 +666,10 @@ void draw_ui() {
     fflush(stdout);
 }
 
-void print_side_panel(int r) {
+void print_side_panel_line(int panel_row) {
     printf("   ");
-    // All 8 ranks are now dedicated to printing moves sequentially
-    print_recent_moves(r);
+    // All 10 available rows are printed sequentially
+    print_recent_moves(panel_row);
 }
 
 void print_recent_moves(int row) {
@@ -672,8 +678,8 @@ void print_recent_moves(int row) {
         return; // Render completely blank rows when history is cleared
     }
     int start_move = 1;
-    if (total_full_moves > 8) {
-        start_move = total_full_moves - 7;
+    if (total_full_moves > 10) {
+        start_move = total_full_moves - 9;
     }
     int display = start_move + row;
     if (display > total_full_moves) {
