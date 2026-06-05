@@ -50,6 +50,7 @@ int engine_in[2] = {-1, -1};
 int engine_out[2] = {-1, -1};
 pid_t engine_pid = -1;
 int engine_thinking = 0;
+long long engine_nps = 0;    // Tracks current/last search nodes per second
 
 char engine_buffer[8192];
 int engine_buf_len = 0;
@@ -182,6 +183,7 @@ void push_state(const BoardState *state, Move m) {
 
 // UCI Position Command Builder (With overflow prevention)
 void trigger_engine_move() {
+    engine_nps = 0; // Reset search metrics for the new calculation
     static char cmd[32768]; // Allocate statically to prevent stack overflows
     cmd[0] = '\0';
     strcpy(cmd, "position startpos moves");
@@ -223,6 +225,17 @@ void process_engine_output(char *line) {
     while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
         line[len - 1] = '\0';
         len--;
+    }
+
+    // Capture nodes per second (nps) from engine update lines
+    if (strncmp(line, "info", 4) == 0) {
+        char *nps_ptr = strstr(line, " nps ");
+        if (nps_ptr) {
+            long long val;
+            if (sscanf(nps_ptr, " nps %lld", &val) == 1) {
+                engine_nps = val;
+            }
+        }
     }
 
     if (strncmp(line, "bestmove", 8) == 0) {
@@ -508,8 +521,8 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 
     if (abs(p) == 1 && m.to == dst->ep) {
         int p_dir = (dst->turn == 1 ? 8 : -8);
-        int cap = m.to + p_dir;
-        dst->board[cap] = 0;
+        int mt_cap = m.to + p_dir;
+        dst->board[mt_cap] = 0;
     }
 
     dst->ep = -1;
@@ -682,9 +695,18 @@ void draw_ui() {
     printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
     printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
     
-    // Safety Net: \033[J at the end of the engine status line ensures any leftover 
-    // text below the board interface (including promotion choices) is wiped instantly.
-    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n\033[J", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
+    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    if (engine_pid > 0 && engine_nps > 0) {
+        if (engine_nps >= 1000000) {
+            printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
+        } else if (engine_nps >= 1000) {
+            printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
+        } else {
+            printf(" | NPS: %lld", engine_nps);
+        }
+    }
+    printf("\033[K\r\n\033[J");
     fflush(stdout);
 }
 
@@ -798,6 +820,7 @@ void handle_undo() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
+    engine_nps = 0;
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -812,6 +835,7 @@ void handle_reset_board() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
+    engine_nps = 0;
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
