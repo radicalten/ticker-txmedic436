@@ -631,22 +631,22 @@ void print_side_panel(int r) {
             break;
         }
         case 2:
-            printf("\033[1;37mRECENT MOVES:\033[0m");
-            break;
-        case 3:
             print_recent_moves(0);
             break;
-        case 4:
+        case 3:
             print_recent_moves(1);
             break;
-        case 5:
+        case 4:
             print_recent_moves(2);
             break;
-        case 6:
+        case 5:
             print_recent_moves(3);
             break;
-        case 7:
+        case 6:
             print_recent_moves(4);
+            break;
+        case 7:
+            print_recent_moves(5);
             break;
     }
 }
@@ -657,8 +657,8 @@ void print_recent_moves(int row) {
         return; // Blank when no moves are registered
     }
     int start_move = 1;
-    if (total_full_moves > 5) {
-        start_move = total_full_moves - 4;
+    if (total_full_moves > 6) {
+        start_move = total_full_moves - 5;
     }
     int display = start_move + row;
     if (display > total_full_moves) {
