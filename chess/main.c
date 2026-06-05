@@ -733,7 +733,7 @@ void adjust_time_control() {
 }
 
 void handle_change_engine_path() {
-    disable_raw_mode();
+    //disable_raw_mode();
     printf("\r\n\033[1;33mEnter UCI Engine Path (e.g., /usr/local/bin/stockfish):\033[0m\r\n> ");
     fflush(stdout);
 
