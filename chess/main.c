@@ -65,6 +65,7 @@ void print_side_panel_line(int panel_row);
 void print_recent_moves(int row);
 void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
+int count_repetitions(const BoardState *state);
 
 // Clean up termios and terminate engine processes
 void cleanup() {
@@ -476,6 +477,19 @@ int has_legal_moves(const BoardState *state) {
     return 0;
 }
 
+int count_repetitions(const BoardState *state) {
+    int count = 1; // Count current active position
+    for (int i = 0; i < history_count; i++) {
+        if (state->turn == history[i].turn &&
+            state->castle == history[i].castle &&
+            state->ep == history[i].ep &&
+            memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
 void make_move(const BoardState *src, BoardState *dst, Move m) {
     *dst = *src;
     int p = dst->board[m.from];
@@ -535,10 +549,13 @@ void draw_ui() {
     int has_mov = has_legal_moves(&current_state);
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
+    int repetitions = count_repetitions(&current_state);
 
     printf("  ");
     if (current_state.halfmoves >= 100) {
         printf("\033[1;36mDRAW (50-move rule)\033[0m");
+    } else if (repetitions >= 3) {
+        printf("\033[1;36mDRAW (threefold repetition)\033[0m");
     } else if (!has_mov) {
         if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
         else printf("\033[1;36mSTALEMATE!\033[0m");
@@ -712,8 +729,8 @@ void print_recent_moves(int row) {
 
 // GUI Action / Setting Handlers
 void handle_select() {
-    // If checkmate, stalemate, or 50-move draw has been reached, do not process selections
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100) {
+    // If checkmate, stalemate, 50-move draw, or threefold repetition has been reached, do not process selections
+    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
         return;
     }
 
@@ -891,8 +908,8 @@ int main() {
 
     while (1) {
         int engine_active = 0;
-        // Lock engine movement if checkmate, stalemate, or the 50-move draw state is active
-        if (has_legal_moves(&current_state) && current_state.halfmoves < 100) {
+        // Lock engine movement if checkmate, stalemate, 50-move draw, or threefold repetition draw state is active
+        if (has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
