@@ -1,5 +1,7 @@
 CC		:= cc
-CFLAGS 	:= -O3 -flto
+INCLUDES += -I../chess2
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES)
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
