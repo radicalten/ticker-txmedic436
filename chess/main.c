@@ -549,15 +549,15 @@ void draw_ui() {
             if (is_cursor) {
                 bg_color = "\033[48;5;208m"; // Bright orange for active cursor
             } else if (is_selected) {
-                bg_color = "\033[48;5;220m"; // Soft gold for selected piece
+                bg_color = "\033[48;5;34m";  // Green highlight for the selected piece
             } else if (sq == king_in_check) {
                 bg_color = "\033[48;5;196m"; // Bright red highlight for the king in check
             } else if (is_prev_move) {
                 bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; // Sky/Steel Blue for previous moves
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\033[48;5;153m" : "\033[48;5;111m"; // Slate blue highlights for legal destination squares
+                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; // Soft greens for legal destinations
             } else {
-                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // warm wood tones (Light Maple vs Dark Walnut)
+                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // Wood tones (Light Maple vs Dark Walnut)
             }
 
             const char *piece_str = " ";
