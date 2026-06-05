@@ -66,6 +66,7 @@ void print_recent_moves(int row);
 void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
+int get_promo_choice();
 
 // Clean up termios and terminate engine processes
 void cleanup() {
@@ -727,6 +728,21 @@ void print_recent_moves(int row) {
     }
 }
 
+// Blocks and prompts user synchronously to select an under-promotion piece
+int get_promo_choice() {
+    printf("\r\n \033[1;33mPromote pawn to: [Q]ueen, [R]ook, [B]ishop, [N]ight\033[0m\r\n");
+    fflush(stdout);
+    char c;
+    while (1) {
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            if (c == 'q' || c == 'Q') return 5;
+            if (c == 'r' || c == 'R') return 4;
+            if (c == 'b' || c == 'B') return 3;
+            if (c == 'n' || c == 'N' || c == 'k' || c == 'K') return 2;
+        }
+    }
+}
+
 // GUI Action / Setting Handlers
 void handle_select() {
     // If checkmate, stalemate, 50-move draw, or threefold repetition has been reached, do not process selections
@@ -743,11 +759,15 @@ void handle_select() {
     } else {
         Move m = {selected_sq, sq, 0};
         int p = current_state.board[selected_sq];
-        if (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-            m.promo = 5; // Automatic Queen Promotion
+        int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
+        if (is_promo) {
+            m.promo = 5; // Validate with Queen first
         }
 
         if (is_legal_move(&current_state, m)) {
+            if (is_promo) {
+                m.promo = get_promo_choice();
+            }
             push_state(&current_state, m);
             BoardState next;
             make_move(&current_state, &next, m);
