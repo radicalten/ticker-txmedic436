@@ -479,6 +479,10 @@ int has_legal_moves(const BoardState *state) {
 void make_move(const BoardState *src, BoardState *dst, Move m) {
     *dst = *src;
     int p = dst->board[m.from];
+    
+    // Accurately pre-calculate captures before the board layout is updated
+    int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
+
     dst->board[m.from] = 0;
 
     if (m.promo != 0) {
@@ -512,8 +516,11 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (m.from == 0  || m.to == 0)  dst->castle &= ~8;
 
     dst->turn = -dst->turn;
-    if (abs(p) == 1 || dst->board[m.to] != 0) dst->halfmoves = 0;
+    
+    // Reset 50-move half-move rule metric strictly on pawn pushes or any captures
+    if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
     else dst->halfmoves++;
+    
     if (dst->turn == 1) dst->fullmoves++;
 }
 
@@ -632,7 +639,9 @@ void print_side_panel(int r) {
             const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
 
             printf("\033[1;37mSTATUS:\033[0m ");
-            if (!has_mov) {
+            if (current_state.halfmoves >= 100) {
+                printf("\033[1;36mDRAW (50-move rule)\033[0m");
+            } else if (!has_mov) {
                 if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
                 else printf("\033[1;36mSTALEMATE!\033[0m");
             } else if (is_ch) {
@@ -716,8 +725,8 @@ void print_recent_moves(int row) {
 
 // GUI Action / Setting Handlers
 void handle_select() {
-    // If checkmate or stalemate has been reached, do not process selections
-    if (!has_legal_moves(&current_state)) {
+    // If checkmate, stalemate, or 50-move draw has been reached, do not process selections
+    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100) {
         return;
     }
 
@@ -895,7 +904,8 @@ int main() {
 
     while (1) {
         int engine_active = 0;
-        if (has_legal_moves(&current_state)) {
+        // Lock engine movement if checkmate, stalemate, or the 50-move draw state is active
+        if (has_legal_moves(&current_state) && current_state.halfmoves < 100) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
