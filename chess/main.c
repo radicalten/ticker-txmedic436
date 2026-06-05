@@ -51,7 +51,7 @@ int engine_out[2] = {-1, -1};
 pid_t engine_pid = -1;
 int engine_thinking = 0;
 
-char engine_buffer[4096];
+char engine_buffer[8192];
 int engine_buf_len = 0;
 struct termios orig_termios;
 
@@ -201,6 +201,13 @@ void trigger_engine_move() {
 
 // Parsing incoming engine text
 void process_engine_output(char *line) {
+    // Sanitize carriage returns and trailing spaces
+    int len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
+        line[len - 1] = '\0';
+        len--;
+    }
+
     if (strncmp(line, "bestmove", 8) == 0) {
         char move_str[16];
         if (sscanf(line, "bestmove %s", move_str) == 1) {
@@ -220,30 +227,31 @@ void process_engine_output(char *line) {
     }
 }
 
+// Dynamic stream parser ensures stdout pipes never clog
 void read_from_engine() {
-    char tmp[2048];
+    char tmp[4096];
     int n;
     while ((n = read(engine_out[0], tmp, sizeof(tmp) - 1)) > 0) {
         tmp[n] = '\0';
-        if (engine_buf_len + n < (int)sizeof(engine_buffer) - 1) {
-            memcpy(engine_buffer + engine_buf_len, tmp, n);
-            engine_buf_len += n;
-            engine_buffer[engine_buf_len] = '\0';
+        for (int i = 0; i < n; i++) {
+            if (tmp[i] == '\n') {
+                if (engine_buf_len > 0) {
+                    engine_buffer[engine_buf_len] = '\0';
+                    process_engine_output(engine_buffer);
+                    engine_buf_len = 0;
+                }
+            } else if (tmp[i] != '\r') {
+                if (engine_buf_len < (int)sizeof(engine_buffer) - 1) {
+                    engine_buffer[engine_buf_len++] = tmp[i];
+                } else {
+                    // Prevent deadlocks: Flush line if it somehow overflows buffer limit
+                    engine_buffer[engine_buf_len] = '\0';
+                    process_engine_output(engine_buffer);
+                    engine_buf_len = 0;
+                    engine_buffer[engine_buf_len++] = tmp[i];
+                }
+            }
         }
-    }
-
-    char *line_start = engine_buffer;
-    char *newline;
-    while ((newline = strchr(line_start, '\n')) != NULL) {
-        *newline = '\0';
-        process_engine_output(line_start);
-        line_start = newline + 1;
-    }
-    int consumed = line_start - engine_buffer;
-    if (consumed > 0) {
-        memmove(engine_buffer, line_start, engine_buf_len - consumed);
-        engine_buf_len -= consumed;
-        engine_buffer[engine_buf_len] = '\0';
     }
 }
 
