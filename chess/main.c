@@ -528,6 +528,39 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 void draw_ui() {
     printf("\033[H\r\n"); // Place cursor top-left (no full clear to prevent flickering)
 
+    // 1. Unified Game Header (Status, Player Modes & Time-Control combined)
+    const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
+    int king = find_king(&current_state, current_state.turn);
+    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
+    int has_mov = has_legal_moves(&current_state);
+    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
+    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
+
+    printf("  ");
+    if (current_state.halfmoves >= 100) {
+        printf("\033[1;36mDRAW (50-move rule)\033[0m");
+    } else if (!has_mov) {
+        if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
+        else printf("\033[1;36mSTALEMATE!\033[0m");
+    } else if (is_ch) {
+        printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
+    } else {
+        printf("%s's Turn", turn_str);
+    }
+    printf(" | W:%s B:%s", w_play, b_play);
+
+    const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
+    printf(" | %s", types[time_control_type]);
+    if (time_control_type == 0) {
+        printf(" (%d ms)", time_control_val);
+    } else if (time_control_type == 1) {
+        printf(" (depth %d)", time_control_val);
+    } else {
+        printf(" (%d nodes)", time_control_val);
+    }
+    printf("\033[K\r\n\r\n");
+
+    // 2. Column Coordinates Header
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h\033[K\r\n");
     } else {
@@ -581,9 +614,9 @@ void draw_ui() {
             if (is_cursor) {
                 bg_color = "\033[48;5;208m"; // Bright orange for active cursor
             } else if (is_selected) {
-                bg_color = "\033[48;5;34m";  // Green highlight for the selected piece
+                bg_color = "\033[48;5;34m";  // Green highlight for selected piece
             } else if (sq == king_in_check) {
-                bg_color = "\033[48;5;196m"; // Bright red highlight for the king in check
+                bg_color = "\033[48;5;196m"; // Bright red highlight for king in check
             } else if (is_prev_move) {
                 bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; // Sky/Steel Blue for previous moves
             } else if (is_legal_dest) {
@@ -629,60 +662,8 @@ void draw_ui() {
 
 void print_side_panel(int r) {
     printf("   ");
-    switch (r) {
-        case 0: {
-            const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
-            int king = find_king(&current_state, current_state.turn);
-            int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-            int has_mov = has_legal_moves(&current_state);
-            const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
-            const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-
-            printf("\033[1;37mSTATUS:\033[0m ");
-            if (current_state.halfmoves >= 100) {
-                printf("\033[1;36mDRAW (50-move rule)\033[0m");
-            } else if (!has_mov) {
-                if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
-                else printf("\033[1;36mSTALEMATE!\033[0m");
-            } else if (is_ch) {
-                printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
-            } else {
-                printf("%s's Turn", turn_str);
-            }
-            printf(" | \033[1;37mPLAYERS:\033[0m W:%s B:%s", w_play, b_play);
-            break;
-        }
-        case 1: {
-            const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
-            printf("\033[1;37mSETTINGS:\033[0m %s", types[time_control_type]);
-            if (time_control_type == 0) {
-                printf(" (%d ms)", time_control_val);
-            } else if (time_control_type == 1) {
-                printf(" (depth %d)", time_control_val);
-            } else {
-                printf(" (%d nodes)", time_control_val);
-            }
-            break;
-        }
-        case 2:
-            print_recent_moves(0);
-            break;
-        case 3:
-            print_recent_moves(1);
-            break;
-        case 4:
-            print_recent_moves(2);
-            break;
-        case 5:
-            print_recent_moves(3);
-            break;
-        case 6:
-            print_recent_moves(4);
-            break;
-        case 7:
-            print_recent_moves(5);
-            break;
-    }
+    // All 8 ranks are now dedicated to printing moves sequentially
+    print_recent_moves(r);
 }
 
 void print_recent_moves(int row) {
@@ -691,8 +672,8 @@ void print_recent_moves(int row) {
         return; // Render completely blank rows when history is cleared
     }
     int start_move = 1;
-    if (total_full_moves > 6) {
-        start_move = total_full_moves - 5;
+    if (total_full_moves > 8) {
+        start_move = total_full_moves - 7;
     }
     int display = start_move + row;
     if (display > total_full_moves) {
@@ -702,7 +683,7 @@ void print_recent_moves(int row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    printf("   %d. ", display);
+    printf("   %2d. ", display);
     if (w_idx < history_count) {
         char w_str[10];
         move_to_uci(move_history[w_idx], w_str);
