@@ -654,8 +654,7 @@ void print_side_panel(int r) {
 void print_recent_moves(int row) {
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) {
-        if (row == 0) printf("   (No moves registered)");
-        return;
+        return; // Blank when no moves are registered
     }
     int start_move = 1;
     if (total_full_moves > 5) {
