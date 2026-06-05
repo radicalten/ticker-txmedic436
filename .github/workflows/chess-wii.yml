@@ -1,0 +1,30 @@
+name: Wii-curl-v2
+on:
+  push:
+    branches:
+    - master
+jobs:
+  build-wii:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Download custom packages
+      run: |
+          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/libwiisocket-0.1-1-any.pkg.tar.gz -o libwiisocket-0.1-1-any.pkg.tar.gz
+          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-curl-8.16.0-1-any.pkg.tar.gz -o wii-curl-8.16.0-1-any.pkg.tar.gz
+          curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/wii-mbedtls-3.6.4-1-any.pkg.tar.gz -o wii-mbedtls-3.6.4-1-any.pkg.tar.gz
+    - name: Install custom packages
+      run: |
+            sudo dkp-pacman -U --noconfirm wii-curl-8.16.0-1-any.pkg.tar.gz libwiisocket-0.1-1-any.pkg.tar.gz wii-mbedtls-3.6.4-1-any.pkg.tar.gz
+            # sudo dkp-pacman -Ql 
+    - name: Compile
+      run: |
+        make -f Makefile-wii9-7
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: wii-curl
+        path: |
+          *.dol
