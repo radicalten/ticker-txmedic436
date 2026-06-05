@@ -44,7 +44,7 @@ int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
 int time_control_val = 1;    // Default: 1 ms
 
 // EDIT THIS LINE TO CHANGE ENGINE PATH IN SOURCE CODE
-char engine_path[256] = "./ucichess";
+char engine_path[256] = "ucichess";
 
 int engine_in[2] = {-1, -1};
 int engine_out[2] = {-1, -1};
