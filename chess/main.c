@@ -494,11 +494,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 
 // GUI Drawing and Terminal ANSI Output
 void draw_ui() {
-    printf("\033[H"); // Place cursor top-left (no clear to avoid flickering)
-
-    printf("\033[38;5;220m  =================================================\033[0m\r\n");
-    printf("\033[38;5;220m               USCF TERMINAL CHESS GUI             \033[0m\r\n");
-    printf("\033[38;5;220m  =================================================\033[0m\r\n\r\n");
+    printf("\033[H\r\n"); // Place cursor top-left (no full clear to prevent flickering)
 
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h\r\n");
@@ -561,7 +557,7 @@ void draw_ui() {
             } else if (is_legal_dest) {
                 bg_color = is_light ? "\033[48;5;153m" : "\033[48;5;111m"; // Slate blue highlights for legal destination squares
             } else {
-                bg_color = is_light ? "\033[48;5;223m" : "\033[48;5;108m"; // Olive / Peach retro board coloring
+                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // warm wood tones (Light Maple vs Dark Walnut)
             }
 
             const char *piece_str = " ";
@@ -602,68 +598,72 @@ void draw_ui() {
 void print_side_panel(int r) {
     printf("   ");
     switch (r) {
-        case 0:
-            printf("\033[1;37mGAME STATUS:\033[0m");
-            break;
-        case 1: {
+        case 0: {
             const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
             int king = find_king(&current_state, current_state.turn);
             int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
             int has_mov = has_legal_moves(&current_state);
+            const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
+            const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
 
+            printf("\033[1;37mSTATUS:\033[0m ");
             if (!has_mov) {
-                if (is_ch) printf(" Turn: %s (\033[1;31mCHECKMATE!\033[0m)", turn_str);
-                else printf(" Turn: %s (\033[1;36mSTALEMATE!\033[0m)", turn_str);
+                if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
+                else printf("\033[1;36mSTALEMATE!\033[0m");
             } else if (is_ch) {
-                printf(" Turn: %s (\033[1;31mCHECK!\033[0m)", turn_str);
+                printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
             } else {
-                printf(" Turn: %s", turn_str);
+                printf("%s's Turn", turn_str);
+            }
+            printf(" | \033[1;37mPLAYERS:\033[0m W:%s B:%s", w_play, b_play);
+            break;
+        }
+        case 1: {
+            const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
+            printf("\033[1;37mSETTINGS:\033[0m %s", types[time_control_type]);
+            if (time_control_type == 0) {
+                printf(" (%d ms)", time_control_val);
+            } else if (time_control_type == 1) {
+                printf(" (depth %d)", time_control_val);
+            } else {
+                printf(" (%d nodes)", time_control_val);
             }
             break;
         }
-        case 2: {
-            const char *w_play = (user_side == 1 || user_side == 0) ? "Human" : "Engine";
-            const char *b_play = (user_side == -1 || user_side == 0) ? "Human" : "Engine";
-            printf(" Players: White: \033[33m%s\033[0m | Black: \033[35m%s\033[0m", w_play, b_play);
-            break;
-        }
-        case 3:
+        case 2:
             printf("\033[1;37mRECENT MOVES:\033[0m");
             break;
-        case 4:
+        case 3:
             print_recent_moves(0);
             break;
-        case 5:
+        case 4:
             print_recent_moves(1);
             break;
+        case 5:
+            print_recent_moves(2);
+            break;
         case 6:
-            printf("\033[1;37mSETTINGS:\033[0m");
+            print_recent_moves(3);
             break;
-        case 7: {
-            const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
-            if (time_control_type == 0) {
-                printf(" Mode: %s (%d ms)", types[time_control_type], time_control_val);
-            } else if (time_control_type == 1) {
-                printf(" Mode: %s (depth %d)", types[time_control_type], time_control_val);
-            } else {
-                printf(" Mode: %s (%d nodes)", types[time_control_type], time_control_val);
-            }
+        case 7:
+            print_recent_moves(4);
             break;
-        }
     }
 }
 
 void print_recent_moves(int row) {
-    if (history_count == 0) {
-        printf("   (No moves registered)");
+    int total_full_moves = (history_count + 1) / 2;
+    if (total_full_moves == 0) {
+        if (row == 0) printf("   (No moves registered)");
         return;
     }
-    int last_full = (history_count - 1) / 2 + 1;
-    int display = last_full - 1 + row;
-
-    if (display < 1) {
-        printf("   ...");
-        return;
+    int start_move = 1;
+    if (total_full_moves > 5) {
+        start_move = total_full_moves - 4;
+    }
+    int display = start_move + row;
+    if (display > total_full_moves) {
+        return; // Beyond currently played move depth
     }
 
     int w_idx = (display - 1) * 2;
@@ -692,6 +692,11 @@ void print_recent_moves(int row) {
 
 // GUI Action / Setting Handlers
 void handle_select() {
+    // If checkmate or stalemate has been reached, do not process selections
+    if (!has_legal_moves(&current_state)) {
+        return;
+    }
+
     int sq = screen_to_board_sq(cursor_r, cursor_c);
     if (selected_sq == -1) {
         int p = current_state.board[sq];
@@ -772,7 +777,6 @@ void adjust_time_control() {
 }
 
 void handle_change_engine_path() {
-    //disable_raw_mode();
     printf("\r\n\033[1;33mEnter UCI Engine Path (e.g., /usr/local/bin/stockfish):\033[0m\r\n> ");
     fflush(stdout);
 
@@ -862,15 +866,15 @@ int main() {
 
     while (1) {
         int engine_active = 0;
-        if (user_side == 2) engine_active = 1;
-        else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
-        else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
+        if (has_legal_moves(&current_state)) {
+            if (user_side == 2) engine_active = 1;
+            else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
+            else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
+        }
 
         if (engine_active && !engine_thinking && engine_pid > 0) {
-            if (has_legal_moves(&current_state)) {
-                engine_thinking = 1;
-                trigger_engine_move();
-            }
+            engine_thinking = 1;
+            trigger_engine_move();
         }
 
         // Detect engine process death
