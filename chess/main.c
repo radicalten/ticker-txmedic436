@@ -557,7 +557,7 @@ void draw_ui() {
             } else if (is_legal_dest) {
                 bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; // Soft greens for legal destinations
             } else {
-                bg_color = is_light ? "\033[48;5;223m" : "\033[48;5;172m"; // Wood tones (Light Maple vs Dark Walnut)
+                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // Wood tones (Light Maple vs Dark Walnut)
             }
 
             const char *piece_str = " ";
