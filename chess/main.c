@@ -579,7 +579,7 @@ void draw_ui() {
 
         printf(" %d ", rank_lbl);
         print_side_panel(r);
-        printf("\033[K\r\n"); // \033[K wipes leftover terminal residues to prevent "text ghosts"
+        printf("\033[K\r\n"); // Wipe leftover characters to prevent screen residue
     }
 
     if (board_orientation == 1) {
@@ -654,7 +654,7 @@ void print_side_panel(int r) {
 void print_recent_moves(int row) {
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) {
-        return; // Left blank when no moves are registered
+        return; // Render completely blank rows when history is cleared
     }
     int start_move = 1;
     if (total_full_moves > 6) {
@@ -662,7 +662,7 @@ void print_recent_moves(int row) {
     }
     int display = start_move + row;
     if (display > total_full_moves) {
-        return; // Clear row if it exceeds current history count
+        return; // Keep rows empty if they exceed the current history depth
     }
 
     int w_idx = (display - 1) * 2;
@@ -727,7 +727,10 @@ void handle_select() {
 }
 
 void handle_undo() {
-    if (engine_thinking) return;
+    if (engine_thinking) {
+        send_to_engine("stop\n");
+        engine_thinking = 0;
+    }
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -739,6 +742,7 @@ void handle_undo() {
 
 void handle_reset_board() {
     if (engine_thinking) {
+        send_to_engine("stop\n");
         engine_thinking = 0;
     }
     init_board(&current_state);
@@ -752,7 +756,10 @@ void handle_reset_board() {
 }
 
 void handle_switch_sides() {
-    if (engine_thinking) return;
+    if (engine_thinking) {
+        send_to_engine("stop\n");
+        engine_thinking = 0;
+    }
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
