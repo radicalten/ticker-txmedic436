@@ -41,7 +41,7 @@ int board_orientation = 1; // 1 = White on bottom, -1 = Black on bottom
 int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
 
 int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1000; // Default: 1000 ms
+int time_control_val = 1;    // Default: 1 ms
 
 // EDIT THIS LINE TO CHANGE ENGINE PATH IN SOURCE CODE
 char engine_path[256] = "stockfish";
@@ -792,12 +792,21 @@ void handle_switch_sides() {
 }
 
 void adjust_time_control() {
-    if (time_control_type == 0) { // Time-Limit (1k, 2k, 3k, 5k, 10k ms)
-        if (time_control_val == 1000) time_control_val = 2000;
-        else if (time_control_val == 2000) time_control_val = 3000;
-        else if (time_control_val == 3000) time_control_val = 5000;
-        else if (time_control_val == 5000) time_control_val = 10000;
-        else time_control_val = 1000;
+    if (time_control_type == 0) { // Time-Limit
+        int time_list[] = {1, 10, 50, 100, 500, 1000, 1500, 2000, 3000, 5000, 10000};
+        int time_count = sizeof(time_list) / sizeof(time_list[0]);
+        int found_idx = -1;
+        for (int i = 0; i < time_count; i++) {
+            if (time_control_val == time_list[i]) {
+                found_idx = i;
+                break;
+            }
+        }
+        if (found_idx == -1 || found_idx == time_count - 1) {
+            time_control_val = time_list[0];
+        } else {
+            time_control_val = time_list[found_idx + 1];
+        }
     } else if (time_control_type == 1) { // Depth-Limit (1-20)
         time_control_val = (time_control_val % 20) + 1;
     } else { // Node-Limit
@@ -845,7 +854,7 @@ void handle_input() {
             handle_switch_sides();
         } else if (c == 't' || c == 'T') {
             time_control_type = (time_control_type + 1) % 3;
-            time_control_val = (time_control_type == 0) ? 1000 : (time_control_type == 1 ? 8 : 131072);
+            time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
         } else if (c == 'v' || c == 'V') {
             adjust_time_control();
         } else if (c == 'q' || c == 'Q') {
