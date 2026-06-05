@@ -119,7 +119,9 @@ void start_engine(const char *path) {
 
 void send_to_engine(const char *cmd) {
     if (engine_pid > 0) {
-        write(engine_in[1], cmd, strlen(cmd));
+        // Prevent writing to dead pipelines from triggering unhandled signals
+        int ignored = write(engine_in[1], cmd, strlen(cmd));
+        (void)ignored;
     }
 }
 
@@ -176,16 +178,29 @@ void push_state(const BoardState *state, Move m) {
     }
 }
 
-// UCI Position Command Builder
+// UCI Position Command Builder (With overflow prevention)
 void trigger_engine_move() {
-    char cmd[8192] = "position startpos moves";
+    static char cmd[32768]; // Allocate statically to prevent stack overflows
+    cmd[0] = '\0';
+    strcpy(cmd, "position startpos moves");
+    
+    int len = strlen(cmd);
     for (int i = 0; i < history_count; i++) {
         char uci_m[10];
         move_to_uci(move_history[i], uci_m);
-        strcat(cmd, " ");
-        strcat(cmd, uci_m);
+        int move_len = strlen(uci_m);
+        
+        // Ensure we don't write outside the static buffer boundary
+        if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) {
+            break; 
+        }
+        cmd[len++] = ' ';
+        strcpy(cmd + len, uci_m);
+        len += move_len;
     }
-    strcat(cmd, "\n");
+    cmd[len++] = '\n';
+    cmd[len] = '\0';
+    
     send_to_engine(cmd);
 
     char go_cmd[256];
@@ -210,7 +225,8 @@ void process_engine_output(char *line) {
 
     if (strncmp(line, "bestmove", 8) == 0) {
         char move_str[16];
-        if (sscanf(line, "bestmove %s", move_str) == 1) {
+        // Enforce safe width limits during string parse scans
+        if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
                 return;
@@ -244,7 +260,6 @@ void read_from_engine() {
                 if (engine_buf_len < (int)sizeof(engine_buffer) - 1) {
                     engine_buffer[engine_buf_len++] = tmp[i];
                 } else {
-                    // Prevent deadlocks: Flush line if it somehow overflows buffer limit
                     engine_buffer[engine_buf_len] = '\0';
                     process_engine_output(engine_buffer);
                     engine_buf_len = 0;
@@ -850,6 +865,7 @@ void init_board(BoardState *state) {
 int main() {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle engine exits gracefully
     atexit(cleanup);
 
     init_board(&current_state);
