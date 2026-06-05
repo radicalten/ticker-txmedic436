@@ -1,7 +1,7 @@
 CC		:= cc
-INCLUDES += -I./chess2
-CFLAGS 	:= -O3 -flto \
-$(INCLUDES)
+#INCLUDES += -I./chess2
+CFLAGS 	:= -O3 -flto 
+#$(INCLUDES)
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
