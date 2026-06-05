@@ -1,5 +1,5 @@
 CC		:= cc
-INCLUDES += -I../chess2
+INCLUDES += -I./chess2
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES)
 LDFLAGS := $(CFLAGS) \
