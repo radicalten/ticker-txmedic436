@@ -497,9 +497,9 @@ void draw_ui() {
     printf("\033[H\r\n"); // Place cursor top-left (no full clear to prevent flickering)
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h\r\n");
+        printf("     a  b  c  d  e  f  g  h\033[K\r\n");
     } else {
-        printf("     h  g  f  e  d  c  b  a\r\n");
+        printf("     h  g  f  e  d  c  b  a\033[K\r\n");
     }
 
     // Determine if either king is in check
@@ -579,19 +579,19 @@ void draw_ui() {
 
         printf(" %d ", rank_lbl);
         print_side_panel(r);
-        printf("\r\n");
+        printf("\033[K\r\n"); // \033[K wipes leftover terminal residues to prevent "text ghosts"
     }
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h\r\n\r\n");
+        printf("     a  b  c  d  e  f  g  h\033[K\r\n\r\n");
     } else {
-        printf("     h  g  f  e  d  c  b  a\r\n\r\n");
+        printf("     h  g  f  e  d  c  b  a\033[K\r\n\r\n");
     }
 
-    printf(" \033[38;5;245mControls: [Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\r\n");
-    printf("           [O] Flip Board | [S] Switch Sides | [T] Change Time Control\r\n");
-    printf("           [V] Adjust Value | [E] Update Engine Path | [Q] Quit\033[0m\r\n\r\n");
-    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\r\n", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    printf(" \033[38;5;245mControls: [Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
+    printf("           [O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[K\r\n");
+    printf("           [V] Adjust Value | [E] Update Engine Path | [Q] Quit\033[0m\033[K\r\n\r\n");
+    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
     fflush(stdout);
 }
 
@@ -654,7 +654,7 @@ void print_side_panel(int r) {
 void print_recent_moves(int row) {
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) {
-        return; // Blank when no moves are registered
+        return; // Left blank when no moves are registered
     }
     int start_move = 1;
     if (total_full_moves > 6) {
@@ -662,7 +662,7 @@ void print_recent_moves(int row) {
     }
     int display = start_move + row;
     if (display > total_full_moves) {
-        return; // Beyond currently played move depth
+        return; // Clear row if it exceeds current history count
     }
 
     int w_idx = (display - 1) * 2;
