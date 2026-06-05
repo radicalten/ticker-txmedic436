@@ -696,7 +696,7 @@ void draw_ui() {
     printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
-    printf(" \033[38;5;248mEngine Status:\033[0m (%s)", (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
     if (engine_pid > 0 && engine_nps > 0) {
         if (engine_nps >= 1000000) {
             printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
