@@ -19,8 +19,12 @@
 #define QUEEN 5
 #define KING 6
 
+/* Player Side State Values */
 #define WHITE 8
 #define BLACK 16
+#define BOTH 24
+#define NONE 32
+
 #define COLOR_MASK (WHITE | BLACK)
 #define PIECE_MASK 7
 
