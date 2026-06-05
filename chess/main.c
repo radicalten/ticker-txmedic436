@@ -43,7 +43,9 @@ int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI 
 int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
 int time_control_val = 2000; // Default values
 
+// EDIT THIS LINE TO CHANGE ENGINE PATH IN SOURCE CODE
 char engine_path[256] = "stockfish";
+
 int engine_in[2] = {-1, -1};
 int engine_out[2] = {-1, -1};
 pid_t engine_pid = -1;
@@ -590,7 +592,7 @@ void draw_ui() {
 
     printf(" \033[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
     printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[V] Adjust Value | [E] Update Engine Path | [Q] Quit\033[0m\033[K\r\n\r\n");
+    printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
     printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
     fflush(stdout);
 }
@@ -782,27 +784,6 @@ void adjust_time_control() {
     }
 }
 
-void handle_change_engine_path() {
-    printf("\r\n\033[1;33mEnter UCI Engine Path (e.g., /usr/local/bin/stockfish):\033[0m\r\n> ");
-    fflush(stdout);
-
-    char path[256];
-    if (fgets(path, sizeof(path), stdin)) {
-        path[strcspn(path, "\r\n")] = 0;
-        if (strlen(path) > 0) {
-            if (engine_pid > 0) {
-                kill(engine_pid, SIGTERM);
-                engine_pid = -1;
-                engine_thinking = 0;
-            }
-            strcpy(engine_path, path);
-            start_engine(engine_path);
-        }
-    }
-    enable_raw_mode();
-    printf("\033[H\033[2J"); // Re-clear screen safely
-}
-
 void handle_input() {
     char c;
     if (read(STDIN_FILENO, &c, 1) == 1) {
@@ -833,8 +814,6 @@ void handle_input() {
             time_control_val = (time_control_type == 0) ? 2000 : (time_control_type == 1 ? 8 : 100000);
         } else if (c == 'v' || c == 'V') {
             adjust_time_control();
-        } else if (c == 'e' || c == 'E') {
-            handle_change_engine_path();
         } else if (c == 'q' || c == 'Q') {
             exit(0);
         }
