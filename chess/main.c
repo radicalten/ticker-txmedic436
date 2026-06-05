@@ -588,9 +588,9 @@ void draw_ui() {
         printf("     h  g  f  e  d  c  b  a\033[K\r\n\r\n");
     }
 
-    printf(" \033[38;5;245mControls: [Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
-    printf("           [O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[K\r\n");
-    printf("           [V] Adjust Value | [E] Update Engine Path | [Q] Quit\033[0m\033[K\r\n\r\n");
+    printf(" \033[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
+    printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
+    printf(" \033[38;5;245m[V] Adjust Value | [E] Update Engine Path | [Q] Quit\033[0m\033[K\r\n\r\n");
     printf(" \033[38;5;248mEngine Status:\033[0m %s (%s)\033[K\r\n", engine_path, (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
     fflush(stdout);
 }
