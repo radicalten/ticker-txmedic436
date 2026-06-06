@@ -1,7 +1,8 @@
 /*
- * mcu-max UCI chess interface example
+ * mcu-max UCI chess interface example - Ported to Nintendo Wii
  *
  * (C) 2022-2024 Gissio
+ * Wii Port by Assistant
  *
  * License: MIT
  */
@@ -9,11 +10,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h> // Added for measuring search time
+#include <stdbool.h>
+#include <stdint.h>
+
+// Wii specific headers
+#include <gccore.h>
+#include <wiiuse/wpad.h>
+#include <wiikeyboard/keyboard.h>
 
 #include "mcu-max.h"
 
 #define MAIN_VALID_MOVES_NUM 512
+
+// Wii video buffer pointer and display mode setup
+static void *xfb = NULL;
+static GXRModeObj *rmode = NULL;
+
+void init_wii_hardware()
+{
+    // Initialize Wii Video subsystem
+    VIDEO_Init();
+    
+    // Obtain the preferred video mode
+    rmode = VIDEO_GetPreferredMode(NULL);
+    
+    // Allocate memory for the double frame buffer
+    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    
+    // Set up standard console output to the screen
+    console_init(xfb, 20, 20, rmode->fbWidth, rmode->xfbHeight, rmode->fbWidth * VI_DISPLAY_PIX_SZ);
+    
+    // Apply video configurations
+    VIDEO_Configure(rmode);
+    VIDEO_SetNextFramebuffer(xfb);
+    VIDEO_SetBlack(FALSE);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (rmode->viTVMode & VI_NON_INTERLACE)
+        VIDEO_WaitVSync();
+
+    // Initialize Wii Remote (WPAD)
+    WPAD_Init();
+
+    // Initialize USB Keyboard (redirects standard input/stdin to USB keyboard)
+    KEYBOARD_Init(NULL);
+}
 
 void print_board()
 {
@@ -86,7 +127,7 @@ bool send_uci_command(char *line)
 
     if (!strcmp(token, "uci"))
     {
-        printf("id name " MCUMAX_ID "\n");
+        printf("id name " MCUMAX_ID " (Wii)\n");
         printf("id author " MCUMAX_AUTHOR "\n");
         printf("uciok\n");
     }
@@ -114,7 +155,7 @@ bool send_uci_command(char *line)
         int fen_index = 0;
         char fen_string[256];
 
-        while (token = strtok(NULL, " \n"))
+        while ((token = strtok(NULL, " \n")))
         {
             if (fen_index)
             {
@@ -150,15 +191,15 @@ bool send_uci_command(char *line)
     }
     else if (!strcmp(token, "go"))
     {
-        // 1. Record start time
-        clock_t start_time = clock();
+        // 1. Record start time (using Wii-native high-res hardware timer)
+        u64 start_time = gettime();
 
         // 2. Perform search
         mcumax_move move = mcumax_search_best_move(1000000, 30);
 
         // 3. Record end time and calculate elapsed seconds
-        clock_t end_time = clock();
-        double elapsed_seconds = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+        u64 end_time = gettime();
+        double elapsed_seconds = (double)diff_usec(start_time, end_time) / 1000000.0;
 
         // Prevent division-by-zero or excessively high NPS on virtually instant moves
         if (elapsed_seconds < 0.001) {
@@ -169,7 +210,7 @@ bool send_uci_command(char *line)
         uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
         uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
 
-        // 4. Output the UCI info data (required by GUIs to track engine speed)
+        // 4. Output the UCI info data
         printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
 
         mcumax_play_move(move);
@@ -188,16 +229,35 @@ bool send_uci_command(char *line)
 
 int main()
 {
+    // Set up standard video console and input devices
+    init_wii_hardware();
+
     mcumax_init();
+
+    printf("mcu-max Chess Interface on Wii Ready.\n");
+    printf("Plug in a USB Keyboard to type commands.\n");
+    printf("Press HOME on Wii Remote to exit.\n\n");
 
     while (true)
     {
+        // Scan standard Wiimote inputs
+        WPAD_ScanPads();
+        u32 pressed = WPAD_ButtonsDown(0);
+        if (pressed & WPAD_BUTTON_HOME) {
+            break; // Return back to HBC/Loader
+        }
+
         fflush(stdout);
 
         char line[65536];
-        fgets(line, sizeof(line), stdin);
-
-        if (send_uci_command(line))
-            break;
+        
+        // This blocks until input is received from standard input (USB Keyboard)
+        if (fgets(line, sizeof(line), stdin))
+        {
+            if (send_uci_command(line))
+                break;
+        }
     }
+
+    return 0;
 }
