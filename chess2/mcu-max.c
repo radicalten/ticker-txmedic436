@@ -920,3 +920,9 @@ void mcumax_stop_search(void)
 {
     mcumax.stop_search = true;
 }
+
+/* Added function to expose node count for NPS updates */
+uint32_t mcumax_get_node_count(void)
+{
+    return mcumax.node_count;
+}
