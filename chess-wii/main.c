@@ -122,7 +122,7 @@ static uint64_t search_start_time_ms;
 static uint32_t search_time_limit_ms;
 static bool time_limit_enabled;
 
-// Forward declarations (GUI)
+// Unified GUI and Core Forward Declarations
 void init_board(BoardState *state);
 int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
@@ -132,10 +132,23 @@ void print_side_panel_line(int panel_row);
 void print_recent_moves(int row);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
-int get_promo_choice();
-void save_state();
-int load_state();
-void trigger_engine_move();
+int get_promo_choice(void);
+void save_state(void);
+int load_state(void);
+void trigger_engine_move(void);
+void init_wii_console(void);
+int screen_to_board_sq(int r, int c);
+void move_to_uci(Move m, char *buf);
+Move uci_to_move(const char *str);
+void push_state(const BoardState *state, Move m);
+void draw_ui(void);
+void handle_select(void);
+void handle_undo(void);
+void handle_reset_board(void);
+void handle_switch_sides(void);
+void adjust_time_control(void);
+void handle_input(void);
+void board_to_fen(const BoardState *state, char *fen);
 
 // Forward declarations (Engine API)
 void mcumax_init(void);
