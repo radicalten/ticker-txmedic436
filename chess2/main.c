@@ -969,10 +969,30 @@ uint32_t mcumax_get_node_count(void)
 
 
 /* ==========================================================================
- * PART 3: UCI CHESS INTERFACE EXAMPLE (Formerly File 3)
+ * PART 3: UCI CHESS INTERFACE EXAMPLE (With Dynamic Time Controls)
  * ========================================================================== */
 
 #define MAIN_VALID_MOVES_NUM 512
+
+// Globals used by the timing logic in the search callback
+static clock_t search_start_time;
+static uint32_t search_time_limit_ms;
+static bool time_limit_enabled;
+
+// Custom callback function to dynamically stop search once limits are met
+void dynamic_search_time_callback(void *userdata)
+{
+    if (time_limit_enabled)
+    {
+        clock_t current_clock = clock();
+        double elapsed_ms = ((double)(current_clock - search_start_time) / CLOCKS_PER_SEC) * 1000.0;
+        
+        if (elapsed_ms >= (double)search_time_limit_ms)
+        {
+            mcumax_stop_search();
+        }
+    }
+}
 
 void print_board()
 {
@@ -1108,17 +1128,107 @@ bool send_uci_command(char *line)
     }
     else if (!strcmp(token, "go"))
     {
-        // 1. Record start time
-        clock_t start_time = clock();
+        // Default search targets when limits are omitted
+        uint32_t depth_max = 30;
+        uint32_t node_max = 100000000;
+        
+        search_time_limit_ms = 0;
+        time_limit_enabled = false;
+
+        uint32_t wtime = 0, btime = 0, winc = 0, binc = 0;
+        bool has_wtime = false, has_btime = false;
+
+        // Parse standard UCI sub-commands from the "go" string parameters
+        while ((token = strtok(NULL, " \n")))
+        {
+            if (!strcmp(token, "infinite"))
+            {
+                depth_max = MCUMAX_DEPTH_MAX;
+                node_max = 0xFFFFFFFF;
+                time_limit_enabled = false;
+            }
+            else if (!strcmp(token, "depth"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) depth_max = atoi(val);
+            }
+            else if (!strcmp(token, "nodes"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) node_max = strtoul(val, NULL, 10);
+            }
+            else if (!strcmp(token, "movetime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    search_time_limit_ms = atoi(val);
+                    time_limit_enabled = true;
+                }
+            }
+            else if (!strcmp(token, "wtime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    wtime = atoi(val);
+                    has_wtime = true;
+                }
+            }
+            else if (!strcmp(token, "btime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    btime = atoi(val);
+                    has_btime = true;
+                }
+            }
+            else if (!strcmp(token, "winc"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) winc = atoi(val);
+            }
+            else if (!strcmp(token, "binc"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) binc = atoi(val);
+            }
+        }
+
+        // Apply classic tournament time control formula if wtime/btime parameter is provided
+        if (!time_limit_enabled)
+        {
+            uint8_t active_side = mcumax_get_current_side();
+            
+            if (active_side == MCUMAX_BOARD_WHITE && has_wtime)
+            {
+                // Allocate 4% of total time plus 50% of increment
+                search_time_limit_ms = (wtime / 25) + (winc / 2);
+                time_limit_enabled = true;
+            }
+            else if (active_side == MCUMAX_BOARD_BLACK && has_btime)
+            {
+                search_time_limit_ms = (btime / 25) + (binc / 2);
+                time_limit_enabled = true;
+            }
+        }
+
+        // Keep bounds safe to prevent division/timer crash (minimum allocation 20ms)
+        if (time_limit_enabled && (search_time_limit_ms < 20))
+        {
+            search_time_limit_ms = 20;
+        }
+
+        // 1. Setup the active timers
+        search_start_time = clock();
+        mcumax_set_callback(dynamic_search_time_callback, NULL);
 
         // 2. Perform search
-        mcumax_move move = mcumax_search_best_move(1000000, 30);
+        mcumax_move move = mcumax_search_best_move(node_max, depth_max);
 
-        // 3. Record end time and calculate elapsed seconds
+        // 3. Measure final time metrics
         clock_t end_time = clock();
-        double elapsed_seconds = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+        double elapsed_seconds = (double)(end_time - search_start_time) / CLOCKS_PER_SEC;
 
-        // Prevent division-by-zero or excessively high NPS on virtually instant moves
+        // Prevent division-by-zero on instant moves
         if (elapsed_seconds < 0.001) {
             elapsed_seconds = 0.001; 
         }
@@ -1127,7 +1237,7 @@ bool send_uci_command(char *line)
         uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
         uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
 
-        // 4. Output the UCI info data (required by GUIs to track engine speed)
+        // 4. Output standard UCI engine information
         printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
 
         mcumax_play_move(move);
