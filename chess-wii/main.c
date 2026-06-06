@@ -110,17 +110,23 @@ int selected_sq = -1;
 int board_orientation = 1; // 1 = White on bottom, -1 = Black on bottom
 int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
 
-int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1000; // Default: 1000 ms
+// Default Time Control: Depth 4
+int time_control_type = 1;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
+int time_control_val = 4;    // Default: depth 4
 
 // Wii Console Globals
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
 
-// Global Engine State variables
+// Global Engine State/Metric variables
 static uint64_t search_start_time_ms;
 static uint32_t search_time_limit_ms;
 static bool time_limit_enabled;
+
+static uint64_t last_ui_update_ms = 0;
+static uint32_t last_search_nodes = 0;
+static uint32_t last_search_nps = 0;
+static uint32_t last_search_time_ms = 0;
 
 // Unified GUI and Core Forward Declarations
 void init_board(BoardState *state);
@@ -149,6 +155,7 @@ void handle_switch_sides(void);
 void adjust_time_control(void);
 void handle_input(void);
 void board_to_fen(const BoardState *state, char *fen);
+void dynamic_search_time_callback(void *userdata);
 
 // Forward declarations (Engine API)
 void mcumax_init(void);
@@ -727,13 +734,29 @@ void mcumax_stop_search(void)
 
 void dynamic_search_time_callback(void *userdata)
 {
+    uint64_t now_ms = ticks_to_millisecs(gettime());
+    uint64_t elapsed_ms = now_ms - search_start_time_ms;
+
     if (time_limit_enabled)
     {
-        uint64_t elapsed_ms = ticks_to_millisecs(gettime()) - search_start_time_ms;
         if (elapsed_ms >= search_time_limit_ms)
         {
             mcumax_stop_search();
         }
+    }
+
+    // Refresh NPS visual statistics on terminal line safely every 100ms
+    if (now_ms - last_ui_update_ms >= 100)
+    {
+        last_ui_update_ms = now_ms;
+        double secs = (double)elapsed_ms / 1000.0;
+        uint32_t nps = 0;
+        if (secs > 0.05)
+        {
+            nps = (uint32_t)((double)mcumax.node_count / secs);
+        }
+        printf("\r  \033[1;32mEngine Calculating... Nodes: %u | NPS: %u\033[0m\033[K", mcumax.node_count, nps);
+        fflush(stdout);
     }
 }
 
@@ -827,13 +850,25 @@ void trigger_engine_move() {
         node_max = time_control_val;
     }
 
+    last_ui_update_ms = 0;
     search_start_time_ms = ticks_to_millisecs(gettime());
     mcumax_set_callback(dynamic_search_time_callback, NULL);
 
     // 4. Start search calculation in thread (zero display latency/reloads)
     mcumax_move best = mcumax_search_best_move(node_max, depth_max);
 
-    // 5. If valid move computed, convert structure maps back and play in GUI
+    // 5. Gather and store performance metrics for draw_ui display
+    uint64_t elapsed_ms = ticks_to_millisecs(gettime()) - search_start_time_ms;
+    double secs = (double)elapsed_ms / 1000.0;
+    last_search_nodes = mcumax.node_count;
+    last_search_time_ms = (uint32_t)elapsed_ms;
+    if (secs > 0.05) {
+        last_search_nps = (uint32_t)((double)mcumax.node_count / secs);
+    } else {
+        last_search_nps = 0;
+    }
+
+    // 6. If valid move computed, convert structure maps back and play in GUI
     if ((best.from != MCUMAX_SQUARE_INVALID) && (best.to != MCUMAX_SQUARE_INVALID)) {
         int from_sq = ((best.from >> 4) & 7) * 8 + (best.from & 7);
         int to_sq = ((best.to >> 4) & 7) * 8 + (best.to & 7);
@@ -1348,6 +1383,9 @@ void draw_ui() {
     printf(" \033[38;5;245m[2] Adjust Val\033[0m\033[K\r\n\r\n");
     
     printf(" \033[38;5;248mExecution Mode:\033[0m Seamless In-Memory AI Solver Active");
+    if (last_search_nodes > 0) {
+        printf(" (%u nodes, %u ms, %u NPS)", last_search_nodes, last_search_time_ms, last_search_nps);
+    }
     printf("\033[K\r\n\033[J");
     fflush(stdout);
 }
@@ -1549,7 +1587,7 @@ void handle_input() {
     }
     if (pressed & WPAD_BUTTON_1) {
         time_control_type = (time_control_type + 1) % 3;
-        time_control_val = (time_control_type == 0) ? 1000 : (time_control_type == 1 ? 5 : 4096);
+        time_control_val = (time_control_type == 0) ? 1000 : (time_control_type == 1 ? 4 : 4096);
         save_state();
     }
     if (pressed & WPAD_BUTTON_2) {
