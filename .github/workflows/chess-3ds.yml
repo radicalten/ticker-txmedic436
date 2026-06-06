@@ -9,12 +9,12 @@ jobs:
     container: devkitpro/devkitarm:latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
     - name: Compile
       run: |
         make -f Makefile-3ds-7
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: 3ds-curl
         path: |
