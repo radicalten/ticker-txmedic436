@@ -1,148 +1,930 @@
+/*
+ * mcu-max
+ * Chess game engine for low-resource MCUs
+ *
+ * (C) 2022-2024 Gissio
+ *
+ * License: MIT
+ *
+ * Based on micro-Max 4.8 by H.G. Muller.
+ * Compliant with FIDE laws (except for underpromotion).
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
+
+#ifdef __wii__
 #include <gccore.h>
 #include <wiiuse/wpad.h>
 #include <fat.h>
+#endif
 
-#define MAX_HISTORY 2048
+/* ==========================================================================
+ * PART 1: ENGINE DEFINITIONS
+ * ========================================================================== */
 
-// Board representation
+#define MCUMAX_ID "mcu-max 1.0.6"
+#define MCUMAX_AUTHOR "Gissio"
+
+#define MCUMAX_SQUARE_INVALID 0x80
+
+#define MCUMAX_MOVE_INVALID \
+    (mcumax_move) { MCUMAX_SQUARE_INVALID, MCUMAX_SQUARE_INVALID }
+
+typedef uint8_t mcumax_square;
+typedef uint8_t mcumax_piece;
+
+typedef struct
+{
+    mcumax_square from;
+    mcumax_square to;
+} mcumax_move;
+
+typedef void (*mcumax_callback)(void *);
+
+enum
+{
+    MCUMAX_EMPTY,
+    MCUMAX_PAWN_UPSTREAM,
+    MCUMAX_PAWN_DOWNSTREAM,
+    MCUMAX_KNIGHT,
+    MCUMAX_KING,
+    MCUMAX_BISHOP,
+    MCUMAX_ROOK,
+    MCUMAX_QUEEN,
+    MCUMAX_BLACK = 0x8,
+};
+
+uint32_t mcumax_get_node_count(void);
+void mcumax_init(void);
+void mcumax_set_fen_position(const char *value);
+mcumax_piece mcumax_get_piece(mcumax_square square);
+mcumax_piece mcumax_get_current_side(void);
+uint32_t mcumax_search_valid_moves(mcumax_move *buffer, uint32_t buffer_size);
+mcumax_move mcumax_search_best_move(uint32_t node_max, uint32_t depth_max);
+bool mcumax_play_move(mcumax_move move);
+void mcumax_set_callback(mcumax_callback callback, void *userdata);
+void mcumax_stop_search(void);
+
+/* ==========================================================================
+ * PART 2: ENGINE CORE IMPLEMENTATION
+ * ========================================================================== */
+
+#define MCUMAX_BOARD_MASK 0x88
+#define MCUMAX_BOARD_WHITE 0x8
+#define MCUMAX_BOARD_BLACK 0x10
+#define MCUMAX_PIECE_MOVED 0x20
+#define MCUMAX_SCORE_MAX 8000
+#define MCUMAX_DEPTH_MAX 99
+
+enum mcumax_mode
+{
+    MCUMAX_INTERNAL_NODE,
+    MCUMAX_SEARCH_VALID_MOVES,
+    MCUMAX_SEARCH_BEST_MOVE,
+    MCUMAX_PLAY_MOVE,
+};
+
+struct
+{
+    uint8_t board[0x80 + 1];
+    uint8_t current_side;
+    int32_t score;
+    uint8_t en_passant_square;
+    int32_t non_pawn_material;
+
+    uint8_t square_from; 
+    uint8_t square_to;
+
+    uint32_t node_count;
+    uint32_t node_max;
+    uint32_t depth_max;
+
+    bool stop_search;
+
+    mcumax_callback user_callback;
+    void *user_data;
+
+    mcumax_move *valid_moves_buffer;
+    uint32_t valid_moves_buffer_size;
+    uint32_t valid_moves_num;
+} mcumax;
+
+static const int8_t mcumax_capture_values[] = {
+    0, 2, 2, 7, -1, 8, 12, 23};
+
+static const int8_t mcumax_step_vectors_indices[] = {
+    0, 7, -1, 11, 6, 8, 3, 6};
+
+static const int8_t mcumax_step_vectors[] = {
+    -16, -15, -17, 0,
+    1, 16, 0,
+    1, 16, 15, 17, 0,
+    14, 18, 31, 33, 0};
+
+static const int8_t mcumax_board_setup[] = {
+    MCUMAX_ROOK,
+    MCUMAX_KNIGHT,
+    MCUMAX_BISHOP,
+    MCUMAX_QUEEN,
+    MCUMAX_KING,
+    MCUMAX_BISHOP,
+    MCUMAX_KNIGHT,
+    MCUMAX_ROOK,
+};
+
+static clock_t search_start_time;
+static uint32_t search_time_limit_ms;
+static bool time_limit_enabled;
+
+typedef bool (*mcumax_move_callback)(mcumax_move move);
+
+static int32_t mcumax_search(int32_t alpha,
+                             int32_t beta,
+                             int32_t score,
+                             uint8_t en_passant_square,
+                             uint8_t depth,
+                             enum mcumax_mode mode);
+
+static int32_t mcumax_search(int32_t alpha,
+                             int32_t beta,
+                             int32_t score,
+                             uint8_t en_passant_square,
+                             uint8_t depth,
+                             enum mcumax_mode mode)
+{
+    if (mcumax.user_callback)
+        mcumax.user_callback(mcumax.user_data);
+
+    uint8_t iter_depth;
+    int32_t iter_score;
+    uint8_t iter_square_from;
+    uint8_t iter_square_to;
+
+    uint8_t square_start;
+    uint8_t square_from;
+    uint8_t square_to;
+
+    uint8_t replay_move;
+    int32_t null_move_score;
+
+    uint8_t scan_piece;
+    uint8_t scan_piece_type;
+
+    int8_t step_vector;
+    int8_t step_vector_index;
+
+    uint8_t castling_skip_square;
+    uint8_t castling_rook_square;
+
+    uint8_t capture_square;
+    uint8_t capture_piece;
+    int32_t capture_piece_value;
+
+    uint8_t step_depth;
+    int32_t step_alpha;
+    int32_t step_score;
+    int32_t step_score_new;
+
+    alpha -= alpha < score;
+    beta -= beta <= score;
+
+    iter_depth =
+        iter_score =
+            iter_square_from =
+                iter_square_to = 0;
+
+    while ((iter_depth++ < depth) ||
+           (iter_depth < 3) ||
+           ((mode != MCUMAX_INTERNAL_NODE) &&
+            (mcumax.square_from == MCUMAX_SQUARE_INVALID) &&
+            (((mcumax.node_count < mcumax.node_max) &&
+              (iter_depth <= mcumax.depth_max)) ||
+             (mcumax.square_from = iter_square_from,
+              mcumax.square_to = iter_square_to & ~MCUMAX_BOARD_MASK,
+              iter_depth = 3))))
+    {
+        if (mcumax.stop_search)
+            break;
+
+        square_from =
+            square_start = (mode != MCUMAX_SEARCH_VALID_MOVES)
+                               ? iter_square_from
+                               : 0;
+
+        replay_move = iter_square_to & MCUMAX_SQUARE_INVALID;
+        mcumax.current_side ^= 0x18;
+
+        null_move_score = (iter_depth > 2) && (beta != -MCUMAX_SCORE_MAX)
+                              ? mcumax_search(-beta,
+                                              1 - beta,
+                                              -score,
+                                              MCUMAX_SQUARE_INVALID,
+                                              iter_depth - 3,
+                                              MCUMAX_INTERNAL_NODE)
+                              : MCUMAX_SCORE_MAX;
+
+        mcumax.current_side ^= 0x18;
+
+        iter_score = (-null_move_score < beta) ||
+                             (mcumax.non_pawn_material > 35)
+                         ? (iter_depth - 2)
+                               ? -MCUMAX_SCORE_MAX
+                               : score
+                         : -null_move_score;
+
+        mcumax.node_count++;
+
+        do
+        {
+            scan_piece = mcumax.board[square_from];
+
+            if (scan_piece & mcumax.current_side)
+            {
+                step_vector = scan_piece_type = (scan_piece & 0b111);
+                step_vector_index = mcumax_step_vectors_indices[scan_piece_type];
+
+                while ((step_vector = ((scan_piece_type > 2) &&
+                                       (step_vector < 0))
+                                          ? -step_vector
+                                          : -mcumax_step_vectors[++step_vector_index]))
+                {
+                replay:
+                    square_to = square_from;
+                    castling_skip_square =
+                        castling_rook_square = MCUMAX_SQUARE_INVALID;
+
+                    do
+                    {
+                        capture_square =
+                            square_to =
+                                replay_move
+                                    ? (iter_square_to ^ replay_move)
+                                    : (square_to + step_vector);
+
+                        if (square_to & MCUMAX_BOARD_MASK)
+                            break;
+
+                        if ((en_passant_square != MCUMAX_SQUARE_INVALID) &&
+                            mcumax.board[en_passant_square] &&
+                            ((square_to - en_passant_square) < 2) &&
+                            ((en_passant_square - square_to) < 2))
+                            iter_score = MCUMAX_SCORE_MAX;
+
+                        if ((scan_piece_type < 3) &&
+                            (square_to == en_passant_square))
+                            capture_square ^= 16;
+
+                        capture_piece = mcumax.board[capture_square];
+
+                        if ((capture_piece & mcumax.current_side) ||
+                            ((scan_piece_type < 3) &&
+                             !((square_to - square_from) & 0b111) - !capture_piece))
+                            break;
+
+                        capture_piece_value = 37 * mcumax_capture_values[capture_piece & 0b111] +
+                                              (capture_piece & 0xc0);
+
+                        if (capture_piece_value < 0)
+                        {
+                            iter_score = MCUMAX_SCORE_MAX;
+                            iter_depth = MCUMAX_DEPTH_MAX - 1;
+                        }
+
+                        if ((iter_score >= beta) &&
+                            (iter_depth > 1))
+                            goto cutoff;
+
+                        step_score = (iter_depth != 1)
+                                         ? score
+                                         : capture_piece_value - scan_piece_type;
+
+                        if ((iter_depth - !capture_piece) > 1)
+                        {
+                            step_score = (scan_piece_type < 6)
+                                             ? mcumax.board[square_from + 0x8] -
+                                                   mcumax.board[square_to + 0x8]
+                                             : 0;
+
+                            mcumax.board[castling_rook_square] =
+                                mcumax.board[capture_square] =
+                                    mcumax.board[square_from] = 0;
+
+                            mcumax.board[square_to] = scan_piece | MCUMAX_PIECE_MOVED;
+
+                            if (!(castling_rook_square & MCUMAX_BOARD_MASK))
+                            {
+                                mcumax.board[castling_skip_square] = mcumax.current_side + 6;
+                                step_score += 50;
+                            }
+
+                            step_score -= ((scan_piece_type != 4) ||
+                                           (mcumax.non_pawn_material > 30))
+                                              ? 0
+                                              : 20;
+
+                            if (scan_piece_type < 3)
+                            {
+                                step_score -=
+                                    9 * ((((square_from - 2) & MCUMAX_BOARD_MASK) ||
+                                          mcumax.board[square_from - 2] - scan_piece) +
+                                         (((square_from + 2) & MCUMAX_BOARD_MASK) ||
+                                          mcumax.board[square_from + 2] - scan_piece) -
+                                         1 +
+                                         (mcumax.board[square_from ^ 0x10] ==
+                                          (mcumax.current_side + 36))) 
+                                    - (mcumax.non_pawn_material >> 2); 
+
+                                capture_piece_value +=
+                                    step_alpha =
+                                        (square_to + step_vector + 1) & MCUMAX_SQUARE_INVALID
+                                            ? (647 - scan_piece_type)
+                                            : 2 * (scan_piece & (square_to + 0x10) & 0x20);
+
+                                mcumax.board[square_to] += step_alpha;
+                            }
+
+                            step_score += score + capture_piece_value;
+                            step_alpha = iter_score > alpha
+                                             ? iter_score
+                                             : alpha;
+
+                            step_depth = iter_depth - 1 -
+                                         ((iter_depth > 5) &&
+                                          (scan_piece_type > 2) &&
+                                          !capture_piece &&
+                                          !replay_move);
+
+                            if (!((mcumax.non_pawn_material > 30) ||
+                                  (null_move_score - MCUMAX_SCORE_MAX) ||
+                                  (iter_depth < 3) ||
+                                  (capture_piece &&
+                                   (scan_piece_type != 4))))
+                                step_depth = iter_depth;
+
+                            do
+                            {
+                                mcumax.current_side ^= 0x18;
+
+                                step_score_new = ((mode == MCUMAX_SEARCH_VALID_MOVES) ||
+                                                  (step_depth > 2) ||
+                                                  (step_score > step_alpha))
+                                                     ? -mcumax_search(-beta,
+                                                                      -step_alpha,
+                                                                      -step_score,
+                                                                      castling_skip_square,
+                                                                      step_depth,
+                                                                      MCUMAX_INTERNAL_NODE)
+                                                     : step_score;
+
+                                mcumax.current_side ^= 0x18;
+                            } while ((step_score_new > alpha) &&
+                                     (++step_depth < iter_depth));
+
+                            step_score = step_score_new;
+
+                            if ((mode == MCUMAX_PLAY_MOVE) &&
+                                (step_score != -MCUMAX_SCORE_MAX) &&
+                                (square_from == mcumax.square_from) &&
+                                (square_to == mcumax.square_to))
+                            {
+                                mcumax.score = -score - capture_piece_value;
+                                mcumax.en_passant_square = castling_skip_square;
+                                mcumax.non_pawn_material += capture_piece_value >> 7;
+                                mcumax.current_side ^= 0x18;
+                                return beta;
+                            }
+
+                            mcumax.board[castling_rook_square] = mcumax.current_side + 6;
+                            mcumax.board[castling_skip_square] = mcumax.board[square_to] = 0;
+                            mcumax.board[square_from] = scan_piece;
+                            mcumax.board[capture_square] = capture_piece;
+
+                            if ((mode == MCUMAX_SEARCH_BEST_MOVE) &&
+                                (step_score != -MCUMAX_SCORE_MAX) &&
+                                (square_from == mcumax.square_from) &&
+                                (square_to == mcumax.square_to))
+                                return beta;
+
+                            if ((mode == MCUMAX_SEARCH_VALID_MOVES) &&
+                                (step_score != -MCUMAX_SCORE_MAX) &&
+                                (mcumax.square_from == MCUMAX_SQUARE_INVALID) &&
+                                (iter_depth == 3) &&
+                                !replay_move)
+                            {
+                                mcumax_move move = {square_from, square_to};
+
+                                if (mcumax.valid_moves_num < mcumax.valid_moves_buffer_size)
+                                    mcumax.valid_moves_buffer[mcumax.valid_moves_num] = move;
+
+                                mcumax.valid_moves_num++;
+                            }
+                        }
+
+                        if (step_score > iter_score)
+                        {
+                            iter_score = step_score;
+                            iter_square_from = square_from;
+                            iter_square_to = square_to |
+                                             (castling_skip_square & MCUMAX_SQUARE_INVALID);
+                        }
+
+                        if (replay_move)
+                        {
+                            replay_move = 0;
+                            goto replay;
+                        }
+
+                        if ((square_from + step_vector - square_to) ||
+                            (scan_piece & MCUMAX_PIECE_MOVED) ||
+                            ((scan_piece_type > 2) &&
+                             (((scan_piece_type != 4) ||
+                               (step_vector_index != 7) ||
+                               (mcumax.board[castling_rook_square =
+                                                 ((square_from + 3) ^
+                                                  ((step_vector >> 1) & 0b111))] -
+                                mcumax.current_side - 6) ||
+                               mcumax.board[castling_rook_square ^ 1] ||
+                               mcumax.board[castling_rook_square ^ 2]))))
+                            capture_piece += (scan_piece_type < 5);
+                        else
+                            castling_skip_square = square_to;
+
+                    } while (!capture_piece);
+                }
+            }
+
+        } while ((square_from = ((square_from + 9) &
+                                 ~MCUMAX_BOARD_MASK)) != square_start);
+
+    cutoff:
+        if ((iter_score == -MCUMAX_SCORE_MAX) &&
+            (null_move_score != MCUMAX_SCORE_MAX))
+            iter_score = 0;
+
+        if (mode == MCUMAX_SEARCH_BEST_MOVE)
+        {
+            clock_t current_clock = clock();
+            double elapsed_sec = (double)(current_clock - search_start_time) / CLOCKS_PER_SEC;
+            uint32_t elapsed_ms = (uint32_t)(elapsed_sec * 1000.0);
+            if (elapsed_ms == 0) elapsed_ms = 1;
+
+            char move_str[6];
+            char f1 = 'a' + (iter_square_from & 0x7);
+            char r1 = '8' - (iter_square_from >> 4);
+            char f2 = 'a' + (iter_square_to & 0x7);
+            char r2 = '8' - ((iter_square_to >> 4) & 0x7);
+
+            bool is_promo = false;
+            uint8_t piece = mcumax.board[iter_square_from] & 0x7;
+            if ((piece == MCUMAX_PAWN_UPSTREAM || piece == MCUMAX_PAWN_DOWNSTREAM) && (r2 == '8' || r2 == '1')) {
+                is_promo = true;
+            }
+
+            if (is_promo) {
+                sprintf(move_str, "%c%c%c%cq", f1, r1, f2, r2);
+            } else {
+                sprintf(move_str, "%c%c%c%c", f1, r1, f2, r2);
+            }
+
+            int current_depth = (iter_depth - 2 > 0) ? (iter_depth - 2) : 1;
+
+            if (iter_score > MCUMAX_SCORE_MAX - 100) {
+                int mate_in_plies = MCUMAX_SCORE_MAX - iter_score;
+                int mate_in_moves = (mate_in_plies + 1) / 2;
+                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
+                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
+            } else if (iter_score < -MCUMAX_SCORE_MAX + 100) {
+                int mate_in_plies = MCUMAX_SCORE_MAX + iter_score;
+                int mate_in_moves = -(mate_in_plies + 1) / 2;
+                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
+                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
+            } else {
+                int score_cp = (iter_score * 100) / 74;
+                printf("info depth %d score cp %d time %u nodes %u pv %s\n",
+                       current_depth, score_cp, elapsed_ms, mcumax.node_count, move_str);
+            }
+            fflush(stdout);
+        }
+    }
+
+    return iter_score += iter_score < score;
+}
+
+void mcumax_init()
+{
+    for (uint32_t x = 0; x < 8; x++)
+    {
+        mcumax.board[0x10 * 0 + x] = MCUMAX_BOARD_BLACK | mcumax_board_setup[x];
+        mcumax.board[0x10 * 1 + x] = MCUMAX_BOARD_BLACK | MCUMAX_PAWN_DOWNSTREAM;
+        for (uint32_t y = 2; y < 6; y++)
+            mcumax.board[0x10 * y + x] = MCUMAX_EMPTY;
+        mcumax.board[0x10 * 6 + x] = MCUMAX_BOARD_WHITE | MCUMAX_PAWN_UPSTREAM;
+        mcumax.board[0x10 * 7 + x] = MCUMAX_BOARD_WHITE | mcumax_board_setup[x];
+
+        for (uint32_t y = 0; y < 8; y++)
+            mcumax.board[16 * y + x + 8] = (x - 4) * (x - 4) + (y - 4) * (y - 3);
+    }
+    mcumax.current_side = MCUMAX_BOARD_WHITE;
+    mcumax.score = 0;
+    mcumax.en_passant_square = MCUMAX_SQUARE_INVALID;
+    mcumax.non_pawn_material = 0;
+}
+
+static mcumax_square mcumax_set_piece(mcumax_square square, mcumax_piece piece)
+{
+    if (square & MCUMAX_BOARD_MASK)
+        return square;
+
+    mcumax.board[square] = piece ? (piece | MCUMAX_PIECE_MOVED) : piece;
+    return square + 1;
+}
+
+mcumax_piece mcumax_get_piece(mcumax_square square)
+{
+    if (square & MCUMAX_BOARD_MASK)
+        return MCUMAX_EMPTY;
+
+    return (mcumax.board[square] & 0xf) ^ MCUMAX_BLACK;
+}
+
+void mcumax_set_fen_position(const char *fen_string)
+{
+    mcumax_init();
+
+    uint32_t field_index = 0;
+    uint32_t board_index = 0;
+
+    char c;
+    while ((c = *fen_string++))
+    {
+        if (c == ' ')
+        {
+            if (field_index < 4)
+                field_index++;
+            continue;
+        }
+
+        switch (field_index)
+        {
+        case 0:
+            if (board_index < 0x80)
+            {
+                switch (c)
+                {
+                case '8':
+                case '7':
+                case '6':
+                case '5':
+                case '4':
+                case '3':
+                case '2':
+                case '1':
+                    for (int32_t i = 0; i < (c - '0'); i++)
+                        board_index = mcumax_set_piece(board_index, MCUMAX_EMPTY);
+                    break;
+
+                case 'P':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_PAWN_UPSTREAM | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'N':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_KNIGHT | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'B':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_BISHOP | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'R':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_ROOK | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'Q':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_QUEEN | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'K':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_KING | MCUMAX_BOARD_WHITE);
+                    break;
+                case 'p':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_PAWN_DOWNSTREAM | MCUMAX_BOARD_BLACK);
+                    break;
+                case 'n':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_KNIGHT | MCUMAX_BOARD_BLACK);
+                    break;
+                case 'b':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_BISHOP | MCUMAX_BOARD_BLACK);
+                    break;
+                case 'r':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_ROOK | MCUMAX_BOARD_BLACK);
+                    break;
+                case 'q':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_QUEEN | MCUMAX_BOARD_BLACK);
+                    break;
+                case 'k':
+                    board_index = mcumax_set_piece(board_index, MCUMAX_KING | MCUMAX_BOARD_BLACK);
+                    break;
+                case '/':
+                    board_index = (board_index < 0x80) ? (board_index & 0xf0) + 0x10 : board_index;
+                    break;
+                }
+            }
+            break;
+
+        case 1:
+            switch (c)
+            {
+            case 'w':
+                mcumax.current_side = MCUMAX_BOARD_WHITE;
+                break;
+            case 'b':
+                mcumax.current_side = MCUMAX_BOARD_BLACK;
+                break;
+            }
+            break;
+
+        case 2:
+            switch (c)
+            {
+            case 'K':
+                mcumax.board[0x74] &= ~MCUMAX_PIECE_MOVED;
+                mcumax.board[0x77] &= ~MCUMAX_PIECE_MOVED;
+                break;
+            case 'Q':
+                mcumax.board[0x74] &= ~MCUMAX_PIECE_MOVED;
+                mcumax.board[0x70] &= ~MCUMAX_PIECE_MOVED;
+                break;
+            case 'k':
+                mcumax.board[0x04] &= ~MCUMAX_PIECE_MOVED;
+                mcumax.board[0x07] &= ~MCUMAX_PIECE_MOVED;
+                break;
+            case 'q':
+                mcumax.board[0x04] &= ~MCUMAX_PIECE_MOVED;
+                mcumax.board[0x00] &= ~MCUMAX_PIECE_MOVED;
+                break;
+            }
+            break;
+
+        case 3:
+            switch (c)
+            {
+            case 'a': case 'b': case 'c': case 'd':
+            case 'e': case 'f': case 'g': case 'h':
+                mcumax.en_passant_square &= 0x7f;
+                mcumax.en_passant_square |= (c - 'a');
+                break;
+
+            case '1': case '2': case '3': case '4':
+            case '5': case '6': case '7': case '8':
+                mcumax.en_passant_square &= 0x7f;
+                mcumax.en_passant_square |= 16 * ('8' - c);
+                break;
+            }
+            break;
+        }
+    }
+}
+
+mcumax_piece mcumax_get_current_side(void)
+{
+    return mcumax.current_side;
+}
+
+static int32_t mcumax_start_search(enum mcumax_mode mode,
+                                   mcumax_move move,
+                                   uint32_t depth_max,
+                                   uint32_t node_max)
+{
+    mcumax.square_from = move.from;
+    mcumax.square_to = move.to;
+
+    mcumax.node_max = node_max;
+    mcumax.node_count = 0;
+    mcumax.depth_max = depth_max;
+    mcumax.stop_search = false;
+
+    return mcumax_search(-MCUMAX_SCORE_MAX,
+                         MCUMAX_SCORE_MAX,
+                         mcumax.score,
+                         mcumax.en_passant_square,
+                         3,
+                         mode);
+}
+
+uint32_t mcumax_search_valid_moves(mcumax_move *valid_moves_buffer, uint32_t valid_moves_buffer_size)
+{
+    mcumax.valid_moves_num = 0;
+    mcumax.valid_moves_buffer = valid_moves_buffer;
+    mcumax.valid_moves_buffer_size = valid_moves_buffer_size;
+
+    mcumax_start_search(MCUMAX_SEARCH_VALID_MOVES, MCUMAX_MOVE_INVALID, 0, 0);
+    return mcumax.valid_moves_num;
+}
+
+mcumax_move mcumax_search_best_move(uint32_t node_max, uint32_t depth_max)
+{
+    int32_t score = mcumax_start_search(MCUMAX_SEARCH_BEST_MOVE,
+                                        MCUMAX_MOVE_INVALID, depth_max + 3, node_max);
+
+    if (score == MCUMAX_SCORE_MAX)
+        return (mcumax_move){mcumax.square_from, mcumax.square_to};
+    else
+        return MCUMAX_MOVE_INVALID;
+}
+
+bool mcumax_play_move(mcumax_move move)
+{
+    return mcumax_start_search(MCUMAX_PLAY_MOVE, move, 0, 0) == MCUMAX_SCORE_MAX;
+}
+
+void mcumax_set_callback(mcumax_callback callback, void *userdata)
+{
+    mcumax.user_callback = callback;
+    mcumax.user_data = userdata;
+}
+
+void mcumax_stop_search(void)
+{
+    mcumax.stop_search = true;
+}
+
+uint32_t mcumax_get_node_count(void)
+{
+    return mcumax.node_count;
+}
+
+/* ==========================================================================
+ * PART 3: UCI CHESS INTERFACE EXAMPLE
+ * ========================================================================== */
+
+#define MAIN_VALID_MOVES_NUM 512
+
+void dynamic_search_time_callback(void *userdata)
+{
+    if (time_limit_enabled)
+    {
+        clock_t current_clock = clock();
+        double elapsed_ms = ((double)(current_clock - search_start_time) / CLOCKS_PER_SEC) * 1000.0;
+        
+        if (elapsed_ms >= (double)search_time_limit_ms)
+        {
+            mcumax_stop_search();
+        }
+    }
+}
+
+void print_board()
+{
+    const char *symbols = ".PPNKBRQ.ppnkbrq";
+    printf("  +-----------------+\n");
+    for (uint32_t y = 0; y < 8; y++)
+    {
+        printf("%d | ", 8 - y);
+        for (uint32_t x = 0; x < 8; x++)
+            printf("%c ", symbols[mcumax_get_piece(0x10 * y + x)]);
+        printf("|\n");
+    }
+    printf("  +-----------------+\n");
+    printf("    a b c d e f g h\n\n");
+}
+
+mcumax_square get_square(char *s)
+{
+    mcumax_square rank = s[0] - 'a';
+    if (rank > 7)
+        return MCUMAX_SQUARE_INVALID;
+
+    mcumax_square file = '8' - s[1];
+    if (file > 7)
+        return MCUMAX_SQUARE_INVALID;
+
+    return 0x10 * file + rank;
+}
+
+bool is_square_valid(char *s)
+{
+    return (get_square(s) != MCUMAX_SQUARE_INVALID);
+}
+
+bool is_move_valid(char *s)
+{
+    return is_square_valid(s) && is_square_valid(s + 2);
+}
+
+void print_square(mcumax_square square)
+{
+    printf("%c%c",
+           'a' + ((square & 0x07) >> 0),
+           '1' + 7 - ((square & 0x70) >> 4));
+}
+
+void print_move(mcumax_move move)
+{
+    if ((move.from == MCUMAX_SQUARE_INVALID) ||
+        (move.to == MCUMAX_SQUARE_INVALID))
+        printf("(none)");
+    else
+    {
+        print_square(move.from);
+        print_square(move.to);
+    }
+}
+
+#ifdef __wii__
+void write_move_to_file(mcumax_move move) {
+    FILE *f = fopen("sd:/apps/wiichess/move.txt", "w");
+    if (f) {
+        if ((move.from != MCUMAX_SQUARE_INVALID) && (move.to != MCUMAX_SQUARE_INVALID)) {
+            bool is_promo = false;
+            uint8_t piece = mcumax.board[move.from] & 0x7;
+            char r2 = '8' - ((move.to >> 4) & 0x7);
+            if ((piece == MCUMAX_PAWN_UPSTREAM || piece == MCUMAX_PAWN_DOWNSTREAM) && (r2 == '8' || r2 == '1')) {
+                is_promo = true;
+            }
+            
+            fprintf(f, "%c%c%c%c",
+                   'a' + ((move.from & 0x07) >> 0),
+                   '1' + 7 - ((move.from & 0x70) >> 4),
+                   'a' + ((move.to & 0x07) >> 0),
+                   '1' + 7 - ((move.to & 0x70) >> 4));
+            if (is_promo) {
+                fprintf(f, "q");
+            }
+            fprintf(f, "\n");
+        } else {
+            fprintf(f, "0000\n");
+        }
+        fclose(f);
+    }
+}
+
+// Relocatable high-RAM DOL Loader definitions inside File 2
 typedef struct {
-    int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
-    int turn;      // 1 = White, -1 = Black
-    int castle;    // Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ
-    int ep;        // En-passant square (0-63), -1 if none
-    int halfmoves; // For 50-move rule
-    int fullmoves;
-} BoardState;
-
-typedef struct {
-    int from;
-    int to;
-    int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} Move;
-
-// Game State Save structure
-typedef struct {
-    BoardState current_state;
-    BoardState history[MAX_HISTORY];
-    Move move_history[MAX_HISTORY];
-    int history_count;
-    int board_orientation;
-    int user_side;
-    int time_control_type;
-    int time_control_val;
-} GameSaveState;
-
-// Global GUI state
-BoardState current_state;
-BoardState history[MAX_HISTORY];
-Move move_history[MAX_HISTORY];
-int history_count = 0;
-
-int cursor_r = 6;  // Screen row (0-7)
-int cursor_c = 4;  // Screen col (0-7)
-int selected_sq = -1;
-
-int board_orientation = 1; // 1 = White on bottom, -1 = Black on bottom
-int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
-
-int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1000; // Default: 1000 ms
-
-char engine_path[256] = "sd:/apps/wiichess/engine.dol";
-char gui_path[256] = "sd:/apps/wiichess/boot.dol";
-
-// Wii Console Globals
-static void *xfb = NULL;
-static GXRModeObj *rmode = NULL;
-
-// Forward declarations
-void init_board(BoardState *state);
-int is_legal_move(const BoardState *state, Move m);
-int has_legal_moves(const BoardState *state);
-int is_square_attacked(const BoardState *state, int sq, int attacker);
-void make_move(const BoardState *src, BoardState *dst, Move m);
-void print_side_panel_line(int panel_row);
-void print_recent_moves(int row);
-int find_king(const BoardState *state, int color);
-int count_repetitions(const BoardState *state);
-int get_promo_choice();
-void save_state();
-int load_state();
-void trigger_engine_move();
-
-// Structure representing standard DOL executable headers
-typedef struct {
-    u32 text_pos[7];
-    u32 data_pos[11];
-    u32 text_start[7];
-    u32 data_start[11];
-    u32 text_size[7];
-    u32 data_size[11];
-    u32 bss_start;
-    u32 bss_size;
-    u32 entry_point;
+    uint32_t text_pos[7];
+    uint32_t data_pos[11];
+    uint32_t text_start[7];
+    uint32_t data_start[11];
+    uint32_t text_size[7];
+    uint32_t data_size[11];
+    uint32_t bss_start;
+    uint32_t bss_size;
+    uint32_t entry_point;
 } dolheader;
 
-// Safe runtime DOL staging blocks
 typedef struct {
-    u32 dest;
+    uint32_t dest;
     void *src;
-    u32 size;
+    uint32_t size;
 } StagedBlock;
 
 typedef struct {
     StagedBlock staged_text[7];
     StagedBlock staged_data[11];
-    u32 bss_start;
-    u32 bss_size;
-    u32 entry_point;
+    uint32_t bss_start;
+    uint32_t bss_size;
+    uint32_t entry_point;
 } LoaderParams;
 
-// This function copies itself to high-RAM and handles clean booting of external programs
 static void loader_entry(LoaderParams *params) {
     for (int i = 0; i < 7; i++) {
         if (params->staged_text[i].size > 0) {
-            u8 *dst = (u8 *)params->staged_text[i].dest;
-            u8 *src = (u8 *)params->staged_text[i].src;
-            for (u32 j = 0; j < params->staged_text[i].size; j++) {
+            uint8_t *dst = (uint8_t *)params->staged_text[i].dest;
+            uint8_t *src = (uint8_t *)params->staged_text[i].src;
+            for (uint32_t j = 0; j < params->staged_text[i].size; j++) {
                 dst[j] = src[j];
             }
         }
     }
     for (int i = 0; i < 11; i++) {
         if (params->staged_data[i].size > 0) {
-            u8 *dst = (u8 *)params->staged_data[i].dest;
-            u8 *src = (u8 *)params->staged_data[i].src;
-            for (u32 j = 0; j < params->staged_data[i].size; j++) {
+            uint8_t *dst = (uint8_t *)params->staged_data[i].dest;
+            uint8_t *src = (uint8_t *)params->staged_data[i].src;
+            for (uint32_t j = 0; j < params->staged_data[i].size; j++) {
                 dst[j] = src[j];
             }
         }
     }
     if (params->bss_size > 0) {
-        u8 *dst = (u8 *)params->bss_start;
-        for (u32 j = 0; j < params->bss_size; j++) {
+        uint8_t *dst = (uint8_t *)params->bss_start;
+        for (uint32_t j = 0; j < params->bss_size; j++) {
             dst[j] = 0;
         }
     }
 
-    // Flush cache lines on all copied blocks
     for (int i = 0; i < 7; i++) {
         if (params->staged_text[i].size > 0) {
-            u32 start = params->staged_text[i].dest & ~31;
-            u32 end = (params->staged_text[i].dest + params->staged_text[i].size + 31) & ~31;
-            for (u32 addr = start; addr < end; addr += 32) {
+            uint32_t start = params->staged_text[i].dest & ~31;
+            uint32_t end = (params->staged_text[i].dest + params->staged_text[i].size + 31) & ~31;
+            for (uint32_t addr = start; addr < end; addr += 32) {
                 __asm__ volatile("dcbst 0,%0 ; sync ; icbi 0,%0" : : "r"(addr));
             }
         }
     }
     for (int i = 0; i < 11; i++) {
         if (params->staged_data[i].size > 0) {
-            u32 start = params->staged_data[i].dest & ~31;
-            u32 end = (params->staged_data[i].dest + params->staged_data[i].size + 31) & ~31;
-            for (u32 addr = start; addr < end; addr += 32) {
+            uint32_t start = params->staged_data[i].dest & ~31;
+            uint32_t end = (params->staged_data[i].dest + params->staged_data[i].size + 31) & ~31;
+            for (uint32_t addr = start; addr < end; addr += 32) {
                 __asm__ volatile("dcbst 0,%0 ; sync" : : "r"(addr));
             }
         }
@@ -159,8 +941,6 @@ static void loader_entry_end(void) {}
 void run_dol(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {
-        printf("\nError: Failed to open %s\n", path);
-        VIDEO_WaitVSync();
         SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
 
@@ -196,8 +976,7 @@ void run_dol(const char *path) {
 
     WPAD_Shutdown();
 
-    // Relocate loader to safe high memory boundary (0x81700000)
-    u32 loader_size = (u32)loader_entry_end - (u32)loader_entry;
+    u32 loader_size = (uint32_t)loader_entry_end - (uint32_t)loader_entry;
     void *loader_target = (void *)0x81700000;
     memcpy(loader_target, (void *)loader_entry, loader_size);
 
@@ -208,12 +987,206 @@ void run_dol(const char *path) {
     loader_fn run_relocated = (loader_fn)loader_target;
     run_relocated(params);
 }
+#endif
 
-void init_wii_console() {
+bool send_uci_command(char *line)
+{
+    char *token = strtok(line, " \n");
+
+    if (!token)
+        return false;
+
+    if (!strcmp(token, "uci"))
+    {
+        printf("id name " MCUMAX_ID "\n");
+        printf("id author " MCUMAX_AUTHOR "\n");
+        printf("uciok\n");
+    }
+    else if (!strcmp(token, "ucinewgame"))
+        mcumax_init();
+    else if (!strcmp(token, "isready"))
+        printf("readyok\n");
+    else if (!strcmp(token, "d"))
+        print_board();
+    else if (!strcmp(token, "l"))
+    {
+        mcumax_move valid_moves[MAIN_VALID_MOVES_NUM];
+        uint32_t valid_moves_num = mcumax_search_valid_moves(valid_moves, MAIN_VALID_MOVES_NUM);
+
+        for (uint32_t i = 0; i < valid_moves_num; i++)
+        {
+            print_move(valid_moves[i]);
+            printf(" ");
+        }
+        printf("\n");
+    }
+    else if (!strcmp(token, "position"))
+    {
+        int fen_index = 0;
+        char fen_string[256];
+
+        while ((token = strtok(NULL, " \n")))
+        {
+            if (fen_index)
+            {
+                strcat(fen_string, token);
+                strcat(fen_string, " ");
+
+                fen_index++;
+                if (fen_index > 6)
+                {
+                    mcumax_set_fen_position(fen_string);
+                    fen_index = 0;
+                }
+            }
+            else
+            {
+                if (!strcmp(token, "startpos"))
+                    mcumax_init();
+                else if (!strcmp(token, "fen"))
+                {
+                    fen_index = 1;
+                    strcpy(fen_string, "");
+                }
+                else if (is_move_valid(token))
+                {
+                    mcumax_play_move((mcumax_move){
+                        get_square(token + 0),
+                        get_square(token + 2),
+                    });
+                }
+            }
+        }
+    }
+    else if (!strcmp(token, "go"))
+    {
+        uint32_t depth_max = 30;
+        uint32_t node_max = 100000000;
+        
+        search_time_limit_ms = 0;
+        time_limit_enabled = false;
+
+        uint32_t wtime = 0, btime = 0, winc = 0, binc = 0;
+        bool has_wtime = false, has_btime = false;
+
+        while ((token = strtok(NULL, " \n")))
+        {
+            if (!strcmp(token, "infinite"))
+            {
+                depth_max = MCUMAX_DEPTH_MAX;
+                node_max = 0xFFFFFFFF;
+                time_limit_enabled = false;
+            }
+            else if (!strcmp(token, "depth"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) depth_max = atoi(val);
+            }
+            else if (!strcmp(token, "nodes"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) node_max = strtoul(val, NULL, 10);
+            }
+            else if (!strcmp(token, "movetime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    search_time_limit_ms = atoi(val);
+                    time_limit_enabled = true;
+                }
+            }
+            else if (!strcmp(token, "wtime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    wtime = atoi(val);
+                    has_wtime = true;
+                }
+            }
+            else if (!strcmp(token, "btime"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) {
+                    btime = atoi(val);
+                    has_btime = true;
+                }
+            }
+            else if (!strcmp(token, "winc"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) winc = atoi(val);
+            }
+            else if (!strcmp(token, "binc"))
+            {
+                char *val = strtok(NULL, " \n");
+                if (val) binc = atoi(val);
+            }
+        }
+
+        if (!time_limit_enabled)
+        {
+            uint8_t active_side = mcumax_get_current_side();
+            
+            if (active_side == MCUMAX_BOARD_WHITE && has_wtime)
+            {
+                search_time_limit_ms = (wtime / 25) + (winc / 2);
+                time_limit_enabled = true;
+            }
+            else if (active_side == MCUMAX_BOARD_BLACK && has_btime)
+            {
+                search_time_limit_ms = (btime / 25) + (binc / 2);
+                time_limit_enabled = true;
+            }
+        }
+
+        if (time_limit_enabled && (search_time_limit_ms < 20))
+        {
+            search_time_limit_ms = 20;
+        }
+
+        search_start_time = clock();
+        mcumax_set_callback(dynamic_search_time_callback, NULL);
+
+        mcumax_move move = mcumax_search_best_move(node_max, depth_max);
+
+        clock_t end_time = clock();
+        double elapsed_seconds = (double)(end_time - search_start_time) / CLOCKS_PER_SEC;
+
+        if (elapsed_seconds < 0.001) {
+            elapsed_seconds = 0.001; 
+        }
+
+        uint32_t nodes_searched = mcumax_get_node_count();
+        uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
+        uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
+
+        printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
+
+#ifdef __wii__
+        write_move_to_file(move);
+#endif
+
+        mcumax_play_move(move);
+
+        printf("bestmove ");
+        print_move(move);
+        printf("\n");
+    }
+    else if (!strcmp(token, "quit"))
+        return true;
+    else
+        printf("Unknown command: %s\n", token);
+
+    return false;
+}
+
+int main()
+{
+#ifdef __wii__
+    // Setup video outputs, FAT buffers and standard Wii resources
     VIDEO_Init();
-    WPAD_Init();
-    rmode = VIDEO_GetPreferredMode(NULL);
-    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    GXRModeObj *rmode = VIDEO_GetPreferredMode(NULL);
+    void *xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
     console_init(xfb, 20, 20, rmode->fbWidth, rmode->xfbHeight, rmode->fbWidth * VI_DISPLAY_PIX_SZ);
     VIDEO_Configure(rmode);
     VIDEO_SetNextFramebuffer(xfb);
@@ -221,810 +1194,42 @@ void init_wii_console() {
     VIDEO_Flush();
     VIDEO_WaitVSync();
     if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
-}
 
-int screen_to_board_sq(int r, int c) {
-    if (board_orientation == 1) {
-        return r * 8 + c;
-    } else {
-        return (7 - r) * 8 + (7 - c);
+    if (!fatInitDefault()) {
+        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
-}
+#endif
 
-void move_to_uci(Move m, char *buf) {
-    int f_col = m.from % 8;
-    int f_row = 8 - (m.from / 8);
-    int t_col = m.to % 8;
-    int t_row = 8 - (m.to / 8);
-    sprintf(buf, "%c%d%c%d", 'a' + f_col, f_row, 'a' + t_col, t_row);
-    if (m.promo != 0) {
-        char p = 'q';
-        if (m.promo == 2) p = 'n';
-        if (m.promo == 3) p = 'b';
-        if (m.promo == 4) p = 'r';
-        sprintf(buf + 4, "%c", p);
-    }
-}
+    mcumax_init();
 
-Move uci_to_move(const char *str) {
-    Move m = {-1, -1, 0};
-    if (strlen(str) < 4) return m;
-    int f_col = str[0] - 'a';
-    int f_row = 8 - (str[1] - '0');
-    int t_col = str[2] - 'a';
-    int t_row = 8 - (str[3] - '0');
-    m.from = f_row * 8 + f_col;
-    m.to = t_row * 8 + t_col;
-    if (strlen(str) >= 5) {
-        char p = str[4];
-        if (p == 'n') m.promo = 2;
-        else if (p == 'b') m.promo = 3;
-        else if (p == 'r') m.promo = 4;
-        else m.promo = 5;
-    }
-    return m;
-}
-
-void push_state(const BoardState *state, Move m) {
-    if (history_count < MAX_HISTORY - 1) {
-        history[history_count] = *state;
-        move_history[history_count] = m;
-        history_count++;
-    }
-}
-
-void save_state() {
-    FILE *f = fopen("sd:/apps/wiichess/state.bin", "wb");
-    if (f) {
-        GameSaveState s;
-        s.current_state = current_state;
-        memcpy(s.history, history, sizeof(history));
-        memcpy(s.move_history, move_history, sizeof(move_history));
-        s.history_count = history_count;
-        s.board_orientation = board_orientation;
-        s.user_side = user_side;
-        s.time_control_type = time_control_type;
-        s.time_control_val = time_control_val;
-        fwrite(&s, 1, sizeof(GameSaveState), f);
-        fclose(f);
-    }
-}
-
-int load_state() {
-    FILE *f = fopen("sd:/apps/wiichess/state.bin", "rb");
-    if (f) {
-        GameSaveState s;
-        fread(&s, 1, sizeof(GameSaveState), f);
-        current_state = s.current_state;
-        memcpy(history, s.history, sizeof(history));
-        memcpy(move_history, s.move_history, sizeof(move_history));
-        history_count = s.history_count;
-        board_orientation = s.board_orientation;
-        user_side = s.user_side;
-        time_control_type = s.time_control_type;
-        time_control_val = s.time_control_val;
-        fclose(f);
-        return 1;
-    }
-    return 0;
-}
-
-void trigger_engine_move() {
-    FILE *f_uci = fopen("sd:/apps/wiichess/position.uci", "w");
+#ifdef __wii__
+    FILE *f_uci = fopen("sd:/apps/wiichess/position.uci", "r");
     if (f_uci) {
-        fprintf(f_uci, "position startpos moves");
-        for (int i = 0; i < history_count; i++) {
-            char uci_m[10];
-            move_to_uci(move_history[i], uci_m);
-            fprintf(f_uci, " %s", uci_m);
-        }
-        fprintf(f_uci, "\n");
-        
-        if (time_control_type == 0) {
-            fprintf(f_uci, "go movetime %d\n", time_control_val);
-        } else if (time_control_type == 1) {
-            fprintf(f_uci, "go depth %d\n", time_control_val);
-        } else {
-            fprintf(f_uci, "go nodes %d\n", time_control_val);
+        char line[1024];
+        while (fgets(line, sizeof(line), f_uci)) {
+            send_uci_command(line);
         }
         fclose(f_uci);
-    }
-
-    save_state();
-    run_dol(engine_path);
-}
-
-// Rules engine validation systems
-int find_king(const BoardState *state, int color) {
-    for (int i = 0; i < 64; i++) {
-        if (state->board[i] == color * 6) return i;
-    }
-    return -1;
-}
-
-int is_square_attacked(const BoardState *state, int sq, int attacker) {
-    int r = sq / 8, c = sq % 8;
-
-    // Knight attacks
-    int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
-    int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
-    for (int i = 0; i < 8; i++) {
-        int nr = r + k_r[i], nc = c + k_c[i];
-        if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            if (state->board[nr * 8 + nc] == attacker * 2) return 1;
-        }
-    }
-
-    // King attacks
-    int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-    int kg_c[] = {-1, 0, 1, -1, 1, -1, 0, 1};
-    for (int i = 0; i < 8; i++) {
-        int nr = r + kg_r[i], nc = c + kg_c[i];
-        if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            if (state->board[nr * 8 + nc] == attacker * 6) return 1;
-        }
-    }
-
-    // Pawn attacks
-    int p_offset = (attacker == 1) ? 1 : -1;
-    for (int dc = -1; dc <= 1; dc += 2) {
-        int nr = r + p_offset, nc = c + dc;
-        if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            if (state->board[nr * 8 + nc] == attacker * 1) return 1;
-        }
-    }
-
-    // Bishop / Queen diagonals
-    int d_r[] = {-1, -1, 1, 1};
-    int d_c[] = {-1, 1, -1, 1};
-    for (int i = 0; i < 4; i++) {
-        int nr = r + d_r[i], nc = c + d_c[i];
-        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            int target = state->board[nr * 8 + nc];
-            if (target != 0) {
-                if (target == attacker * 3 || target == attacker * 5) return 1;
-                break;
-            }
-            nr += d_r[i]; nc += d_c[i];
-        }
-    }
-
-    // Rook / Queen slide
-    int s_r[] = {-1, 1, 0, 0};
-    int s_c[] = {0, 0, -1, 1};
-    for (int i = 0; i < 4; i++) {
-        int nr = r + s_r[i], nc = c + s_c[i];
-        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            int target = state->board[nr * 8 + nc];
-            if (target != 0) {
-                if (target == attacker * 4 || target == attacker * 5) return 1;
-                break;
-            }
-            nr += s_r[i]; nc += s_c[i];
-        }
-    }
-    return 0;
-}
-
-int is_pseudo_legal_move(const BoardState *state, Move m) {
-    int p = state->board[m.from];
-    int target = state->board[m.to];
-    int turn = state->turn;
-
-    if (p == 0) return 0;
-    if ((turn == 1 && p < 0) || (turn == -1 && p > 0)) return 0;
-    if (m.from == m.to) return 0;
-    if (target != 0 && ((turn == 1 && target > 0) || (turn == -1 && target < 0))) return 0;
-
-    int fr = m.from / 8, fc = m.from % 8;
-    int tr = m.to / 8, tc = m.to % 8;
-    int dr = tr - fr, dc = tc - fc;
-    int abs_dr = abs(dr), abs_dc = abs(dc);
-
-    switch (abs(p)) {
-        case 1: { // Pawn
-            int dir = (turn == 1) ? -1 : 1;
-            if (dc == 0 && dr == dir && target == 0) return 1;
-            int start_r = (turn == 1) ? 6 : 1;
-            if (dc == 0 && fr == start_r && dr == 2 * dir) {
-                if (state->board[(fr + dir) * 8 + fc] == 0 && target == 0) return 1;
-            }
-            if (abs_dc == 1 && dr == dir) {
-                if (target != 0) return 1;
-                if (m.to == state->ep) return 1;
-            }
-            return 0;
-        }
-        case 2: // Knight
-            return ((abs_dr == 2 && abs_dc == 1) || (abs_dr == 1 && abs_dc == 2));
-        case 3: { // Bishop
-            if (abs_dr != abs_dc) return 0;
-            int sr = (dr > 0) ? 1 : -1, sc = (dc > 0) ? 1 : -1;
-            int r = fr + sr, c = fc + sc;
-            while (r != tr && c != tc) {
-                if (state->board[r * 8 + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 4: { // Rook
-            if (dr != 0 && dc != 0) return 0;
-            int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
-            int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
-            int r = fr + sr, c = fc + sc;
-            while (r != tr || c != tc) {
-                if (state->board[r * 8 + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 5: { // Queen
-            if (abs_dr != abs_dc && dr != 0 && dc != 0) return 0;
-            int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
-            int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
-            if (abs_dr == abs_dc) {
-                sr = (dr > 0) ? 1 : -1;
-                sc = (dc > 0) ? 1 : -1;
-            }
-            int r = fr + sr, c = fc + sc;
-            while (r != tr || c != tc) {
-                if (state->board[r * 8 + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 6: { // King
-            if (abs_dr <= 1 && abs_dc <= 1) return 1;
-            if (dr == 0 && abs_dc == 2) {
-                if (turn == 1 && fr == 7 && fc == 4) {
-                    if (m.to == 62 && (state->castle & 1)) {
-                        if (state->board[61] == 0 && state->board[62] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 61, -1) &&
-                                !is_square_attacked(state, 62, -1)) return 1;
-                        }
-                    }
-                    if (m.to == 58 && (state->castle & 2)) {
-                        if (state->board[59] == 0 && state->board[58] == 0 && state->board[57] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 59, -1) &&
-                                !is_square_attacked(state, 58, -1)) return 1;
-                        }
-                    }
-                }
-                if (turn == -1 && fr == 0 && fc == 4) {
-                    if (m.to == 6 && (state->castle & 4)) {
-                        if (state->board[5] == 0 && state->board[6] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 5, 1) &&
-                                !is_square_attacked(state, 6, 1)) return 1;
-                        }
-                    }
-                    if (m.to == 2 && (state->castle & 8)) {
-                        if (state->board[3] == 0 && state->board[2] == 0 && state->board[1] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 3, 1) &&
-                                !is_square_attacked(state, 2, 1)) return 1;
-                        }
-                    }
-                }
-            }
-            return 0;
-        }
-    }
-    return 0;
-}
-
-int is_legal_move(const BoardState *state, Move m) {
-    if (!is_pseudo_legal_move(state, m)) return 0;
-    BoardState next;
-    make_move(state, &next, m);
-    int king = find_king(&next, state->turn);
-    if (king == -1) return 0;
-    return !is_square_attacked(&next, king, -state->turn);
-}
-
-int has_legal_moves(const BoardState *state) {
-    for (int f = 0; f < 64; f++) {
-        if (state->board[f] == 0) continue;
-        if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
-        for (int t = 0; t < 64; t++) {
-            Move m = {f, t, 0};
-            if (abs(state->board[f]) == 1 && (t / 8 == 0 || t / 8 == 7)) {
-                m.promo = 5; 
-            }
-            if (is_legal_move(state, m)) return 1;
-        }
-    }
-    return 0;
-}
-
-int count_repetitions(const BoardState *state) {
-    int count = 1; 
-    for (int i = 0; i < history_count; i++) {
-        if (state->turn == history[i].turn &&
-            state->castle == history[i].castle &&
-            state->ep == history[i].ep &&
-            memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
-            count++;
-        }
-    }
-    return count;
-}
-
-void make_move(const BoardState *src, BoardState *dst, Move m) {
-    *dst = *src;
-    int p = dst->board[m.from];
-    int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
-
-    dst->board[m.from] = 0;
-
-    if (m.promo != 0) {
-        dst->board[m.to] = dst->turn * m.promo;
-    } else {
-        dst->board[m.to] = p;
-    }
-
-    if (abs(p) == 1 && m.to == dst->ep) {
-        int p_dir = (dst->turn == 1 ? 8 : -8);
-        int mt_cap = m.to + p_dir;
-        dst->board[mt_cap] = 0;
-    }
-
-    dst->ep = -1;
-    if (abs(p) == 1 && abs(m.from - m.to) == 16) {
-        dst->ep = m.from + (dst->turn == 1 ? -8 : 8);
-    }
-
-    if (abs(p) == 6) {
-        if (m.from == 60 && m.to == 62) { dst->board[61] = dst->board[63]; dst->board[63] = 0; }
-        else if (m.from == 60 && m.to == 58) { dst->board[59] = dst->board[56]; dst->board[56] = 0; }
-        else if (m.from == 4 && m.to == 6) { dst->board[5] = dst->board[7]; dst->board[7] = 0; }
-        else if (m.from == 4 && m.to == 2) { dst->board[3] = dst->board[0]; dst->board[0] = 0; }
-    }
-
-    if (m.from == 60) dst->castle &= ~1 & ~2;
-    if (m.from == 4)  dst->castle &= ~4 & ~8;
-    if (m.from == 63 || m.to == 63) dst->castle &= ~1;
-    if (m.from == 56 || m.to == 56) dst->castle &= ~2;
-    if (m.from == 7  || m.to == 7)  dst->castle &= ~4;
-    if (m.from == 0  || m.to == 0)  dst->castle &= ~8;
-
-    dst->turn = -dst->turn;
-    
-    if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
-    else dst->halfmoves++;
-    
-    if (dst->turn == 1) dst->fullmoves++;
-}
-
-// Draw console UI and render dynamic panels
-void draw_ui() {
-    printf("\033[H\r\n"); 
-
-    const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
-    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
-    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    int repetitions = count_repetitions(&current_state);
-
-    printf("  ");
-    if (current_state.halfmoves >= 100) {
-        printf("\033[1;36mDRAW (50-move rule)\033[0m");
-    } else if (repetitions >= 3) {
-        printf("\033[1;36mDRAW (threefold repetition)\033[0m");
-    } else if (!has_mov) {
-        if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
-        else printf("\033[1;36mSTALEMATE!\033[0m");
-    } else if (is_ch) {
-        printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
-    } else {
-        printf("%s's Turn", turn_str);
-    }
-    printf(" | W:%s B:%s", w_play, b_play);
-
-    const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
-    printf(" | %s", types[time_control_type]);
-    if (time_control_type == 0) {
-        printf(" (%d ms)", time_control_val);
-    } else if (time_control_type == 1) {
-        printf(" (depth %d)", time_control_val);
-    } else {
-        printf(" (nodes %d)", time_control_val);
-    }
-    printf("\033[K\r\n\r\n");
-
-    if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
-    } else {
-        printf("     h  g  f  e  d  c  b  a    ");
-    }
-    print_side_panel_line(0);
-    printf("\033[K\r\n");
-
-    int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
-    }
-
-    for (int r = 0; r < 8; r++) {
-        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
-        printf("  %d ", rank_lbl);
-
-        for (int c = 0; c < 8; c++) {
-            int sq = screen_to_board_sq(r, c);
-            int p = current_state.board[sq];
-
-            int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-            const char *bg_color;
-
-            int is_selected = (sq == selected_sq);
-            int is_cursor = (r == cursor_r && c == cursor_c);
-
-            int is_prev_move = 0;
-            if (history_count > 0) {
-                Move last_move = move_history[history_count - 1];
-                if (sq == last_move.from || sq == last_move.to) {
-                    is_prev_move = 1;
-                }
-            }
-
-            int is_legal_dest = 0;
-            if (selected_sq != -1) {
-                Move test_m = {selected_sq, sq, 0};
-                if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                    test_m.promo = 5;
-                }
-                if (is_legal_move(&current_state, test_m)) {
-                    is_legal_dest = 1;
-                }
-            }
-
-            if (is_cursor) {
-                bg_color = "\033[48;5;208m"; 
-            } else if (is_selected) {
-                bg_color = "\033[48;5;34m";  
-            } else if (sq == king_in_check) {
-                bg_color = "\033[48;5;196m"; 
-            } else if (is_prev_move) {
-                bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; 
-            } else if (is_legal_dest) {
-                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; 
-            } else {
-                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; 
-            }
-
-            const char *piece_str = " ";
-            const char *fg_color = "\033[38;5;232m"; 
-            if (p != 0) {
-                if (p > 0) fg_color = "\033[38;5;255m\033[1m"; 
-                switch (abs(p)) {
-                    case 1: piece_str = "P"; break;
-                    case 2: piece_str = "N"; break;
-                    case 3: piece_str = "B"; break;
-                    case 4: piece_str = "R"; break;
-                    case 5: piece_str = "Q"; break;
-                    case 6: piece_str = "K"; break;
-                }
-            }
-
-            printf("%s%s %s \033[0m", bg_color, fg_color, piece_str);
-        }
-
-        printf(" %d ", rank_lbl);
-        print_side_panel_line(r + 1);
-        printf("\033[K\r\n"); 
-    }
-
-    if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
-    } else {
-        printf("     h  g  f  e  d  c  b  a    ");
-    }
-    print_side_panel_line(9);
-    printf("\033[K\r\n\r\n");
-
-    printf(" \033[38;5;245m[D-Pad] Navigate | [A] Select | [B] Undo | [Home] Exit\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[-] Flip Board   | [+] Switch Sides | [1] Limit Mode\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[2] Adjust Val\033[0m\033[K\r\n\r\n");
-    
-    printf(" \033[38;5;248mEngine Path:\033[0m %s", engine_path);
-    printf("\033[K\r\n\033[J");
-    fflush(stdout);
-}
-
-void print_side_panel_line(int panel_row) {
-    printf("   ");
-    print_recent_moves(panel_row);
-}
-
-void print_recent_moves(int row) {
-    int total_full_moves = (history_count + 1) / 2;
-    if (total_full_moves == 0) {
-        return; 
-    }
-    int start_move = 1;
-    if (total_full_moves > 10) {
-        start_move = total_full_moves - 9;
-    }
-    int display = start_move + row;
-    if (display > total_full_moves) {
-        return; 
-    }
-
-    int w_idx = (display - 1) * 2;
-    int b_idx = w_idx + 1;
-
-    printf("   %2d. ", display);
-    if (w_idx < history_count) {
-        char w_str[10];
-        move_to_uci(move_history[w_idx], w_str);
-        printf("%-6s", w_str);
-    } else {
-        printf("------");
-    }
-
-    printf(" ");
-
-    if (b_idx < history_count) {
-        char b_str[10];
-        move_to_uci(move_history[b_idx], b_str);
-        printf("%-6s", b_str);
-    } else {
-        if (w_idx < history_count) printf("...");
-        else printf("------");
-    }
-}
-
-int get_promo_choice() {
-    printf("\r\n \033[1;33mPromote: [A] Queen, [B] Rook, [-] Bishop, [+] Knight\033[0m");
-    fflush(stdout);
-    int choice = 5;
-    while (1) {
-        WPAD_ScanPads();
-        u32 pressed = WPAD_ButtonsDown(0);
-        if (pressed & WPAD_BUTTON_A) { choice = 5; break; }
-        if (pressed & WPAD_BUTTON_B) { choice = 4; break; }
-        if (pressed & WPAD_BUTTON_MINUS) { choice = 3; break; }
-        if (pressed & WPAD_BUTTON_PLUS) { choice = 2; break; }
-        VIDEO_WaitVSync();
-    }
-    printf("\r\033[K\033[A\033[K");
-    fflush(stdout);
-    return choice;
-}
-
-void handle_select() {
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
-        return;
-    }
-
-    int sq = screen_to_board_sq(cursor_r, cursor_c);
-    if (selected_sq == -1) {
-        int p = current_state.board[sq];
-        if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
-            selected_sq = sq;
-        }
-    } else {
-        Move m = {selected_sq, sq, 0};
-        int p = current_state.board[selected_sq];
-        int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
-        if (is_promo) {
-            m.promo = 5; 
-        }
-
-        if (is_legal_move(&current_state, m)) {
-            if (is_promo) {
-                m.promo = get_promo_choice();
-            }
-            push_state(&current_state, m);
-            BoardState next;
-            make_move(&current_state, &next, m);
-            current_state = next;
-            selected_sq = -1;
-            save_state(); 
-        } else {
-            int target = current_state.board[sq];
-            if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
-                selected_sq = sq; 
-            } else {
-                selected_sq = -1; 
-            }
-        }
-    }
-}
-
-void handle_undo() {
-    int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
-    while (step_back > 0 && history_count > 0) {
-        history_count--;
-        current_state = history[history_count];
-        step_back--;
-    }
-    selected_sq = -1;
-    save_state();
-}
-
-void handle_reset_board() {
-    init_board(&current_state);
-    history_count = 0;
-    selected_sq = -1;
-    cursor_r = 6;
-    cursor_c = 4;
-    save_state();
-}
-
-void handle_switch_sides() {
-    if (user_side == 1) user_side = -1;
-    else if (user_side == -1) user_side = 0;
-    else if (user_side == 0) user_side = 2;
-    else user_side = 1;
-    save_state();
-}
-
-void adjust_time_control() {
-    if (time_control_type == 0) { // Time-Limit
-        int time_list[] = {50, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 10000};
-        int time_count = sizeof(time_list) / sizeof(time_list[0]);
-        int found_idx = -1;
-        for (int i = 0; i < time_count; i++) {
-            if (time_control_val == time_list[i]) {
-                found_idx = i;
-                break;
-            }
-        }
-        if (found_idx == -1 || found_idx == time_count - 1) {
-            time_control_val = time_list[0];
-        } else {
-            time_control_val = time_list[found_idx + 1];
-        }
-    } else if (time_control_type == 1) { // Depth-Limit (1-20)
-        time_control_val = (time_control_val % 20) + 1;
-    } else { // Node-Limit
-        int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288};
-        int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
-        int found_idx = -1;
-        for (int i = 0; i < nodes_count; i++) {
-            if (time_control_val == nodes_list[i]) {
-                found_idx = i;
-                break;
-            }
-        }
-        if (found_idx == -1 || found_idx == nodes_count - 1) {
-            time_control_val = nodes_list[0];
-        } else {
-            time_control_val = nodes_list[found_idx + 1];
-        }
-    }
-    save_state();
-}
-
-void handle_input() {
-    WPAD_ScanPads();
-    u32 pressed = WPAD_ButtonsDown(0);
-
-    if (pressed & WPAD_BUTTON_UP) {
-        if (cursor_r > 0) cursor_r--;
-    }
-    if (pressed & WPAD_BUTTON_DOWN) {
-        if (cursor_r < 7) cursor_r++;
-    }
-    if (pressed & WPAD_BUTTON_LEFT) {
-        if (cursor_c > 0) cursor_c--;
-    }
-    if (pressed & WPAD_BUTTON_RIGHT) {
-        if (cursor_c < 7) cursor_c++;
-    }
-    if (pressed & WPAD_BUTTON_A) {
-        handle_select();
-    }
-    if (pressed & WPAD_BUTTON_B) {
-        handle_undo();
-    }
-    if (pressed & WPAD_BUTTON_MINUS) {
-        board_orientation = -board_orientation;
-        save_state();
-    }
-    if (pressed & WPAD_BUTTON_PLUS) {
-        handle_switch_sides();
-    }
-    if (pressed & WPAD_BUTTON_1) {
-        time_control_type = (time_control_type + 1) % 3;
-        time_control_val = (time_control_type == 0) ? 1000 : (time_control_type == 1 ? 5 : 4096);
-        save_state();
-    }
-    if (pressed & WPAD_BUTTON_2) {
-        adjust_time_control();
-    }
-    if (pressed & WPAD_BUTTON_HOME) {
-        remove("sd:/apps/wiichess/state.bin");
         remove("sd:/apps/wiichess/position.uci");
-        remove("sd:/apps/wiichess/move.txt");
-        printf("\033[?25h\033[2J\033[H"); 
-        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
-    }
-}
 
-void init_board(BoardState *state) {
-    int start[64] = {
-        -4, -2, -3, -5, -6, -3, -2, -4,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         1,  1,  1,  1,  1,  1,  1,  1,
-         4,  2,  3,  5,  6,  3,  2,  4
-    };
-    memcpy(state->board, start, sizeof(start));
-    state->turn = 1;
-    state->castle = 15;
-    state->ep = -1;
-    state->halfmoves = 0;
-    state->fullmoves = 1;
-}
-
-int main(int argc, char **argv) {
-    init_wii_console();
-    
-    if (!fatInitDefault()) {
-        printf("FAT Init Failed! SD Card missing or locked.\n");
+        printf("\nCalculation complete. Returning to GUI...\n");
         VIDEO_WaitVSync();
-        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
-    }
-
-    int has_previous_state = load_state();
-    if (!has_previous_state) {
-        init_board(&current_state);
-        save_state();
-    }
-
-    // Read response files generated by calculation engines
-    FILE *f_move = fopen("sd:/apps/wiichess/move.txt", "r");
-    if (f_move) {
-        char move_str[16];
-        if (fscanf(f_move, "%15s", move_str) == 1) {
-            Move m = uci_to_move(move_str);
-            if (is_legal_move(&current_state, m)) {
-                push_state(&current_state, m);
-                BoardState next;
-                make_move(&current_state, &next, m);
-                current_state = next;
-                save_state();
-            }
-        }
-        fclose(f_move);
-        remove("sd:/apps/wiichess/move.txt"); 
-    }
-
-    printf("\033[2J\033[H\033[?25l"); 
-
-    while (1) {
-        int engine_active = 0;
-        if (has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
-            if (user_side == 2) engine_active = 1;
-            else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
-            else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
-        }
-
-        if (engine_active) {
-            draw_ui();
-            printf("\n  \033[1;32mLaunching Chess Engine...\033[0m\n");
-            fflush(stdout);
-            VIDEO_WaitVSync();
-            trigger_engine_move(); 
-        }
-
-        draw_ui();
-        handle_input();
         
-        VIDEO_WaitVSync(); 
+        run_dol("sd:/apps/wiichess/boot.dol");
+    }
+#endif
+
+    // Interactive fallback loop for testing via terminal/PC
+    while (true)
+    {
+        fflush(stdout);
+
+        char line[65536];
+        if (!fgets(line, sizeof(line), stdin))
+            break;
+
+        if (send_uci_command(line))
+            break;
     }
     return 0;
 }
