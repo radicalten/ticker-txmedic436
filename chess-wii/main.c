@@ -99,31 +99,58 @@ static void *high_alloc(u32 size) {
 
 // Position-independent assembly-free loader running in safe high memory space
 static void __attribute__((noinline)) loader_entry(LoaderParams *params) {
+    // FIX 1: Turn off physical interrupts instantly to prevent the CPU jumping to overwritten code blocks
+    __asm__ volatile("wrteei 0");
+
+    // FIX 2: Fast, optimized 32-bit aligned copy blocks instead of slow byte-by-byte copies
     for (int i = 0; i < 7; i++) {
         if (params->staged_text[i].size > 0) {
-            volatile u8 *dst = (volatile u8 *)params->staged_text[i].dest;
-            volatile u8 *src = (volatile u8 *)params->staged_text[i].src;
-            u32 size = params->staged_text[i].size;
-            for (u32 j = 0; j < size; j++) {
+            u32 *dst = (u32 *)params->staged_text[i].dest;
+            u32 *src = (u32 *)params->staged_text[i].src;
+            u32 words = params->staged_text[i].size / 4;
+            for (u32 j = 0; j < words; j++) {
                 dst[j] = src[j];
+            }
+            u32 rem = params->staged_text[i].size % 4;
+            if (rem > 0) {
+                u8 *dst_b = (u8 *)(dst + words);
+                u8 *src_b = (u8 *)(src + words);
+                for (u32 j = 0; j < rem; j++) {
+                    dst_b[j] = src_b[j];
+                }
             }
         }
     }
     for (int i = 0; i < 11; i++) {
         if (params->staged_data[i].size > 0) {
-            volatile u8 *dst = (volatile u8 *)params->staged_data[i].dest;
-            volatile u8 *src = (volatile u8 *)params->staged_data[i].src;
-            u32 size = params->staged_data[i].size;
-            for (u32 j = 0; j < size; j++) {
+            u32 *dst = (u32 *)params->staged_data[i].dest;
+            u32 *src = (u32 *)params->staged_data[i].src;
+            u32 words = params->staged_data[i].size / 4;
+            for (u32 j = 0; j < words; j++) {
                 dst[j] = src[j];
+            }
+            u32 rem = params->staged_data[i].size % 4;
+            if (rem > 0) {
+                u8 *dst_b = (u8 *)(dst + words);
+                u8 *src_b = (u8 *)(src + words);
+                for (u32 j = 0; j < rem; j++) {
+                    dst_b[j] = src_b[j];
+                }
             }
         }
     }
     if (params->bss_size > 0) {
-        volatile u8 *dst = (volatile u8 *)params->bss_start;
-        u32 size = params->bss_size;
-        for (u32 j = 0; j < size; j++) {
+        u32 *dst = (u32 *)params->bss_start;
+        u32 words = params->bss_size / 4;
+        for (u32 j = 0; j < words; j++) {
             dst[j] = 0;
+        }
+        u32 rem = params->bss_size % 4;
+        if (rem > 0) {
+            u8 *dst_b = (u8 *)(dst + words);
+            for (u32 j = 0; j < rem; j++) {
+                dst_b[j] = 0;
+            }
         }
     }
 
@@ -192,9 +219,12 @@ void run_dol(const char *path) {
     }
     fclose(f);
 
+    // FIX 3: Unmount FAT and turn off WPAD to release all open filesystem handles and hardware states
     WPAD_Shutdown();
+    fatUnmount("sd:");
+    fatUnmount("sd");
 
-    // FIXED: Use a hardcoded size instead of subtracting function pointers to bypass GCC function reordering optimizer crashes.
+    // Use a safe fixed size to bypass compilation optimizations reordering function locations
     u32 loader_size = 1024; 
     void *loader_target = (void *)0x81400000;
     memcpy(loader_target, (void *)loader_entry, loader_size);
