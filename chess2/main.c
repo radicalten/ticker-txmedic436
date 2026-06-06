@@ -184,6 +184,11 @@ static struct HashEntry mcumax_hash_table[MCUMAX_HASH_TABLE_SIZE];
 
 #endif
 
+// Global timing indicators shared between engine search and GUI interface
+static clock_t search_start_time;
+static uint32_t search_time_limit_ms;
+static bool time_limit_enabled;
+
 typedef bool (*mcumax_move_callback)(mcumax_move move);
 
 static int32_t mcumax_search(int32_t alpha,
@@ -647,6 +652,55 @@ static int32_t mcumax_search(int32_t alpha,
             hash_entry->square_to = iter_square_to;
         }
 #endif
+
+        // Outputs standard UCI "info" updates at the end of each iterative deepening level
+        if (mode == MCUMAX_SEARCH_BEST_MOVE)
+        {
+            clock_t current_clock = clock();
+            double elapsed_sec = (double)(current_clock - search_start_time) / CLOCKS_PER_SEC;
+            uint32_t elapsed_ms = (uint32_t)(elapsed_sec * 1000.0);
+            if (elapsed_ms == 0) elapsed_ms = 1;
+
+            char move_str[6];
+            char f1 = 'a' + (iter_square_from & 0x7);
+            char r1 = '8' - (iter_square_from >> 4);
+            char f2 = 'a' + (iter_square_to & 0x7);
+            char r2 = '8' - ((iter_square_to >> 4) & 0x7);
+
+            // Auto-detect back-rank pawn promotions
+            bool is_promo = false;
+            uint8_t piece = mcumax.board[iter_square_from] & 0x7;
+            if ((piece == MCUMAX_PAWN_UPSTREAM || piece == MCUMAX_PAWN_DOWNSTREAM) && (r2 == '8' || r2 == '1')) {
+                is_promo = true;
+            }
+
+            if (is_promo) {
+                sprintf(move_str, "%c%c%c%cq", f1, r1, f2, r2);
+            } else {
+                sprintf(move_str, "%c%c%c%c", f1, r1, f2, r2);
+            }
+
+            int current_depth = (iter_depth - 2 > 0) ? (iter_depth - 2) : 1;
+
+            // Print the dynamic search state
+            if (iter_score > MCUMAX_SCORE_MAX - 100) {
+                int mate_in_plies = MCUMAX_SCORE_MAX - iter_score;
+                int mate_in_moves = (mate_in_plies + 1) / 2;
+                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
+                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
+            } else if (iter_score < -MCUMAX_SCORE_MAX + 100) {
+                int mate_in_plies = MCUMAX_SCORE_MAX + iter_score;
+                int mate_in_moves = -(mate_in_plies + 1) / 2;
+                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
+                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
+            } else {
+                // Scale evaluation scores to standard centipawns (Pawn internal value is roughly 74)
+                int score_cp = (iter_score * 100) / 74;
+                printf("info depth %d score cp %d time %u nodes %u pv %s\n",
+                       current_depth, score_cp, elapsed_ms, mcumax.node_count, move_str);
+            }
+            fflush(stdout);
+        }
     }
 
     // Delayed-loss bonus
@@ -974,11 +1028,6 @@ uint32_t mcumax_get_node_count(void)
 
 #define MAIN_VALID_MOVES_NUM 512
 
-// Globals used by the timing logic in the search callback
-static clock_t search_start_time;
-static uint32_t search_time_limit_ms;
-static bool time_limit_enabled;
-
 // Custom callback function to dynamically stop search once limits are met
 void dynamic_search_time_callback(void *userdata)
 {
@@ -1237,7 +1286,7 @@ bool send_uci_command(char *line)
         uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
         uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
 
-        // 4. Output standard UCI engine information
+        // 4. Output final standard UCI engine information
         printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
 
         mcumax_play_move(move);
