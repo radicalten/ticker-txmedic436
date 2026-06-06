@@ -9,7 +9,7 @@ jobs:
     container: devkitpro/devkitppc:latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
     - name: Download custom packages
       run: |
           curl -L https://github.com/AndrewPiroli/wii-curl/releases/download/c8.16.0%2Bm3.6.4/libwiisocket-0.1-1-any.pkg.tar.gz -o libwiisocket-0.1-1-any.pkg.tar.gz
