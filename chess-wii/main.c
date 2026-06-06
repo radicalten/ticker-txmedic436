@@ -465,51 +465,6 @@ static int32_t mcumax_search(int32_t alpha,
         if ((iter_score == -MCUMAX_SCORE_MAX) &&
             (null_move_score != MCUMAX_SCORE_MAX))
             iter_score = 0;
-
-        if (mode == MCUMAX_SEARCH_BEST_MOVE)
-        {
-            clock_t current_clock = clock();
-            double elapsed_sec = (double)(current_clock - search_start_time) / CLOCKS_PER_SEC;
-            uint32_t elapsed_ms = (uint32_t)(elapsed_sec * 1000.0);
-            if (elapsed_ms == 0) elapsed_ms = 1;
-
-            char move_str[6];
-            char f1 = 'a' + (iter_square_from & 0x7);
-            char r1 = '8' - (iter_square_from >> 4);
-            char f2 = 'a' + (iter_square_to & 0x7);
-            char r2 = '8' - ((iter_square_to >> 4) & 0x7);
-
-            bool is_promo = false;
-            uint8_t piece = mcumax.board[iter_square_from] & 0x7;
-            if ((piece == MCUMAX_PAWN_UPSTREAM || piece == MCUMAX_PAWN_DOWNSTREAM) && (r2 == '8' || r2 == '1')) {
-                is_promo = true;
-            }
-
-            if (is_promo) {
-                sprintf(move_str, "%c%c%c%cq", f1, r1, f2, r2);
-            } else {
-                sprintf(move_str, "%c%c%c%c", f1, r1, f2, r2);
-            }
-
-            int current_depth = (iter_depth - 2 > 0) ? (iter_depth - 2) : 1;
-
-            if (iter_score > MCUMAX_SCORE_MAX - 100) {
-                int mate_in_plies = MCUMAX_SCORE_MAX - iter_score;
-                int mate_in_moves = (mate_in_plies + 1) / 2;
-                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
-                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
-            } else if (iter_score < -MCUMAX_SCORE_MAX + 100) {
-                int mate_in_plies = MCUMAX_SCORE_MAX + iter_score;
-                int mate_in_moves = -(mate_in_plies + 1) / 2;
-                printf("info depth %d score mate %d time %u nodes %u pv %s\n",
-                       current_depth, mate_in_moves, elapsed_ms, mcumax.node_count, move_str);
-            } else {
-                int score_cp = (iter_score * 100) / 74;
-                printf("info depth %d score cp %d time %u nodes %u pv %s\n",
-                       current_depth, score_cp, elapsed_ms, mcumax.node_count, move_str);
-            }
-            fflush(stdout);
-        }
     }
 
     return iter_score += iter_score < score;
@@ -773,21 +728,6 @@ void dynamic_search_time_callback(void *userdata)
     }
 }
 
-void print_board()
-{
-    const char *symbols = ".PPNKBRQ.ppnkbrq";
-    printf("  +-----------------+\n");
-    for (uint32_t y = 0; y < 8; y++)
-    {
-        printf("%d | ", 8 - y);
-        for (uint32_t x = 0; x < 8; x++)
-            printf("%c ", symbols[mcumax_get_piece(0x10 * y + x)]);
-        printf("|\n");
-    }
-    printf("  +-----------------+\n");
-    printf("    a b c d e f g h\n\n");
-}
-
 mcumax_square get_square(char *s)
 {
     mcumax_square rank = s[0] - 'a';
@@ -809,25 +749,6 @@ bool is_square_valid(char *s)
 bool is_move_valid(char *s)
 {
     return is_square_valid(s) && is_square_valid(s + 2);
-}
-
-void print_square(mcumax_square square)
-{
-    printf("%c%c",
-           'a' + ((square & 0x07) >> 0),
-           '1' + 7 - ((square & 0x70) >> 4));
-}
-
-void print_move(mcumax_move move)
-{
-    if ((move.from == MCUMAX_SQUARE_INVALID) ||
-        (move.to == MCUMAX_SQUARE_INVALID))
-        printf("(none)");
-    else
-    {
-        print_square(move.from);
-        print_square(move.to);
-    }
 }
 
 #ifdef __wii__
@@ -1005,30 +926,8 @@ bool send_uci_command(char *line)
     if (!token)
         return false;
 
-    if (!strcmp(token, "uci"))
-    {
-        printf("id name " MCUMAX_ID "\n");
-        printf("id author " MCUMAX_AUTHOR "\n");
-        printf("uciok\n");
-    }
-    else if (!strcmp(token, "ucinewgame"))
+    if (!strcmp(token, "ucinewgame"))
         mcumax_init();
-    else if (!strcmp(token, "isready"))
-        printf("readyok\n");
-    else if (!strcmp(token, "d"))
-        print_board();
-    else if (!strcmp(token, "l"))
-    {
-        mcumax_move valid_moves[MAIN_VALID_MOVES_NUM];
-        uint32_t valid_moves_num = mcumax_search_valid_moves(valid_moves, MAIN_VALID_MOVES_NUM);
-
-        for (uint32_t i = 0; i < valid_moves_num; i++)
-        {
-            print_move(valid_moves[i]);
-            printf(" ");
-        }
-        printf("\n");
-    }
     else if (!strcmp(token, "position"))
     {
         int fen_index = 0;
@@ -1158,33 +1057,15 @@ bool send_uci_command(char *line)
 
         mcumax_move move = mcumax_search_best_move(node_max, depth_max);
 
-        clock_t end_time = clock();
-        double elapsed_seconds = (double)(end_time - search_start_time) / CLOCKS_PER_SEC;
-
-        if (elapsed_seconds < 0.001) {
-            elapsed_seconds = 0.001; 
-        }
-
-        uint32_t nodes_searched = mcumax_get_node_count();
-        uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
-        uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
-
-        printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
-
 #ifdef __wii__
+        // Write calculated best move directly to move.txt on SD
         write_move_to_file(move);
 #endif
 
         mcumax_play_move(move);
-
-        printf("bestmove ");
-        print_move(move);
-        printf("\n");
     }
     else if (!strcmp(token, "quit"))
         return true;
-    else
-        printf("Unknown command: %s\n", token);
 
     return false;
 }
@@ -1192,17 +1073,9 @@ bool send_uci_command(char *line)
 int main()
 {
 #ifdef __wii__
-    VIDEO_Init();
-    GXRModeObj *rmode = VIDEO_GetPreferredMode(NULL);
-    void *xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
-    console_init(xfb, 20, 20, rmode->fbWidth, rmode->xfbHeight, rmode->fbWidth * VI_DISPLAY_PIX_SZ);
-    VIDEO_Configure(rmode);
-    VIDEO_SetNextFramebuffer(xfb);
-    VIDEO_SetBlack(FALSE);
-    VIDEO_Flush();
-    VIDEO_WaitVSync();
-    if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
-
+    // Setup ONLY the FAT file system interface.
+    // By skipping VIDEO_Init() & console_init(), the television remains cleanly
+    // frozen on the GUI's "Launching Chess Engine..." frame during calculation.
     if (!fatInitDefault()) {
         SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
@@ -1213,7 +1086,6 @@ int main()
 #ifdef __wii__
     FILE *f_uci = fopen("sd:/apps/wiichess/position.uci", "r");
     if (f_uci) {
-        // Safe line buffer sizing inside heap/static memory to avoid stack allocations
         static char line[4096];
         while (fgets(line, sizeof(line), f_uci)) {
             send_uci_command(line);
@@ -1221,9 +1093,7 @@ int main()
         fclose(f_uci);
         remove("sd:/apps/wiichess/position.uci");
 
-        printf("\nCalculation complete. Returning to GUI...\n");
-        VIDEO_WaitVSync();
-        
+        // Return immediately to the GUI (boot.dol) with zero display delays
         run_dol("sd:/apps/wiichess/boot.dol");
     }
 #endif
@@ -1232,7 +1102,7 @@ int main()
     {
         fflush(stdout);
 
-        static char line[4096]; // Static storage removes it entirely from the stack
+        static char line[4096]; 
         if (!fgets(line, sizeof(line), stdin))
             break;
 
