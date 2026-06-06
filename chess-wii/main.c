@@ -5,6 +5,7 @@
 #include <wiiuse/wpad.h>
 #include <fat.h>
 
+
 #define MAX_HISTORY 2048
 
 // Board representation
