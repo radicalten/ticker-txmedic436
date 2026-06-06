@@ -99,7 +99,7 @@ void run_dol(const char *path) {
     if (!f) {
         printf("\nError: Failed to open %s\n", path);
         VIDEO_WaitVSync();
-        SYS_ResetSystem(SYS_RETTO_MENU, 0, 0);
+        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
 
     dolheader header;
@@ -905,7 +905,7 @@ void handle_input() {
         remove("sd:/apps/wiichess/position.uci");
         remove("sd:/apps/wiichess/move.txt");
         printf("\033[?25h\033[2J\033[H"); 
-        SYS_ResetSystem(SYS_RETTO_MENU, 0, 0);
+        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
 }
 
@@ -935,7 +935,7 @@ int main(int argc, char **argv) {
     if (!fatInitDefault()) {
         printf("FAT Init Failed! Insertion error or write lock active.\n");
         VIDEO_WaitVSync();
-        SYS_ResetSystem(SYS_RETTO_MENU, 0, 0);
+        SYS_ResetSystem(SYS_RETURNTOMENU, 0, 0);
     }
 
     // Try to load any previous session game state 
