@@ -8,11 +8,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
-#include <limits.h>
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
 
 #define MAX_HISTORY 2048
 
@@ -48,8 +43,8 @@ int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI 
 int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
 int time_control_val = 1;    // Default: 1 ms
 
-// Engine path buffer (resolved dynamically at runtime)
-char engine_path[1024] = "./ucichess";
+// EDIT THIS LINE TO CHANGE ENGINE PATH IN SOURCE CODE
+char engine_path[256] = "./ucichess";
 
 int engine_in[2] = {-1, -1};
 int engine_out[2] = {-1, -1};
@@ -73,47 +68,6 @@ void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice();
-
-// Dynamically builds the absolute path to the engine relative to this program's location
-void resolve_engine_path() {
-    char exe_dir[PATH_MAX] = {0};
-    int resolved = 0;
-
-#if defined(__APPLE__)
-    char exe_path[PATH_MAX];
-    uint32_t size = sizeof(exe_path);
-    if (_NSGetExecutablePath(exe_path, &size) == 0) {
-        char real_exe_path[PATH_MAX];
-        if (realpath(exe_path, real_exe_path) != NULL) {
-            char *last_slash = strrchr(real_exe_path, '/');
-            if (last_slash != NULL) {
-                *last_slash = '\0'; // Strip the executable name
-                strncpy(exe_dir, real_exe_path, sizeof(exe_dir) - 1);
-                resolved = 1;
-            }
-        }
-    }
-#elif defined(__linux__)
-    char exe_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len != -1) {
-        exe_path[len] = '\0';
-        char *last_slash = strrchr(exe_path, '/');
-        if (last_slash != NULL) {
-            *last_slash = '\0'; // Strip the executable name
-            strncpy(exe_dir, exe_path, sizeof(exe_dir) - 1);
-            resolved = 1;
-        }
-    }
-#endif
-
-    if (resolved) {
-        snprintf(engine_path, sizeof(engine_path), "%s/ucichess", exe_dir);
-    } else {
-        // Fallback to current working directory if path detection fails
-        strncpy(engine_path, "./ucichess", sizeof(engine_path) - 1);
-    }
-}
 
 // Clean up termios and terminate engine processes
 void cleanup() {
@@ -1003,9 +957,6 @@ int main() {
     init_board(&current_state);
     enable_raw_mode();
     printf("\033[2J\033[H"); // Initial Full-Screen Clear
-
-    // Dynamically resolve the absolute path to 'ucichess' relative to the GUI binary
-    resolve_engine_path();
     start_engine(engine_path);
 
     while (1) {
