@@ -28,6 +28,8 @@ extern "C" {
 #define MCUMAX_MOVE_INVALID \
     (mcumax_move) { MCUMAX_SQUARE_INVALID, MCUMAX_SQUARE_INVALID }
 
+uint32_t mcumax_get_node_count(void);
+
 typedef uint8_t mcumax_square;
 typedef uint8_t mcumax_piece;
 
