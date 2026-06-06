@@ -14,7 +14,6 @@ LDFLAGS += $(CFLAGS) \
 -L/opt/devkitpro/libogc/lib \
 -L/opt/devkitpro/libogc/lib/wii \
  -lwiikeyboard -lfat -lwiiuse -lbte -logc -lm
-
 TARGET  := myapp
 SRCDIR 	:= chess-wii
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
