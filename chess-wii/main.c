@@ -21,6 +21,7 @@
 #include <gccore.h>
 #include <wiiuse/wpad.h>
 #include <fat.h>
+#include <ogc/lwp_watchdog.h> // FIXED: High-resolution hardware timers library
 #endif
 
 /* ==========================================================================
@@ -137,7 +138,12 @@ static const int8_t mcumax_board_setup[] = {
     MCUMAX_ROOK,
 };
 
+// FIXED: Native high-precision variables for time tracking on the Wii
+#ifdef __wii__
+static uint64_t search_start_time_ms;
+#else
 static clock_t search_start_time;
+#endif
 static uint32_t search_time_limit_ms;
 static bool time_limit_enabled;
 
@@ -718,8 +724,13 @@ void dynamic_search_time_callback(void *userdata)
 {
     if (time_limit_enabled)
     {
+        // FIXED: Measure time using reliable hardware ticks on Nintendo Wii instead of standard clock()
+#ifdef __wii__
+        uint64_t elapsed_ms = ticks_to_millisecs(gettime()) - search_start_time_ms;
+#else
         clock_t current_clock = clock();
         double elapsed_ms = ((double)(current_clock - search_start_time) / CLOCKS_PER_SEC) * 1000.0;
+#endif
         
         if (elapsed_ms >= (double)search_time_limit_ms)
         {
@@ -866,8 +877,6 @@ static void __attribute__((noinline)) loader_entry(LoaderParams *params) {
     start();
 }
 
-static void loader_entry_end(void) {}
-
 void run_dol(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -906,7 +915,8 @@ void run_dol(const char *path) {
 
     WPAD_Shutdown();
 
-    uint32_t loader_size = (uint32_t)loader_entry_end - (uint32_t)loader_entry;
+    // FIXED: Use a hardcoded size instead of subtracting function pointers to bypass GCC function reordering optimizer crashes.
+    uint32_t loader_size = 1024;
     void *loader_target = (void *)0x81400000;
     memcpy(loader_target, (void *)loader_entry, loader_size);
 
@@ -1052,7 +1062,12 @@ bool send_uci_command(char *line)
             search_time_limit_ms = 20;
         }
 
+        // FIXED: Set start tracking variables using correct clock subsystems
+#ifdef __wii__
+        search_start_time_ms = ticks_to_millisecs(gettime());
+#else
         search_start_time = clock();
+#endif
         mcumax_set_callback(dynamic_search_time_callback, NULL);
 
         mcumax_move move = mcumax_search_best_move(node_max, depth_max);
