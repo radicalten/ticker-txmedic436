@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h> // Added for measuring search time
 
 #include "mcu-max.h"
 
@@ -149,7 +150,28 @@ bool send_uci_command(char *line)
     }
     else if (!strcmp(token, "go"))
     {
+        // 1. Record start time
+        clock_t start_time = clock();
+
+        // 2. Perform search
         mcumax_move move = mcumax_search_best_move(1000000, 30);
+
+        // 3. Record end time and calculate elapsed seconds
+        clock_t end_time = clock();
+        double elapsed_seconds = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+
+        // Prevent division-by-zero or excessively high NPS on virtually instant moves
+        if (elapsed_seconds < 0.001) {
+            elapsed_seconds = 0.001; 
+        }
+
+        uint32_t nodes_searched = mcumax_get_node_count();
+        uint32_t time_ms = (uint32_t)(elapsed_seconds * 1000.0);
+        uint32_t nps = (uint32_t)((double)nodes_searched / elapsed_seconds);
+
+        // 4. Output the UCI info data (required by GUIs to track engine speed)
+        printf("info time %u nodes %u nps %u\n", time_ms, nodes_searched, nps);
+
         mcumax_play_move(move);
 
         printf("bestmove ");
