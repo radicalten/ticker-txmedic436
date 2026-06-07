@@ -1681,7 +1681,6 @@ INLINE Score king_safety_black(PawnEntry *pe, const Position *pos, Square ksq)
 }
 
 #endif
-#endif
 
 /* ==========================================
    FILE: material.h
@@ -1775,7 +1774,6 @@ INLINE int material_scale_factor(MaterialEntry *me, const Position *pos,
   return sf != SCALE_FACTOR_NONE ? sf : me->factor[c];
 }
 
-#endif
 
 /* ==========================================
    FILE: endgame.h
@@ -1812,7 +1810,6 @@ extern Key endgame_keys[NUM_EVAL + NUM_SCALING][2];
 
 void endgames_init(void);
 
-#endif
 
 /* ==========================================
    FILE: evaluate.h
@@ -1834,7 +1831,6 @@ extern int useNNUE;
 
 Value evaluate(const Position *pos);
 
-#endif
 
 /* ==========================================
    FILE: thread.h
@@ -1945,7 +1941,6 @@ INLINE Position *threads_main(void)
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
-#endif
 
 /* ==========================================
    FILE: timeman.h
@@ -1996,7 +1991,6 @@ INLINE TimePoint time_elapsed(void)
                        : now() - Time.startTime;
 }
 
-#endif
 
 /* ==========================================
    FILE: tt.h
@@ -2142,7 +2136,6 @@ void tt_allocate(size_t mbSize);
 void tt_clear(void);
 void tt_clear_worker(int idx);
 
-#endif
 
 /* ==========================================
    FILE: uci.h
@@ -2242,7 +2235,6 @@ char *uci_move(char *str, Move m, int chess960);
 void print_pv(Position *pos, Depth depth, Value alpha, Value beta);
 Move uci_to_move(const Position *pos, char *str);
 
-#endif
 
 /* ==========================================
    FILE: tbprobe.h
@@ -2263,7 +2255,6 @@ bool TB_root_probe_dtz(Position *pos, RootMoves *rm);
 bool TB_root_probe_dtm(Position *pos, RootMoves *rm);
 void TB_expand_mate(Position *pos, RootMove *move);
 
-#endif
 
 /* ==========================================
    FILE: misc.c
