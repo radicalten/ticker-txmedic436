@@ -5,12 +5,13 @@ LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
 SRCS    := $(wildcard chess3/*.c)
+NNUE    := chess3/nn-62ef826d1a6d.nnue
 OBJS    := $(patsubst %.c,%.o,$(SRCS)) network.o
 all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-network.o: nn-62ef826d1a6d.nnue
+network.o: $(NNUE)
 	@echo "Embedding chess3/nn-62ef826d1a6d.nnue..."
 	@echo '.section __TEXT,__const' > network.s
 	@echo '.globl __binary_nn_62ef826d1a6d_nnue_start' >> network.s
