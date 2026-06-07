@@ -1,6 +1,6 @@
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE -march=native -arch=apple-silicon
+-DNNUE -march=apple-silicon
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
