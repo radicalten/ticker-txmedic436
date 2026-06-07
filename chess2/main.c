@@ -11,7 +11,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
-#include <nmmintrin.h>
+//#include <nmmintrin.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
