@@ -12,4 +12,4 @@ all: $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 network.o: $(NNUE)
-	$(LD) -r -arch arm64 -o network.o -sectcreate binary network_nnue $<
+	ld -r -arch arm64 -o network.o -sectcreate binary network_nnue $<
