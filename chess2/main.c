@@ -25,7 +25,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 //#include <windows.h>
-#include <xmmintrin.h>
+//#include <xmmintrin.h>
 
 
 /* ==========================================
