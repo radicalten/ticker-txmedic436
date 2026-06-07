@@ -644,8 +644,6 @@ INLINE uint16_t readu_le_u16(const void *p)
   return q[0] | (q[1] << 8);
 }
 
-#endif
-
 /* ==========================================
    FILE: bitboard.h
    ========================================== */
@@ -1043,7 +1041,6 @@ INLINE Square  backmost_sq(Color c, Bitboard b)
   return c == WHITE ? lsb(b) : msb(b);
 }
 
-#endif
 
 /* ==========================================
    FILE: position.h
@@ -1418,7 +1415,6 @@ INLINE Bitboard attackers_to_occ(const Position *pos, Square s,
         | (attacks_from_king(s)           & pieces_p(KING));
 }
 
-#endif
 
 /* ==========================================
    FILE: movegen.h
@@ -1459,7 +1455,6 @@ ExtMove *generate_evasions(const Position *pos, ExtMove *list);
 ExtMove *generate_non_evasions(const Position *pos, ExtMove *list);
 ExtMove *generate_legal(const Position *pos, ExtMove *list);
 
-#endif
 
 
 /* ==========================================
@@ -1584,7 +1579,6 @@ INLINE void mp_init_pc(const Position *pos, Move ttm, Value th)
     st->stage++;
 }
 
-#endif
 
 /* ==========================================
    FILE: pawns.h
