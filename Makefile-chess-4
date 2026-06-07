@@ -11,16 +11,18 @@ all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-# Generate a stub so ld has at least one object file
-stub.c:
-	@echo "// stub" > stub.c
-
-stub.o: stub.c
-	$(CC) -arch arm64 -c stub.c -o stub.o
-
-network.o: stub.o $(NNUE)
-	ld -r -arch arm64 -o network.o stub.o \
-		-sectcreate binary network_nnue $(NNUE)
-
+network.o: $(NNUE)
+	$(CC) -x c -c /dev/null -o dummy.o
+	ld -r -arch arm64 -o network.o dummy.o -sectcreate binary network_nnue $<
+	rm dummy.o
 clean:
 	rm -f $(OBJS) $(TARGET) dummy.o
+
+# Alternate NNUE loading method for MacOS Apple Silicon Generate a stub so ld has at least one object file
+#stub.c:
+#	@echo "// stub" > stub.c
+#stub.o: stub.c
+#	$(CC) -arch arm64 -c stub.c -o stub.o
+#network.o: stub.o $(NNUE)
+#	ld -r -arch arm64 -o network.o stub.o \
+#		-sectcreate binary network_nnue $(NNUE)
