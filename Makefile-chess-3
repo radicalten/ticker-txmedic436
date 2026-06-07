@@ -9,7 +9,7 @@
 
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE -march=arm64 -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
+-DNNUE -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
