@@ -1,4 +1,8 @@
 CC		:= cc
+OBJCOPY := objcopy
+NNUE_FILE := nn-62ef826d1a6d.nnue
+NNUE_OBJ  := chess3/nnue_embedded.o
+
 CFLAGS 	:= -O3 -flto \
 -DNNUE -DNNUE_EMBEDDED -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
@@ -6,5 +10,25 @@ LDFLAGS := $(CFLAGS) \
 TARGET  := myapp
 SRCS    := $(wildcard chess3/*.c)
 OBJS    := $(patsubst %.c,%.o,$(SRCS))
-all: $(OBJS)
-	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+
+all: $(OBJS) $(NNUE_OBJ)
+	$(CC) $(OBJS) $(NNUE_OBJ) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+
+chess3/%.o: chess3/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# ============================================================
+#  Embed NNUE via objcopy
+#  On macOS, use the brew-installed binutils objcopy
+#  Symbol names: dots and hyphens become underscores
+#  e.g. nn-37f18f62d772.nnue ->
+#         _binary_nn_37f18f62d772_nnue_start
+#         _binary_nn_37f18f62d772_nnue_end
+#         _binary_nn_37f18f62d772_nnue_size
+# ============================================================
+$(NNUE_OBJ): $(NNUE_FILE)
+	$(OBJCOPY) \
+		-I binary \
+		-O elf64-x86-64 \
+		-B i386:x86-64 \
+		$(NNUE_FILE) $(NNUE_OBJ)
