@@ -1,5 +1,5 @@
 CC		:= cc
-CFLAGS 	:= -O3 -flto 
+CFLAGS 	:= -O3 -flto -DMAGIC_PLAIN
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
