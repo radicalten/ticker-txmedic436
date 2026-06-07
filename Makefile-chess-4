@@ -29,6 +29,6 @@ chess3/%.o: chess3/%.c
 $(NNUE_OBJ): $(NNUE_FILE)
 	$(OBJCOPY) \
 		-I binary \
-		-O elf64-x86-64 \
-		-B i386:x86-64 \
+		-O mach-o-arm64 \
+		-B aarch64 \
 		$(NNUE_FILE) $(NNUE_OBJ)
