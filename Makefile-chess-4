@@ -1,0 +1,19 @@
+#ifeq ($(ARCH),apple-silicon)
+#	arch = arm64
+#	prefetch = yes
+#	popcnt = yes
+#	neon = yes
+#	lto = yes
+#	numa = no
+#endif
+
+CC		:= cc
+CFLAGS 	:= -O3 -flto \
+-DNNUE -DNNUE_EMBEDDED -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
+LDFLAGS := $(CFLAGS) \
+-lcurl -lm
+TARGET  := myapp
+SRCS    := $(wildcard chess3/*.c)
+OBJS    := $(patsubst %.c,%.o,$(SRCS))
+all: $(OBJS)
+	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
