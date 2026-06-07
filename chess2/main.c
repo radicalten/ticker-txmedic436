@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <float.h>
 //#include <immintrin.h>
-#include <intrin.h>
+//#include <intrin.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
