@@ -25,6 +25,9 @@
 
 #include "types.h"
 
+// Declare the function signature
+Bitboard sliding_attack(const int deltas[], int square, Bitboard occupied);
+
 void bitbases_init(void);
 bool bitbases_probe(Square wksq, Square wpsq, Square bksq, Color us);
 
