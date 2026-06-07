@@ -55,8 +55,7 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TYPES_H
-#define TYPES_H
+
 
 
 // When compiling with provided Makefile (e.g. for Linux and OSX),
@@ -486,8 +485,6 @@ typedef struct DirtyPiece DirtyPiece;
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef MISC_H
-#define MISC_H
 
 #ifndef _WIN32
 #endif
@@ -674,10 +671,6 @@ INLINE uint16_t readu_le_u16(const void *p)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
-#ifndef BITBOARD_H
-#define BITBOARD_H
-
 
 
 void bitbases_init(void);
@@ -1078,9 +1071,6 @@ INLINE Square  backmost_sq(Color c, Bitboard b)
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef POSITION_H
-#define POSITION_H
-
 #ifndef _WIN32
 #endif
 
@@ -1456,9 +1446,6 @@ INLINE Bitboard attackers_to_occ(const Position *pos, Square s,
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef MOVEGEN_H
-#define MOVEGEN_H
-
 
 #define GEN_CAPTURES     0
 #define GEN_QUIETS       1
@@ -1500,10 +1487,6 @@ ExtMove *generate_legal(const Position *pos, ExtMove *list);
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
-#ifndef MOVEPICK_H
-#define MOVEPICK_H
-
 
 
 #define stats_clear(s) memset(s, 0, sizeof(*s))
@@ -1629,9 +1612,6 @@ INLINE void mp_init_pc(const Position *pos, Move ttm, Value th)
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef PAWNS_H
-#define PAWNS_H
-
 #ifndef NNUE_PURE
 
 
@@ -1735,9 +1715,6 @@ INLINE Score king_safety_black(PawnEntry *pe, const Position *pos, Square ksq)
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef MATERIAL_H
-#define MATERIAL_H
-
 
 // MaterialEntry contains various information about a material
 // configuration. It contains a material imbalance evaluation, a function
@@ -1832,9 +1809,6 @@ INLINE int material_scale_factor(MaterialEntry *me, const Position *pos,
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef ENDGAME_H
-#define ENDGAME_H
-
 
 typedef Value (EgFunc)(const Position *, Color);
 
@@ -1851,9 +1825,6 @@ void endgames_init(void);
 /* ==========================================
    FILE: evaluate.h
    ========================================== */
-
-#ifndef EVALUATE_H
-#define EVALUATE_H
 
 
 #define DefaultEvalFile "nn-62ef826d1a6d.nnue"
@@ -1897,8 +1868,6 @@ Value evaluate(const Position *pos);
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef THREAD_H
-#define THREAD_H
 
 #ifndef _WIN32
 #else
@@ -2010,9 +1979,6 @@ extern int numCmhTables;
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TIMEMAN_H
-#define TIMEMAN_H
-
 
 // The TimeManagement class computes the optimal time to think depending on
 // the maximum available time, the game move number and other parameters.
@@ -2063,9 +2029,6 @@ INLINE TimePoint time_elapsed(void)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
-#ifndef TT_H
-#define TT_H
 
 
 // TTEntry struct is the 10 bytes transposition table entry, defined as below:
@@ -2213,9 +2176,6 @@ void tt_clear_worker(int idx);
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef UCI_H
-#define UCI_H
-
 
 
 struct Option;
@@ -2295,9 +2255,6 @@ Move uci_to_move(const Position *pos, char *str);
 /* ==========================================
    FILE: tbprobe.h
    ========================================== */
-
-#ifndef TBPROBE_H
-#define TBPROBE_H
 
 
 extern int TB_MaxCardinality;
