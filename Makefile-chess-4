@@ -12,13 +12,4 @@ all: $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 network.o: $(NNUE)
-	@echo "Embedding chess3/nn-62ef826d1a6d.nnue..."
-	@echo '.section __TEXT,__const' > network.s
-	@echo '.globl __binary_nn_62ef826d1a6d_nnue_start' >> network.s
-	@echo '.globl __binary_nn_62ef826d1a6d_nnue_end' >> network.s
-	@echo '.balign 4096' >> network.s
-	@echo '__binary_nn_62ef826d1a6d_nnue_start:' >> network.s
-	@echo '.incbin "chess3/nn-62ef826d1a6d.nnue"' >> network.s  <-- Points to the subfolder
-	@echo '__binary_nn_62ef826d1a6d_nnue_end:' >> network.s
-	$(CC) $(CFLAGS) -c network.s -o network.o
-	@rm -f network.s
+	$(LD) -r -arch arm64 -o network.o -sectcreate binary network_nnue $<
