@@ -6,12 +6,12 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <float.h>
-#include <immintrin.h>
-#include <intrin.h>
+//#include <immintrin.h>
+//#include <intrin.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
-#include <nmmintrin.h>
+//#include <nmmintrin.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -24,8 +24,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <windows.h>
-#include <xmmintrin.h>
+//#include <windows.h>
+//#include <xmmintrin.h>
 
 
 /* ==========================================
