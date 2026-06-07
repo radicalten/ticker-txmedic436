@@ -1,6 +1,5 @@
 CC		:= cc
-CFLAGS 	:= -O3 -flto \
--mno-avx2 
+CFLAGS 	:= -O3 -flto 
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
