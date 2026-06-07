@@ -27,10 +27,6 @@
 //#include <windows.h>
 //#include <xmmintrin.h>
 
-
-#define MAGIC_PLAIN
-#define attacks_bb_queen(s, occupied) (attacks_bb_bishop((s), (occupied)) | attacks_bb_rook((s), (occupied)))
-
 /* ==========================================
    FILE: types.h
    ========================================== */
@@ -896,13 +892,19 @@ INLINE unsigned distance_r(Square x, Square y)
 }
 
 
-#if defined(MAGIC_FANCY)
-#elif defined(MAGIC_PLAIN)
-#elif defined(MAGIC_BLACK)
-#elif defined(BMI2_FANCY)
-#elif defined(BMI2_PLAIN)
-#elif defined(AVX2_BITBOARD)
-#endif
+Bitboard attacks_bb_bishop(Square sq, Bitboard occupied);
+Bitboard attacks_bb_rook(Square sq, Bitboard occupied);
+
+//#define MAGIC_PLAIN
+#define attacks_bb_queen(s, occupied) (attacks_bb_bishop((s), (occupied)) | attacks_bb_rook((s), (occupied)))
+
+//#if defined(MAGIC_FANCY)
+//#elif defined(MAGIC_PLAIN)
+//#elif defined(MAGIC_BLACK)
+//#elif defined(BMI2_FANCY)
+//#elif defined(BMI2_PLAIN)
+//#elif defined(AVX2_BITBOARD)
+//#endif
 
 INLINE Bitboard attacks_bb(int pt, Square s, Bitboard occupied)
 {
