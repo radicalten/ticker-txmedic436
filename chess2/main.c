@@ -6,12 +6,12 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <float.h>
-//#include <immintrin.h>
-//#include <intrin.h>
+#include <immintrin.h>
+#include <intrin.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
-//#include <nmmintrin.h>
+#include <nmmintrin.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -24,8 +24,9 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
-//#include <windows.h>
-//#include <xmmintrin.h>
+#include <windows.h>
+#include <xmmintrin.h>
+
 
 /* ==========================================
    FILE: types.h
@@ -51,7 +52,8 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-
+#ifndef TYPES_H
+#define TYPES_H
 
 
 // When compiling with provided Makefile (e.g. for Linux and OSX),
@@ -455,6 +457,8 @@ typedef struct DirtyPiece DirtyPiece;
 
 #endif
 
+#endif
+
 /* ==========================================
    FILE: misc.h
    ========================================== */
@@ -479,6 +483,8 @@ typedef struct DirtyPiece DirtyPiece;
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef MISC_H
+#define MISC_H
 
 #ifndef _WIN32
 #endif
@@ -640,6 +646,8 @@ INLINE uint16_t readu_le_u16(const void *p)
   return q[0] | (q[1] << 8);
 }
 
+#endif
+
 /* ==========================================
    FILE: bitboard.h
    ========================================== */
@@ -663,6 +671,10 @@ INLINE uint16_t readu_le_u16(const void *p)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef BITBOARD_H
+#define BITBOARD_H
+
 
 
 void bitbases_init(void);
@@ -891,20 +903,15 @@ INLINE unsigned distance_r(Square x, Square y)
   return r1 < r2 ? r2 - r1 : r1 - r2;
 }
 
-
-Bitboard attacks_bb_bishop(Square sq, Bitboard occupied);
-Bitboard attacks_bb_rook(Square sq, Bitboard occupied);
-
-//#define MAGIC_PLAIN
 #define attacks_bb_queen(s, occupied) (attacks_bb_bishop((s), (occupied)) | attacks_bb_rook((s), (occupied)))
 
-//#if defined(MAGIC_FANCY)
-//#elif defined(MAGIC_PLAIN)
-//#elif defined(MAGIC_BLACK)
-//#elif defined(BMI2_FANCY)
-//#elif defined(BMI2_PLAIN)
-//#elif defined(AVX2_BITBOARD)
-//#endif
+#if defined(MAGIC_FANCY)
+#elif defined(MAGIC_PLAIN)
+#elif defined(MAGIC_BLACK)
+#elif defined(BMI2_FANCY)
+#elif defined(BMI2_PLAIN)
+#elif defined(AVX2_BITBOARD)
+#endif
 
 INLINE Bitboard attacks_bb(int pt, Square s, Bitboard occupied)
 {
@@ -1043,6 +1050,7 @@ INLINE Square  backmost_sq(Color c, Bitboard b)
   return c == WHITE ? lsb(b) : msb(b);
 }
 
+#endif
 
 /* ==========================================
    FILE: position.h
@@ -1067,6 +1075,9 @@ INLINE Square  backmost_sq(Color c, Bitboard b)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef POSITION_H
+#define POSITION_H
 
 #ifndef _WIN32
 #endif
@@ -1417,6 +1428,7 @@ INLINE Bitboard attackers_to_occ(const Position *pos, Square s,
         | (attacks_from_king(s)           & pieces_p(KING));
 }
 
+#endif
 
 /* ==========================================
    FILE: movegen.h
@@ -1442,6 +1454,9 @@ INLINE Bitboard attackers_to_occ(const Position *pos, Square s,
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef MOVEGEN_H
+#define MOVEGEN_H
+
 
 #define GEN_CAPTURES     0
 #define GEN_QUIETS       1
@@ -1457,6 +1472,7 @@ ExtMove *generate_evasions(const Position *pos, ExtMove *list);
 ExtMove *generate_non_evasions(const Position *pos, ExtMove *list);
 ExtMove *generate_legal(const Position *pos, ExtMove *list);
 
+#endif
 
 
 /* ==========================================
@@ -1482,6 +1498,10 @@ ExtMove *generate_legal(const Position *pos, ExtMove *list);
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef MOVEPICK_H
+#define MOVEPICK_H
+
 
 
 #define stats_clear(s) memset(s, 0, sizeof(*s))
@@ -1581,6 +1601,7 @@ INLINE void mp_init_pc(const Position *pos, Move ttm, Value th)
     st->stage++;
 }
 
+#endif
 
 /* ==========================================
    FILE: pawns.h
@@ -1605,6 +1626,9 @@ INLINE void mp_init_pc(const Position *pos, Move ttm, Value th)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef PAWNS_H
+#define PAWNS_H
 
 #ifndef NNUE_PURE
 
@@ -1683,6 +1707,7 @@ INLINE Score king_safety_black(PawnEntry *pe, const Position *pos, Square ksq)
 }
 
 #endif
+#endif
 
 /* ==========================================
    FILE: material.h
@@ -1707,6 +1732,9 @@ INLINE Score king_safety_black(PawnEntry *pe, const Position *pos, Square ksq)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef MATERIAL_H
+#define MATERIAL_H
 
 
 // MaterialEntry contains various information about a material
@@ -1757,11 +1785,6 @@ INLINE bool material_specialized_eval_exists(MaterialEntry *me)
   return me->eval_func != 0;
 }
 
-
-// --- ADD THIS LINE TO FIX THE ERROR ---
-extern Value (*endgame_funcs[])(const Position *, Color);
-
-
 INLINE Value material_evaluate(MaterialEntry *me, const Position *pos)
 {
   return endgame_funcs[me->eval_func](pos, me->eval_func_side);
@@ -1781,6 +1804,7 @@ INLINE int material_scale_factor(MaterialEntry *me, const Position *pos,
   return sf != SCALE_FACTOR_NONE ? sf : me->factor[c];
 }
 
+#endif
 
 /* ==========================================
    FILE: endgame.h
@@ -1806,6 +1830,9 @@ INLINE int material_scale_factor(MaterialEntry *me, const Position *pos,
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef ENDGAME_H
+#define ENDGAME_H
+
 
 typedef Value (EgFunc)(const Position *, Color);
 
@@ -1817,10 +1844,14 @@ extern Key endgame_keys[NUM_EVAL + NUM_SCALING][2];
 
 void endgames_init(void);
 
+#endif
 
 /* ==========================================
    FILE: evaluate.h
    ========================================== */
+
+#ifndef EVALUATE_H
+#define EVALUATE_H
 
 
 #define DefaultEvalFile "nn-62ef826d1a6d.nnue"
@@ -1838,6 +1869,7 @@ extern int useNNUE;
 
 Value evaluate(const Position *pos);
 
+#endif
 
 /* ==========================================
    FILE: thread.h
@@ -1863,6 +1895,8 @@ Value evaluate(const Position *pos);
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef THREAD_H
+#define THREAD_H
 
 #ifndef _WIN32
 #else
@@ -1948,6 +1982,7 @@ INLINE Position *threads_main(void)
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
+#endif
 
 /* ==========================================
    FILE: timeman.h
@@ -1973,6 +2008,9 @@ extern int numCmhTables;
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef TIMEMAN_H
+#define TIMEMAN_H
+
 
 // The TimeManagement class computes the optimal time to think depending on
 // the maximum available time, the game move number and other parameters.
@@ -1992,32 +2030,13 @@ void time_init(Color us, int ply);
 #define time_optimum() Time.optimumTime
 #define time_maximum() Time.maximumTime
 
-
-// --- ADD THIS BLOCK TO FIX THE 'Limits' ERROR ---
-struct LimitsType {
-    uint32_t searchmoves[256]; // MAX_MOVES = 256
-    int numSearchmoves;
-    int time[2];               // WHITE and BLACK
-    int inc[2];
-    int movestogo;
-    int depth;
-    uint64_t nodes;
-    int movetime;
-    int mate;
-    bool infinite;
-    int npmsec;
-    int64_t startTime;
-};
-
-extern struct LimitsType Limits;
-// ------------------------------------------------
-
 INLINE TimePoint time_elapsed(void)
 {
   return Limits.npmsec ? (int64_t)threads_nodes_searched()
                        : now() - Time.startTime;
 }
 
+#endif
 
 /* ==========================================
    FILE: tt.h
@@ -2042,6 +2061,9 @@ INLINE TimePoint time_elapsed(void)
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef TT_H
+#define TT_H
 
 
 // TTEntry struct is the 10 bytes transposition table entry, defined as below:
@@ -2163,6 +2185,7 @@ void tt_allocate(size_t mbSize);
 void tt_clear(void);
 void tt_clear_worker(int idx);
 
+#endif
 
 /* ==========================================
    FILE: uci.h
@@ -2187,6 +2210,9 @@ void tt_clear_worker(int idx);
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef UCI_H
+#define UCI_H
 
 
 
@@ -2262,10 +2288,14 @@ char *uci_move(char *str, Move m, int chess960);
 void print_pv(Position *pos, Depth depth, Value alpha, Value beta);
 Move uci_to_move(const Position *pos, char *str);
 
+#endif
 
 /* ==========================================
    FILE: tbprobe.h
    ========================================== */
+
+#ifndef TBPROBE_H
+#define TBPROBE_H
 
 
 extern int TB_MaxCardinality;
@@ -2282,6 +2312,7 @@ bool TB_root_probe_dtz(Position *pos, RootMoves *rm);
 bool TB_root_probe_dtm(Position *pos, RootMoves *rm);
 void TB_expand_mate(Position *pos, RootMove *move);
 
+#endif
 
 /* ==========================================
    FILE: misc.c
@@ -2838,9 +2869,6 @@ void print_pretty(Bitboard b)
 
 // bitboards_init() initializes various bitboard tables. It is called at
 // startup and relies on global objects to be already zero-initialized.
-
-// --- ADD THIS LINE TO FIX THE ERROR ---
-static void init_sliding_attacks(void) {}
 
 void bitboards_init(void)
 {
