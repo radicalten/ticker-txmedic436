@@ -18,7 +18,7 @@ network.o: $(NNUE)
 clean:
 	rm -f $(OBJS) $(TARGET) dummy.o
 
-# Alternate NNUE loading method for MacOS Apple Silicon Generate a stub so ld has at least one object file
+# Alternate working NNUE loading method for MacOS Apple Silicon: Generate a stub so ld has at least one object file
 #stub.c:
 #	@echo "// stub" > stub.c
 #stub.o: stub.c
