@@ -459,8 +459,6 @@ typedef struct DirtyPiece DirtyPiece;
 
 #endif
 
-#endif
-
 /* ==========================================
    FILE: misc.h
    ========================================== */
