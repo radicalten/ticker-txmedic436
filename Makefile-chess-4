@@ -16,7 +16,6 @@ all: $(OBJS) $(NNUE_OBJ)
 
 chess3/%.o: chess3/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
-
 # ============================================================
 #  Embed NNUE via objcopy
 #  On macOS, use the brew-installed binutils objcopy
