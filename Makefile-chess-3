@@ -1,6 +1,6 @@
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE
+-DNNUE -march=native
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
