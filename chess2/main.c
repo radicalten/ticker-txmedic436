@@ -1757,6 +1757,11 @@ INLINE bool material_specialized_eval_exists(MaterialEntry *me)
   return me->eval_func != 0;
 }
 
+
+// --- ADD THIS LINE TO FIX THE ERROR ---
+extern Value (*endgame_funcs[])(const Position *, Color);
+
+
 INLINE Value material_evaluate(MaterialEntry *me, const Position *pos)
 {
   return endgame_funcs[me->eval_func](pos, me->eval_func_side);
