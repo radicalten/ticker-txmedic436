@@ -26,8 +26,8 @@
 #include "types.h"
 
 static Bitboard sliding_attack(int dirs[], Square sq, Bitboard occupied);
-static int RookDirs[];
-static int BishopDirs[];
+static int RookDirs[]{};
+static int BishopDirs[]{};
 
 void bitbases_init(void);
 bool bitbases_probe(Square wksq, Square wpsq, Square bksq, Color us);
