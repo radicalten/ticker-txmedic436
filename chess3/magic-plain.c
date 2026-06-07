@@ -1,4 +1,5 @@
 #include "types.h"
+#include "bitboard.h"
 
 Bitboard  RookMasks  [64];
 Bitboard  RookMagics [64];
