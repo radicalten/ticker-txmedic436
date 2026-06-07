@@ -2839,6 +2839,9 @@ void print_pretty(Bitboard b)
 // bitboards_init() initializes various bitboard tables. It is called at
 // startup and relies on global objects to be already zero-initialized.
 
+// --- ADD THIS LINE TO FIX THE ERROR ---
+static void init_sliding_attacks(void) {}
+
 void bitboards_init(void)
 {
 #ifndef USE_POPCNT
