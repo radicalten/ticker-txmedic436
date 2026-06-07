@@ -26,6 +26,8 @@
 #include "types.h"
 
 static Bitboard sliding_attack(int dirs[], Square sq, Bitboard occupied);
+static const int RookDirs[] = { NORTH, EAST, SOUTH, WEST };
+static const int BishopDirs[] = { NORTH_EAST, SOUTH_EAST, SOUTH_WEST, NORTH_WEST };
 
 void bitbases_init(void);
 bool bitbases_probe(Square wksq, Square wpsq, Square bksq, Color us);
