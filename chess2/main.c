@@ -1992,6 +1992,26 @@ void time_init(Color us, int ply);
 #define time_optimum() Time.optimumTime
 #define time_maximum() Time.maximumTime
 
+
+// --- ADD THIS BLOCK TO FIX THE 'Limits' ERROR ---
+struct LimitsType {
+    uint32_t searchmoves[256]; // MAX_MOVES = 256
+    int numSearchmoves;
+    int time[2];               // WHITE and BLACK
+    int inc[2];
+    int movestogo;
+    int depth;
+    uint64_t nodes;
+    int movetime;
+    int mate;
+    bool infinite;
+    int npmsec;
+    int64_t startTime;
+};
+
+extern struct LimitsType Limits;
+// ------------------------------------------------
+
 INLINE TimePoint time_elapsed(void)
 {
   return Limits.npmsec ? (int64_t)threads_nodes_searched()
