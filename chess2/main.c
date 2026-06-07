@@ -903,6 +903,7 @@ INLINE unsigned distance_r(Square x, Square y)
   return r1 < r2 ? r2 - r1 : r1 - r2;
 }
 
+#define MAGIC_PLAIN
 #define attacks_bb_queen(s, occupied) (attacks_bb_bishop((s), (occupied)) | attacks_bb_rook((s), (occupied)))
 
 #if defined(MAGIC_FANCY)
