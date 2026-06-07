@@ -12,4 +12,8 @@ all: $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 network.o: $(NNUE)
-	ld -r -arch arm64 -o network.o -sectcreate binary network_nnue $<
+	$(CC) -x c -c /dev/null -o dummy.o
+	ld -r -arch arm64 -o network.o dummy.o -sectcreate binary network_nnue $<
+	rm dummy.o
+clean:
+	rm -f $(OBJS) $(TARGET) dummy.o
