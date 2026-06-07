@@ -1,6 +1,15 @@
+#ifeq ($(ARCH),apple-silicon)
+#	arch = arm64
+#	prefetch = yes
+#	popcnt = yes
+#	neon = yes
+#	lto = yes
+#	numa = no
+#endif
+
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE -march=apple-silicon
+-DNNUE -march=arm64 -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
