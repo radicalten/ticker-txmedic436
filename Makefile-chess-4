@@ -5,6 +5,12 @@ LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
 SRCS    := $(wildcard chess3/*.c)
-OBJS    := $(patsubst %.c,%.o,$(SRCS))
+OBJS    := $(patsubst %.c,%.o,$(SRCS)) network.o
 all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+network.o: network.nnue
+	$(OBJCOPY) -I binary -O mach-o-arm64 network.nnue network.o
+$(TARGET): $(OBJS)
+	$(CC) $(OBJS) $(LDFLAGS) -o $(TARGET)
