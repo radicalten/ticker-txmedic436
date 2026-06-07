@@ -39,8 +39,22 @@
 #endif
 
 #ifdef NNUE_EMBEDDED
-#include "incbin.h"
-INCBIN(Network, DefaultEvalFile);
+//#include "incbin.h"
+//INCBIN(Network, DefaultEvalFile);
+extern const char _binary_nn_37f18f62d772_nnue_start[];
+extern const char _binary_nn_37f18f62d772_nnue_end[];
+extern const size_t _binary_nn_37f18f62d772_nnue_size;
+
+static inline const void *get_nnue_data(void) {
+    return (const void *)_binary_nn_37f18f62d772_nnue_start;
+}
+
+static inline size_t get_nnue_size(void) {
+    return (size_t)(
+        _binary_nn_37f18f62d772_nnue_end -
+        _binary_nn_37f18f62d772_nnue_start
+    );
+}
 #endif
 
 // Old gcc on Windows is unable to provide a 32-byte aligned stack.
