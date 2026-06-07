@@ -1,31 +1,3 @@
-nnue = yes
-pure = no
-sparse = yes
-optimize = yes
-lto = yes
-debug = no
-sanitize = no
-numa = no
-bits = 64
-prefetch = yes
-popcnt = yes
-pext = no
-sse = no
-mmx = no
-sse2 = no
-ssse3 = no
-sse41 = no
-avx = no
-avx2 = no
-avx512 = no
-vnni = no
-neon = yes
-ARCH = arm64
-native = no
-embed = no
-STRIP = strip
-
-
 CC		:= cc
 CFLAGS 	:= -O3 -flto
 LDFLAGS := $(CFLAGS) \
