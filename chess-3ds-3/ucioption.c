@@ -18,14 +18,12 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "3ds_bridge.h"
 #include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
-#ifndef _WIN32
-//#include <sys/mman.h>
-#endif
 
 #include "evaluate.h"
 #include "misc.h"
@@ -38,7 +36,6 @@
 #include "tt.h"
 #include "uci.h"
 
-// 'On change' actions, triggered by an option's value change
 static void on_clear_hash(Option *opt)
 {
   (void)opt;
@@ -138,23 +135,18 @@ static Option optionsMap[] = {
   { 0 }
 };
 
-// options_init() initializes the UCI options to their hard-coded default
-// values.
-
 void options_init()
 {
   char *s;
   size_t len;
 
 #ifdef NUMA
-  // On a non-NUMA machine, disable the NUMA option to diminish confusion.
   if (!numaAvail)
     optionsMap[OPT_NUMA].type = OPT_TYPE_DISABLED;
 #else
   optionsMap[OPT_NUMA].type = OPT_TYPE_DISABLED;
 #endif
 #ifdef _WIN32
-  // Disable the LargePages option if the machine does not support it.
   if (!large_pages_supported())
     optionsMap[OPT_LARGE_PAGES].type = OPT_TYPE_DISABLED;
 #endif
@@ -204,9 +196,6 @@ static const char *optTypeStr[] = {
   "check", "spin", "button", "string", "combo"
 };
 
-// print_options() prints all options in the format required by the
-// UCI protocol.
-
 void print_options(void)
 {
   for (Option *opt = optionsMap; opt->name != NULL; opt++) {
@@ -228,7 +217,6 @@ void print_options(void)
     }
     printf("\n");
   }
-  fflush(stdout);
 }
 
 int option_value(int optIdx)
