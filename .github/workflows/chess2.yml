@@ -20,4 +20,4 @@ jobs:
       with:
         name: Artifact
         path: |
-          .
+          ./myapp
