@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
-#elif defined(__3DS__)
+#elif defined(__GBA__)
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
@@ -360,8 +360,8 @@ size_t file_size(FD fd)
 
 const void *map_file(FD fd, map_t *map)
 {
-#if defined(__3DS__)
-  // 3DS Fallback: Allocate standard heap memory and read the file into it
+#if defined(__GBA__)
+  // GBA Fallback: Allocate standard heap memory and read the file into it
   size_t size = file_size(fd);
   *map = (map_t)size;
   void *data = malloc(size);
@@ -396,7 +396,7 @@ void unmap_file(const void *data, map_t map)
 {
   if (!data) return;
 
-#if defined(__3DS__)
+#if defined(__GBA__)
   free((void *)data);
 
 #elif !defined(_WIN32)
@@ -424,8 +424,8 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   alloc->ptr = ptr;
   return ptr;
 
-#elif defined(__3DS__)
-  // 3DS doesn't support Virtual/Large pages. 
+#elif defined(__GBA__)
+  // GBA doesn't support Virtual/Large pages. 
   // We use memalign with 64-byte alignment (optimal for ARM cache-lines).
   ptr = memalign(64, size);
   alloc->ptr = ptr;
@@ -466,7 +466,7 @@ void free_memory(alloc_t *alloc)
 {
 #ifdef _WIN32
   VirtualFree(alloc->ptr, 0, MEM_RELEASE);
-#elif defined(__3DS__)
+#elif defined(__GBA__)
   if (alloc->ptr) {
     free(alloc->ptr);
   }
