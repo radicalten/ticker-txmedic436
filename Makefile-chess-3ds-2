@@ -17,8 +17,9 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
+EXCLUDE := chess3/nnue.c chess3/numa.c
 SRCDIR 	:= chess-3ds-2
-C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
+C_SOURCES = $(foreach dir, $(SRCDIR), filter-out $(EXCLUDE), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
 
