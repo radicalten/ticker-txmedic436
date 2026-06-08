@@ -52,6 +52,10 @@ pid_t engine_pid = -1;
 int engine_thinking = 0;
 long long engine_nps = 0;    // Tracks current/last search nodes per second
 
+// Tracks evaluation point values from UCI engine
+int engine_score_type = -1;  // -1 = None, 0 = cp (centipawns), 1 = mate
+int engine_score_val = 0;    // Evaluation score from White's perspective
+
 char engine_buffer[8192];
 int engine_buf_len = 0;
 struct termios orig_termios;
@@ -184,6 +188,9 @@ void push_state(const BoardState *state, Move m) {
 // UCI Position Command Builder (With overflow prevention)
 void trigger_engine_move() {
     engine_nps = 0; // Reset search metrics for the new calculation
+    engine_score_type = -1; // Reset evaluation point values
+    engine_score_val = 0;
+
     static char cmd[32768]; // Allocate statically to prevent stack overflows
     cmd[0] = '\0';
     strcpy(cmd, "position startpos moves");
@@ -227,13 +234,30 @@ void process_engine_output(char *line) {
         len--;
     }
 
-    // Capture nodes per second (nps) from engine update lines
+    // Capture nodes per second (nps) and scores from engine update lines
     if (strncmp(line, "info", 4) == 0) {
         char *nps_ptr = strstr(line, " nps ");
         if (nps_ptr) {
             long long val;
             if (sscanf(nps_ptr, " nps %lld", &val) == 1) {
                 engine_nps = val;
+            }
+        }
+
+        // Parse search evaluations
+        char *score_ptr = strstr(line, " score ");
+        if (score_ptr) {
+            int score_val = 0;
+            char score_type[16];
+            if (sscanf(score_ptr, " score %15s %d", score_type, &score_val) == 2) {
+                if (strcmp(score_type, "cp") == 0) {
+                    engine_score_type = 0;
+                    // Standardize evaluation value from White's perspective
+                    engine_score_val = score_val * current_state.turn;
+                } else if (strcmp(score_type, "mate") == 0) {
+                    engine_score_type = 1;
+                    engine_score_val = score_val * current_state.turn;
+                }
             }
         }
     }
@@ -697,13 +721,27 @@ void draw_ui() {
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
     printf(" \033[38;5;248mEngine Status:\033[0m (%s)", (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
-    if (engine_pid > 0 && engine_nps > 0) {
-        if (engine_nps >= 1000000) {
-            printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
-        } else if (engine_nps >= 1000) {
-            printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
-        } else {
-            printf(" | NPS: %lld", engine_nps);
+    if (engine_pid > 0) {
+        if (engine_nps > 0) {
+            if (engine_nps >= 1000000) {
+                printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 1000) {
+                printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
+            } else {
+                printf(" | NPS: %lld", engine_nps);
+            }
+        }
+        // Format and print chess engine point value (Eval) normalized to White's perspective
+        if (engine_score_type == 0) {
+            printf(" | \033[1;36mEval:\033[0m %+.2f", (double)engine_score_val / 100.0);
+        } else if (engine_score_type == 1) {
+            if (engine_score_val > 0) {
+                printf(" | \033[1;31mEval: +M%d\033[0m", engine_score_val);
+            } else if (engine_score_val < 0) {
+                printf(" | \033[1;31mEval: -M%d\033[0m", -engine_score_val);
+            } else {
+                printf(" | \033[1;31mEval: M0\033[0m");
+            }
         }
     }
     printf("\033[K\r\n\033[J");
@@ -804,6 +842,11 @@ void handle_select() {
             make_move(&current_state, &next, m);
             current_state = next;
             selected_sq = -1;
+            
+            // Clear engine metrics for new human position
+            engine_nps = 0;
+            engine_score_type = -1;
+            engine_score_val = 0;
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -821,6 +864,8 @@ void handle_undo() {
         engine_thinking = 0;
     }
     engine_nps = 0;
+    engine_score_type = -1;
+    engine_score_val = 0;
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -836,6 +881,8 @@ void handle_reset_board() {
         engine_thinking = 0;
     }
     engine_nps = 0;
+    engine_score_type = -1;
+    engine_score_val = 0;
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
