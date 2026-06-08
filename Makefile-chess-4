@@ -1,6 +1,6 @@
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE -DNNUE_EMBEDDED -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
+-D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
@@ -11,18 +11,3 @@ all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-network.o: $(NNUE)
-	$(CC) -x c -c /dev/null -o dummy.o
-	ld -r -arch arm64 -o network.o dummy.o -sectcreate binary network_nnue $<
-	rm dummy.o
-clean:
-	rm -f $(OBJS) $(TARGET) dummy.o
-
-# Alternate working NNUE loading method for MacOS Apple Silicon: Generate a stub so ld has at least one object file
-#stub.c:
-#	@echo "// stub" > stub.c
-#stub.o: stub.c
-#	$(CC) -arch arm64 -c stub.c -o stub.o
-#network.o: stub.o $(NNUE)
-#	ld -r -arch arm64 -o network.o stub.o \
-#		-sectcreate binary network_nnue $(NNUE)
