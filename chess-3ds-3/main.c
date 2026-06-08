@@ -630,8 +630,10 @@ void make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
+// GUI Top-Screen Drawing Loop (VT100 ANSI Translation Layer)
+// FIXED: Swapped out unsupported 256-colors for standard 3DS-supported 16 color codes.
 void draw_ui() {
-    printf("\033[H\r\n"); 
+    printf("\033[H\r\n"); // Move cursor home position without flickering
 
     const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
     int king = find_king(&current_state, current_state.turn);
@@ -717,24 +719,26 @@ void draw_ui() {
                 }
             }
 
+            // Using standard 16-color ANSI backgrounds compatible with CTRU terminal
             if (is_cursor) {
-                bg_color = "\033[48;5;208m"; 
+                bg_color = "\033[45m"; // Magenta (Cursor Target Selection)
             } else if (is_selected) {
-                bg_color = "\033[48;5;34m";  
+                bg_color = "\033[42m"; // Green (Piece Selected)
             } else if (sq == king_in_check) {
-                bg_color = "\033[48;5;196m"; 
+                bg_color = "\033[41m"; // Red (King under Attack)
             } else if (is_prev_move) {
-                bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; 
+                bg_color = "\033[43m"; // Yellow highlight (Last Move Path)
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; 
+                bg_color = "\033[46m"; // Cyan highlight (Legal Destination Squares)
             } else {
-                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; 
+                bg_color = is_light ? "\033[47m" : "\033[40m"; // White vs Black standard squares
             }
 
             const char *piece_str = " ";
-            const char *fg_color = "\033[38;5;232m"; 
+            const char *fg_color = "\033[30m"; // Dark pieces default to Black text
             if (p != 0) {
-                if (p > 0) fg_color = "\033[38;5;255m\033[1m"; 
+                // White pieces default to Bold bright White text
+                if (p > 0) fg_color = "\033[1;37m"; 
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
                     case 2: piece_str = "N"; break;
@@ -761,11 +765,11 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    printf(" \033[38;5;245m[D-Pad] Move  | [A] Select | [B] Undo | [START] Reset\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[X] Flip Board | [Y] Switch Sides | [L] Time Control Type\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[R] Adjust Value | [SELECT] Exit to Homebrew\033[0m\033[K\r\n\r\n");
+    printf(" \033[1;30m[D-Pad] Move  | [A] Select | [B] Undo | [START] Reset\033[0m\033[K\r\n");
+    printf(" \033[1;30m[X] Flip Board | [Y] Switch Sides | [L] Time Control Type\033[0m\033[K\r\n");
+    printf(" \033[1;30m[R] Adjust Value | [SELECT] Exit to Homebrew\033[0m\033[K\r\n\r\n");
     
-    printf(" \033[38;5;248mEngine Status:\033[0m (%s)", (engine_running) ? "\033[1;32mActive\033[0m" : "\033[1;31mOffline\033[0m");
+    printf(" \033[1;37mEngine Status:\033[0m (%s)", (engine_running) ? "\033[1;32mActive\033[0m" : "\033[1;31mOffline\033[0m");
     if (engine_running) {
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
@@ -1062,6 +1066,10 @@ int main() {
         read_from_engine();
         draw_ui();
         handle_3ds_input();
+
+        // FIXED: Flush and swap graphic buffers to display console changes on the Top Screen LCD
+        gfxFlushBuffers();
+        gfxSwapBuffers();
 
         gspWaitForVBlank(); 
     }
