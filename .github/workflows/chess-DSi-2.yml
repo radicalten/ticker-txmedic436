@@ -9,7 +9,7 @@ jobs:
     container: devkitpro/devkitarm:latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
     - name: Download custom packages
       run: |
           curl -L https://github.com/cavv-dev/nds-curl/releases/download/curl-7.83.0%2Bwolfssl-5.7.6/nds-wolfssl-5.7.6-2-any.pkg.tar.zst -o nds-wolfssl-5.7.6-2-any.pkg.tar.zst 
@@ -22,7 +22,7 @@ jobs:
       run: |
         make -f Makefile-chess-DSi-2
     - name: Upload
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: dsi-curl
         path: |
