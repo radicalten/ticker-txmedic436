@@ -460,14 +460,8 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 }
 
 void draw_ui(void) {
-    static bool top_screen_cleared = false;
-    
     consoleSelect(&topConsole);
-    if (!top_screen_cleared) {
-        printf("\x1b[2J"); // Completely wipe the "Loading..." screen once
-        top_screen_cleared = true;
-    }
-    printf("\x1b[1;1H"); 
+    printf("\x1b[2J\x1b[1;1H"); // Safe clear screen and reset cursor
 
     const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
     int king = find_king(&current_state, current_state.turn);
@@ -553,24 +547,30 @@ void draw_ui(void) {
                 }
             }
 
+            // CTRU-Compatible 16-color ANSI background codes
             if (is_cursor) {
-                bg_color = "\x1b[48;5;208m"; 
+                bg_color = "\x1b[46m"; // Cyan background
             } else if (is_selected) {
-                bg_color = "\x1b[48;5;34m";  
+                bg_color = "\x1b[42m"; // Green background
             } else if (sq == king_in_check) {
-                bg_color = "\x1b[48;5;196m"; 
+                bg_color = "\x1b[41m"; // Red background
             } else if (is_prev_move) {
-                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; 
+                bg_color = "\x1b[44m"; // Blue background
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; 
+                bg_color = "\x1b[45m"; // Magenta background
             } else {
-                bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; 
+                bg_color = is_light ? "\x1b[47m" : "\x1b[43m"; // White vs Yellow
             }
 
-            const char *piece_str = ".";
-            const char *fg_color = "\x1b[30m"; 
+            // High Compatibility pieces with high-visibility foreground colors
+            const char *piece_str = " ";
+            const char *fg_color = "\x1b[30m"; // Default piece label: Black text
             if (p != 0) {
-                if (p > 0) fg_color = "\x1b[37m\x1b[1m"; 
+                if (p > 0) {
+                    fg_color = "\x1b[1;37m"; // White pieces: Bold White text
+                } else {
+                    fg_color = "\x1b[1;36m"; // Black pieces: Bold Cyan text
+                }
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
                     case 2: piece_str = "N"; break;
@@ -612,8 +612,7 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n");
 
-    // CRITICAL: Restore Bottom Console active focus immediately.
-    // This locks standard stdout calls from Stockfish back to the bottom screen!
+    // Immediately return output stream registers to bottom console
     consoleSelect(&bottomConsole);
 }
 
@@ -822,7 +821,7 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // Initial load screens
+    // Render loading screen immediately
     consoleSelect(&topConsole);
     printf("\x1b[2J");
     printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
@@ -837,7 +836,7 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // Spawn Stockfish safely on Core 1
+    // Spawn Stockfish safely on Core 1 (Secondary CPU Core)
     Thread stockfish_thread;
     s32 prio = 0x3F; 
     stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
