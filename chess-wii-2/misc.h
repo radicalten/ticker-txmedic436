@@ -30,10 +30,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#ifdef GEKKO
-#include <malloc.h> // Required for memalign() on devkitPPC
-#endif
-
 #include "types.h"
 
 void print_engine_info(bool to_uci);
@@ -42,7 +38,7 @@ void print_compiler_info(void);
 // prefetch() preloads the given address in L1/L2 cache. This is
 // a non-blocking function that doesn't stall the CPU waiting for data
 // to be loaded from memory, which can be quite slow.
-// On Wii/GC (PowerPC 750), __builtin_prefetch generates 'dcbt' instructions.
+
 INLINE void prefetch(void *addr)
 {
 #ifndef NO_PREFETCH
@@ -78,6 +74,7 @@ INLINE TimePoint now(void) {
 }
 
 #ifdef _WIN32
+
 bool large_pages_supported(void);
 extern size_t largePageMinimum;
 
@@ -91,13 +88,24 @@ typedef struct {
 void flockfile(FILE *F);
 void funlockfile(FILE *F);
 
-#else /* Unix and devkitPPC (GEKKO) */
+#elif defined(__wii__) || defined(__gamecube__) || defined(DEVKITPPC)
+
+/* devkitPro PPC - no mmap, use malloc/read instead */
+typedef int FD;
+#define FD_ERR -1
+typedef size_t map_t;  /* stores file size, needed for unmap (free) */
+typedef struct {
+  void  *ptr;
+  size_t size;
+} alloc_t;
+
+#else /* Unix */
 
 typedef int FD;
 #define FD_ERR -1
 typedef size_t map_t;
 typedef struct {
-  void *ptr;
+  void  *ptr;
   size_t size;
 } alloc_t;
 
@@ -139,7 +147,6 @@ INLINE uint64_t mul_hi64(uint64_t a, uint64_t b)
 #endif
 }
 
-// PowerPC (Wii/GameCube) is Big Endian. This will correctly return false on console.
 INLINE bool is_little_endian(void)
 {
   int num = 1;
@@ -171,9 +178,6 @@ INLINE uint16_t from_be_u16(uint16_t v)
   return is_little_endian() ? __builtin_bswap16(v) : v;
 }
 
-// NOTE: On PowerPC, if the pointer 'p' is not 4-byte aligned,
-// read_le_u32() may cause a DSI alignment exception crash.
-// If you encounter crashes while parsing files, use readu_le_u32 instead.
 INLINE uint32_t read_le_u32(const void *p)
 {
   return from_le_u32(*(uint32_t *)p);
@@ -184,7 +188,6 @@ INLINE uint16_t read_le_u16(const void *p)
   return from_le_u16(*(uint16_t *)p);
 }
 
-// Safe unaligned reads
 INLINE uint32_t readu_le_u32(const void *p)
 {
   const uint8_t *q = p;
