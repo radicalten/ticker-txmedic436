@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
-#elif defined(__3DS__)
+#elif defined(__arm__)
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
