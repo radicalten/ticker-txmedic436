@@ -25,16 +25,17 @@ typedef struct {
     int fullmoves;
 } BoardState;
 
+// Renamed to GuiMove to prevent namespace conflicts with Cfish's integer type 'Move'
 typedef struct {
     int from;
     int to;
     int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} Move;
+} GuiMove;
 
 // Global GUI state
 BoardState current_state;
 BoardState history[MAX_HISTORY];
-Move move_history[MAX_HISTORY];
+GuiMove move_history[MAX_HISTORY]; // Uses GuiMove
 int history_count = 0;
 
 int cursor_r = 6;  
@@ -72,10 +73,10 @@ extern void uci_loop(int argc, char **argv);
 
 // Forward Declarations
 void init_board(BoardState *state);
-int is_legal_move(const BoardState *state, Move m);
+int is_legal_move(const BoardState *state, GuiMove m);
 int has_legal_moves(const BoardState *state);
 int is_square_attacked(const BoardState *state, int sq, int attacker);
-void make_move(const BoardState *src, BoardState *dst, Move m);
+void make_move(const BoardState *src, BoardState *dst, GuiMove m);
 void print_side_panel_line(int panel_row);
 void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
@@ -173,7 +174,6 @@ int cfish_puts(const char *s) {
 
 // Background Cfish Worker Thread
 void* cfish_worker_thread(void *arg) {
-    // Engine static initializations (as found in original main.c)
     psqt_init();
     bitboards_init();
     zob_init();
@@ -197,7 +197,6 @@ void start_engine() {
     queue_init(&engine_to_gui);
     
     engine_running = 1;
-    // Launch the worker thread to let Cfish run asynchronously on Core 1/Secondary core
     pthread_create(&engine_thread, NULL, cfish_worker_thread, NULL);
     send_to_engine("uci\nisready\n");
 }
@@ -212,7 +211,8 @@ int screen_to_board_sq(int r, int c) {
     return (board_orientation == 1) ? (r * 8 + c) : ((7 - r) * 8 + (7 - c));
 }
 
-void move_to_uci(Move m, char *buf) {
+// Renamed to prevent collision with Cfish functions
+void gui_move_to_uci(GuiMove m, char *buf) {
     int f_col = m.from % 8;
     int f_row = 8 - (m.from / 8);
     int t_col = m.to % 8;
@@ -227,8 +227,9 @@ void move_to_uci(Move m, char *buf) {
     }
 }
 
-Move uci_to_move(const char *str) {
-    Move m = {-1, -1, 0};
+// Renamed to prevent collision with Cfish's uci_to_move
+GuiMove gui_uci_to_move(const char *str) {
+    GuiMove m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
     int f_col = str[0] - 'a';
     int f_row = 8 - (str[1] - '0');
@@ -246,7 +247,7 @@ Move uci_to_move(const char *str) {
     return m;
 }
 
-void push_state(const BoardState *state, Move m) {
+void push_state(const BoardState *state, GuiMove m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
         move_history[history_count] = m;
@@ -266,7 +267,7 @@ void trigger_engine_move() {
     int len = strlen(cmd);
     for (int i = 0; i < history_count; i++) {
         char uci_m[10];
-        move_to_uci(move_history[i], uci_m);
+        gui_move_to_uci(move_history[i], uci_m);
         int move_len = strlen(uci_m);
         
         if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) {
@@ -331,7 +332,7 @@ void process_engine_output(char *line) {
                 engine_thinking = 0;
                 return;
             }
-            Move m = uci_to_move(move_str);
+            GuiMove m = gui_uci_to_move(move_str);
             if (is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
                 BoardState next;
@@ -436,7 +437,7 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
     return 0;
 }
 
-int is_pseudo_legal_move(const BoardState *state, Move m) {
+int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
     int p = state->board[m.from];
     int target = state->board[m.to];
     int turn = state->turn;
@@ -545,7 +546,7 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
     return 0;
 }
 
-int is_legal_move(const BoardState *state, Move m) {
+int is_legal_move(const BoardState *state, GuiMove m) {
     if (!is_pseudo_legal_move(state, m)) return 0;
     BoardState next;
     make_move(state, &next, m);
@@ -559,7 +560,7 @@ int has_legal_moves(const BoardState *state) {
         if (state->board[f] == 0) continue;
         if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
         for (int t = 0; t < 64; t++) {
-            Move m = {f, t, 0};
+            GuiMove m = {f, t, 0};
             if (abs(state->board[f]) == 1 && (t / 8 == 0 || t / 8 == 7)) {
                 m.promo = 5; 
             }
@@ -582,7 +583,7 @@ int count_repetitions(const BoardState *state) {
     return count;
 }
 
-void make_move(const BoardState *src, BoardState *dst, Move m) {
+void make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     *dst = *src;
     int p = dst->board[m.from];
     
@@ -629,7 +630,6 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Top-Screen Drawing Loop (VT100 ANSI Translation Layer)
 void draw_ui() {
     printf("\033[H\r\n"); 
 
@@ -700,7 +700,7 @@ void draw_ui() {
 
             int is_prev_move = 0;
             if (history_count > 0) {
-                Move last_move = move_history[history_count - 1];
+                GuiMove last_move = move_history[history_count - 1];
                 if (sq == last_move.from || sq == last_move.to) {
                     is_prev_move = 1;
                 }
@@ -708,7 +708,7 @@ void draw_ui() {
 
             int is_legal_dest = 0;
             if (selected_sq != -1) {
-                Move test_m = {selected_sq, sq, 0};
+                GuiMove test_m = {selected_sq, sq, 0};
                 if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
                     test_m.promo = 5;
                 }
@@ -718,24 +718,23 @@ void draw_ui() {
             }
 
             if (is_cursor) {
-                bg_color = "\033[48;5;208m"; // Bright orange cursor
+                bg_color = "\033[48;5;208m"; 
             } else if (is_selected) {
-                bg_color = "\033[48;5;34m";  // Active select highlight (Green)
+                bg_color = "\033[48;5;34m";  
             } else if (sq == king_in_check) {
-                bg_color = "\033[48;5;196m"; // King in Check (Red)
+                bg_color = "\033[48;5;196m"; 
             } else if (is_prev_move) {
-                bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; // Moved pieces path
+                bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; 
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; // Legal Move Options
+                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; 
             } else {
-                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // Classic wood squares
+                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; 
             }
 
-            // Using standard high-visibility ASCII characters for 3DS terminal compatibility
             const char *piece_str = " ";
-            const char *fg_color = "\033[38;5;232m"; // Black Pieces
+            const char *fg_color = "\033[38;5;232m"; 
             if (p != 0) {
-                if (p > 0) fg_color = "\033[38;5;255m\033[1m"; // White Pieces (Bold White)
+                if (p > 0) fg_color = "\033[38;5;255m\033[1m"; 
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
                     case 2: piece_str = "N"; break;
@@ -811,7 +810,7 @@ void print_side_panel_line(int panel_row) {
     printf("   %2d. ", display);
     if (w_idx < history_count) {
         char w_str[10];
-        move_to_uci(move_history[w_idx], w_str);
+        gui_move_to_uci(move_history[w_idx], w_str);
         printf("%-6s", w_str);
     } else {
         printf("------");
@@ -821,7 +820,7 @@ void print_side_panel_line(int panel_row) {
 
     if (b_idx < history_count) {
         char b_str[10];
-        move_to_uci(move_history[b_idx], b_str);
+        gui_move_to_uci(move_history[b_idx], b_str);
         printf("%-6s", b_str);
     } else {
         if (w_idx < history_count) printf("...");
@@ -829,7 +828,6 @@ void print_side_panel_line(int panel_row) {
     }
 }
 
-// 3DS Hardware Keypad Promotion Selector on Lower screen
 int get_promo_choice() {
     printf("\r\n \033[1;33mPromote pawn: [A] Queen, [B] Rook, [X] Bishop, [Y] Knight\033[0m");
     fflush(stdout);
@@ -860,7 +858,7 @@ void handle_select() {
             selected_sq = sq;
         }
     } else {
-        Move m = {selected_sq, sq, 0};
+        GuiMove m = {selected_sq, sq, 0};
         int p = current_state.board[selected_sq];
         int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
         if (is_promo) m.promo = 5; 
@@ -979,7 +977,6 @@ void handle_3ds_input() {
     static int hold_timer = 0;
     u32 input_active = kDown;
 
-    // Fast-scrolling when D-Pad or Circle Pad is held
     if (kHeld & (KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT | KEY_CPAD_UP | KEY_CPAD_DOWN | KEY_CPAD_LEFT | KEY_CPAD_RIGHT)) {
         hold_timer++;
         if (hold_timer > 10) {
@@ -1014,7 +1011,7 @@ void handle_3ds_input() {
     }
     if (kDown & KEY_R)      adjust_time_control();
     
-    if (kDown & KEY_SELECT) { // Terminate cleanly back to system launcher
+    if (kDown & KEY_SELECT) { 
         if (engine_running) {
             send_to_engine("quit\n");
             pthread_join(engine_thread, NULL);
@@ -1044,7 +1041,7 @@ void init_board(BoardState *state) {
 
 int main() {
     gfxInitDefault();
-    consoleInit(GFX_TOP, NULL); // Top screen renders the ANSI chessboard 
+    consoleInit(GFX_TOP, NULL); 
 
     init_board(&current_state);
     start_engine();
@@ -1066,7 +1063,7 @@ int main() {
         draw_ui();
         handle_3ds_input();
 
-        gspWaitForVBlank(); // Cap frame rate
+        gspWaitForVBlank(); 
     }
 
     gfxExit();
