@@ -1,3 +1,6 @@
+#arch = ppc
+#bits = 32
+
 .SUFFIXES:
 export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
