@@ -26,7 +26,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #endif
 
 #include "misc.h"
