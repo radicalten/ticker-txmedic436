@@ -1,6 +1,6 @@
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
+-DNO_NNUE -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
