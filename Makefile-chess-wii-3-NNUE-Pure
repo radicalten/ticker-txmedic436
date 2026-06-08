@@ -38,6 +38,8 @@ $(TARGET).elf: $(OBJECTS)
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+network.o: $(NNUE)
+
 clean:
 	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
 
