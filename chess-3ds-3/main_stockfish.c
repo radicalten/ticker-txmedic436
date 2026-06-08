@@ -18,6 +18,7 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "3ds_bridge.h"
 #include <stdio.h>
 
 #include "bitboard.h"
@@ -31,7 +32,7 @@
 #include "uci.h"
 #include "tbprobe.h"
 
-int main(int argc, char **argv)
+int main_stockfish(int argc, char **argv)
 {
   print_engine_info(false);
 
