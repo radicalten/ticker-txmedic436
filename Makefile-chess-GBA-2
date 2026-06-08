@@ -17,7 +17,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libgba/lib \
 -lmm -ltonc -lm
 TARGET  := myapp
-EXCLUDE := chess3/nnue.c chess3/numa.c
+EXCLUDE := chess-GBA-2/nnue.c chess-GBA-2/numa.c
 SRCDIR 	:= chess-GBA-2
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
