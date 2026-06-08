@@ -8,7 +8,7 @@ MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mwo
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP) \
--DIS_32BIT -DNNUE -DNNUE_EMBEDDED
+-DIS_32BIT -DNNUE -DNNUE_EMBEDDED -DNNUE_PURE
 LDFLAGS := $(CFLAGS) \
 -specs=3dsx.specs \
 -Wl,-Map,$(TARGET).map \
