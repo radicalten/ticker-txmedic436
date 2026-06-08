@@ -384,7 +384,7 @@ CLAMP(size_t)
 CLAMP(long)
 #undef CLAMP
 
-#if defined(__arm__) || defined(__3DS__)
+#ifndef __APPLE__
 #define TEMPLATE(F,a,...) _Generic((a), \
     int: F##_int,              \
     uint64_t: F##_uint64_t,    \
@@ -392,17 +392,8 @@ CLAMP(long)
     int64_t: F##_int64_t,      \
     int16_t: F##_int16_t,      \
     uint8_t: F##_uint8_t,      \
+    size_t: F##_size_t,        \
     long: F##_long,            \
-    double: F##_double         \
-) (a,__VA_ARGS__)
-#elif !defined(__APPLE__)
-#define TEMPLATE(F,a,...) _Generic((a), \
-    int: F##_int,              \
-    uint64_t: F##_uint64_t,    \
-    unsigned: F##_unsigned,    \
-    int64_t: F##_int64_t,      \
-    int16_t: F##_int16_t,      \
-    uint8_t: F##_uint8_t,      \
     double: F##_double         \
 ) (a,__VA_ARGS__)
 #else
