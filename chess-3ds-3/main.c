@@ -102,29 +102,30 @@ void queue_write(SafeQueue *q, const char *str, int len) {
     pthread_mutex_unlock(&q->lock);
 }
 
+// FIXED: Removed the "max_len - 1" logical boundary block. 
+// This allows single-byte requests (like reading standard characters) to succeed instead of returning 0.
 int queue_read_blocking(SafeQueue *q, char *out_buf, int max_len) {
     pthread_mutex_lock(&q->lock);
     while (q->head == q->tail) {
         pthread_cond_wait(&q->cond, &q->lock);
     }
     int idx = 0;
-    while (q->head != q->tail && idx < max_len - 1) {
+    while (q->head != q->tail && idx < max_len) {
         out_buf[idx++] = q->buffer[q->tail];
         q->tail = (q->tail + 1) % sizeof(q->buffer);
     }
-    out_buf[idx] = '\0';
     pthread_mutex_unlock(&q->lock);
     return idx;
 }
 
+// FIXED: Modified similarly to prevent empty/0-byte reads during background cycles
 int queue_read_nonblocking(SafeQueue *q, char *out_buf, int max_len) {
     pthread_mutex_lock(&q->lock);
     int idx = 0;
-    while (q->head != q->tail && idx < max_len - 1) {
+    while (q->head != q->tail && idx < max_len) {
         out_buf[idx++] = q->buffer[q->tail];
         q->tail = (q->tail + 1) % sizeof(q->buffer);
     }
-    out_buf[idx] = '\0';
     pthread_mutex_unlock(&q->lock);
     return idx;
 }
@@ -135,7 +136,9 @@ ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream) {
     int idx = 0;
     while (idx < (int)sizeof(local_line) - 1) {
         char c;
-        queue_read_blocking(&gui_to_engine, &c, 1);
+        if (queue_read_blocking(&gui_to_engine, &c, 1) <= 0) {
+            break;
+        }
         local_line[idx++] = c;
         if (c == '\n') break;
     }
