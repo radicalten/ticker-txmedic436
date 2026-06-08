@@ -10,7 +10,7 @@ MACHDEP := -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math
 INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I/opt/devkitpro/libogc/include
 CFLAGS 	+= -O3 -flto \
 $(INCLUDES) $(MACHDEP) \
--DNO_NNUE
+-DNO_NNUE -DIS_32BIT
 LDFLAGS += $(CFLAGS) \
 -Wl,-Map,$(notdir $@).map \
 -L/opt/devkitpro/portlibs/wii/lib \
