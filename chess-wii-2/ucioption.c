@@ -21,10 +21,13 @@
 #include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #ifndef _WIN32
-//#include <sys/mman.h>
+#ifndef GEKKO
+#include <sys/mman.h> // Excluded on devkitPPC targeting GameCube/Wii
+#endif
 #endif
 
 #include "evaluate.h"
@@ -153,14 +156,22 @@ void options_init()
 #else
   optionsMap[OPT_NUMA].type = OPT_TYPE_DISABLED;
 #endif
+
 #ifdef _WIN32
   // Disable the LargePages option if the machine does not support it.
   if (!large_pages_supported())
     optionsMap[OPT_LARGE_PAGES].type = OPT_TYPE_DISABLED;
 #endif
+
 #if defined(__linux__) && !defined(MADV_HUGEPAGE)
   optionsMap[OPT_LARGE_PAGES].type = OPT_TYPE_DISABLED;
 #endif
+
+#ifdef GEKKO
+  // Disable LargePages on Wii/GameCube (not supported/applicable on bare-metal consoles)
+  optionsMap[OPT_LARGE_PAGES].type = OPT_TYPE_DISABLED;
+#endif
+
   optionsMap[OPT_SKILL_LEVEL].type = OPT_TYPE_DISABLED;
   if (sizeof(size_t) < 8) {
     optionsMap[OPT_SYZ_PROBE_LIMIT].def = 5;
