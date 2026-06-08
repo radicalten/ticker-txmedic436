@@ -26,7 +26,14 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
-//#include <sys/mman.h>
+#ifndef GEKKO
+#include <sys/mman.h> // Excluded on devkitPPC targeting GameCube/Wii
+#endif
+#endif
+
+#include <stdlib.h>
+#ifdef GEKKO
+#include <malloc.h>
 #endif
 
 #include "misc.h"
@@ -46,10 +53,6 @@ static char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 static char date[] = __DATE__;
 
 // print engine_info() prints the full name of the current Stockfish version.
-// This will be either "Stockfish <Tag> DD-MM-YY" (where DD-MM-YY is the
-// date when the program was compiled) or "Stockfish <Version>", depending
-// on whether Version is empty.
-
 void print_engine_info(bool to_uci)
 {
   char my_date[64];
@@ -97,7 +100,6 @@ void print_engine_info(bool to_uci)
 }
 
 // print compiler_info() prints a string trying to describe the compiler
-
 void print_compiler_info(void)
 {
 #define stringify2(x) #x
@@ -133,6 +135,8 @@ void print_compiler_info(void)
          " on Android"
 #elif __linux__
          " on Linux"
+#elif GEKKO
+         " on Nintendo Wii/GameCube (devkitPPC)"
 #elif _WIN64
          " on Microsoft Windows 64-bit"
 #elif _WIN32
@@ -196,20 +200,6 @@ void print_compiler_info(void)
 }
 
 // xorshift64star Pseudo-Random Number Generator
-// This class is based on original code written and dedicated
-// to the public domain by Sebastiano Vigna (2014).
-// It has the following characteristics:
-//
-//  -  Outputs 64-bit numbers
-//  -  Passes Dieharder and SmallCrush test batteries
-//  -  Does not require warm-up, no zeroland to escape
-//  -  Internal state is a single 64-bit integer
-//  -  Period is 2^64 - 1
-//  -  Speed: 1.60 ns/call (Core i7 @3.40GHz)
-//
-// For further analysis see
-//   <http://vigna.di.unimi.it/ftp/papers/xorshift.pdf>
-
 void prng_init(PRNG *rng, uint64_t seed)
 {
   rng->s = seed;
@@ -285,8 +275,6 @@ bool large_pages_supported(void)
   return 1;
 }
 
-// The following two functions were taken from mingw_lock.c
-
 void __cdecl _lock(int locknum);
 void __cdecl _unlock(int locknum);
 #define _STREAM_LOCKS 16
@@ -319,11 +307,9 @@ FD open_file(const char *name)
 {
 #ifndef _WIN32
   return open(name, O_RDONLY);
-
 #else
   return CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
       FILE_FLAG_RANDOM_ACCESS, NULL);
-
 #endif
 }
 
@@ -331,10 +317,8 @@ void close_file(FD fd)
 {
 #ifndef _WIN32
   close(fd);
-
 #else
   CloseHandle(fd);
-
 #endif
 }
 
@@ -344,26 +328,16 @@ size_t file_size(FD fd)
   struct stat statbuf;
   fstat(fd, &statbuf);
   return statbuf.st_size;
-
 #else
   DWORD sizeLow, sizeHigh;
   sizeLow = GetFileSize(fd, &sizeHigh);
   return ((uint64_t)sizeHigh << 32) | sizeLow;
-
 #endif
 }
 
 const void *map_file(FD fd, map_t *map)
 {
-#ifndef _WIN32
-  *map = file_size(fd);
-  void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
-#ifdef MADV_RANDOM
-  madvise(data, *map, MADV_RANDOM);
-#endif
-  return data == MAP_FAILED ? NULL : data;
-
-#else
+#if defined(_WIN32)
   DWORD sizeLow, sizeHigh;
   sizeLow = GetFileSize(fd, &sizeHigh);
   *map = CreateFileMapping(fd, NULL, PAGE_READONLY, sizeHigh, sizeLow, NULL);
@@ -371,6 +345,32 @@ const void *map_file(FD fd, map_t *map)
     return NULL;
   return MapViewOfFile(*map, FILE_MAP_READ, 0, 0, 0);
 
+#elif defined(GEKKO)
+  // devkitPPC Memory Allocation & Manual Read implementation.
+  // We do this because the Wii/GC does not support MMU file mapping (mmap).
+  size_t size = file_size(fd);
+  *map = size;
+  if (size == 0) return NULL;
+
+  // Allocate 32-byte aligned memory (required for fast Wii DMA/cache alignment)
+  void *data = memalign(32, size);
+  if (!data) return NULL;
+
+  // Perform sequential disk read into RAM
+  ssize_t bytes_read = read(fd, data, size);
+  if (bytes_read != (ssize_t)size) {
+    free(data);
+    return NULL;
+  }
+  return data;
+
+#else /* Standard Linux/macOS Unix */
+  *map = file_size(fd);
+  void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
+#ifdef MADV_RANDOM
+  madvise(data, *map, MADV_RANDOM);
+#endif
+  return data == MAP_FAILED ? NULL : data;
 #endif
 }
 
@@ -378,13 +378,14 @@ void unmap_file(const void *data, map_t map)
 {
   if (!data) return;
 
-#ifndef _WIN32
-  munmap((void *)data, map);
-
-#else
+#if defined(_WIN32)
   UnmapViewOfFile(data);
   CloseHandle(map);
-
+#elif defined(GEKKO)
+  // Since we used memalign/malloc on the Wii, we free it normally.
+  free((void *)data);
+#else
+  munmap((void *)data, map);
 #endif
 }
 
@@ -401,6 +402,14 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   } else
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
   alloc->ptr = ptr;
+  return ptr;
+
+#elif defined(GEKKO)
+  // Wii/Gamecube does not support Large Page (lp) mapping.
+  // We allocate memory aligned to 32 bytes.
+  ptr = memalign(32, size);
+  alloc->ptr = ptr;
+  alloc->size = size;
   return ptr;
 
 #else /* Unix */
@@ -437,6 +446,11 @@ void free_memory(alloc_t *alloc)
 {
 #ifdef _WIN32
   VirtualFree(alloc->ptr, 0, MEM_RELEASE);
+#elif defined(GEKKO)
+  if (alloc->ptr) {
+    free(alloc->ptr);
+    alloc->ptr = NULL;
+  }
 #else
   munmap(alloc->ptr, alloc->size);
 #endif
