@@ -2,11 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
+#define ENGINE_STACK_SIZE (256 * 1024)
 
 typedef struct {
     int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
@@ -57,7 +57,6 @@ int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice(void);
 
-// Renamed here to avoid collision with Stockfish's internal uci_to_move
 Move gui_uci_to_move(const char *str);
 
 int screen_to_board_sq(int r, int c) {
@@ -83,7 +82,6 @@ void move_to_uci(Move m, char *buf) {
     }
 }
 
-// Renamed here to avoid collision with Stockfish's internal uci_to_move
 Move gui_uci_to_move(const char *str) {
     Move m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
@@ -187,7 +185,6 @@ void process_engine_output(char *line) {
                 engine_thinking = 0;
                 return;
             }
-            // CHANGED: Use gui_uci_to_move to fetch local GUI Move struct format
             Move m = gui_uci_to_move(move_str);
             if (is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
@@ -800,11 +797,11 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
+// Background thread entry point
 extern int main_stockfish(int argc, char **argv);
-void* stockfish_thread_func(void* arg) {
+void stockfish_thread_func(void* arg) {
     char *argv[] = {"stockfish", NULL};
     main_stockfish(1, argv);
-    return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -816,17 +813,30 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
+    // DRAW LOADING SCREEN FIRST (Lites up display and shows progress)
+    consoleSelect(&topConsole);
+    printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
+    printf("   Initializing Stockfish Engine...\n");
+    printf("   Please wait, setting up transposition tables...\n");
+    
     consoleSelect(&bottomConsole);
-    printf("\x1b[32m-- Stockfish 3DS Console log --\x1b[0m\n");
-    printf("[A] Select | [B] Undo | [Select] Reset\n");
-    printf("[X] Rotate | [Y] Swap Side | [L/R] Limit Options\n");
-    printf("[Start] Exit Game\n\n");
+    printf("\x1b[1;1HSetting up frame buffers...\n");
+    
+    gfxFlushBuffers();
+    gfxSwapBuffers();
+    gspWaitForVBlank();
 
-    pthread_t stockfish_thread;
-    pthread_create(&stockfish_thread, NULL, stockfish_thread_func, NULL);
+    // Spawn Stockfish using safe, native CTRU thread allocations on Core 1 (Secondary CPU)
+    Thread stockfish_thread;
+    s32 prio = 0x3F; // Default system homebrew priority level
+    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
 
+    // Feed initial startup commands
     sf_send_command("uci");
     sf_send_command("isready");
+
+    consoleSelect(&bottomConsole);
+    printf("\x1b[2;1HBackground Engine Thread spawned successfully on Core 1.\n\n");
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -873,8 +883,10 @@ int main(int argc, char **argv) {
         gspWaitForVBlank();
     }
 
+    // Stop background thread on exit
     sf_send_command("quit");
-    pthread_join(stockfish_thread, NULL);
+    threadJoin(stockfish_thread, U64_MAX);
+    threadFree(stockfish_thread);
 
     gfxExit();
     return 0;
