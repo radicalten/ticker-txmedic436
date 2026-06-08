@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <string.h>   // For memset
 #ifndef _WIN32
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #endif
 
 #include "bitboard.h"
