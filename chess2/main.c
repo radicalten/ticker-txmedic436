@@ -749,7 +749,8 @@ void draw_ui() {
 }
 
 void print_side_panel_line(int panel_row) {
-    printf("   ");
+    // Reduced padding from "   " to " " to bring the moves list closer to the board
+    printf(" ");
     // All 10 available rows are printed sequentially
     print_recent_moves(panel_row);
 }
