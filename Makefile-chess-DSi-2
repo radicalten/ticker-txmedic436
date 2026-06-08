@@ -19,7 +19,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libnds/lib \
 -lcurl -lz -lwolfssl -ldswifi9 -lcalico_ds9 -lnds9 -lm
 TARGET  := myapp
-SRCDIR 	:= chess-dsi
+SRCDIR 	:= chess-dsi-2
 C_SOURCES = $(foreach dir, $(SRCDIR), $(wildcard $(dir)/*.c))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
