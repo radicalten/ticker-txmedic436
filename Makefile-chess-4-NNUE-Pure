@@ -15,7 +15,7 @@ LDFLAGS := $(CFLAGS) \
 TARGET  := myapp
 EXCLUDE := chess3/numa.c
 SRCS    := $(filter-out $(EXCLUDE), $(wildcard chess3/*.c))
-NNUE    := chess3/nn-62ef826d1a6d.nnue
+NNUE    := nn-62ef826d1a6d.nnue
 OBJS    := $(patsubst %.c,%.o,$(SRCS)) network.o
 all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
