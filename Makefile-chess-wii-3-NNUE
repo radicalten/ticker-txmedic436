@@ -40,7 +40,7 @@ $(TARGET).elf: $(OBJECTS)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 network.o: $(NNUE)
-    cp $< network.bin
+	cp $< network.bin
 	$(OBJCOPY) -I binary -O elf32-powerpc -B powerpc:common network.bin $@
 	rm network.bin
 
