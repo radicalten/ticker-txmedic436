@@ -30,9 +30,9 @@ all: $(TARGET).gba
 # Build ELF (and analyze sizes before linking)
 $(TARGET).elf: $(OBJECTS)
 	@echo "=========================================================="
-	@echo "ANALYSIS: Top 20 Largest Variables in Compiled Object Files"
+	@echo "ANALYSIS: Top 50 Largest Variables in Compiled Object Files"
 	@echo "=========================================================="
-	-$(NM) --size-sort -S -r $(OBJECTS) | head -n 20
+	-$(NM) --size-sort -S -r $(OBJECTS) | head -n 50
 	@echo "=========================================================="
 	$(CC) $^ -o $@ $(LDFLAGS)
 
