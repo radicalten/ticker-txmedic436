@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <3ds.h>
 
+// main.c does NOT define ENGINE_MODE, so it uses the real console standard I/O
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
@@ -25,7 +26,6 @@ typedef struct {
     int fullmoves;
 } BoardState;
 
-// Renamed to GuiMove to prevent namespace conflicts with Cfish's integer type 'Move'
 typedef struct {
     int from;
     int to;
@@ -35,7 +35,7 @@ typedef struct {
 // Global GUI state
 BoardState current_state;
 BoardState history[MAX_HISTORY];
-GuiMove move_history[MAX_HISTORY]; // Uses GuiMove
+GuiMove move_history[MAX_HISTORY];
 int history_count = 0;
 
 int cursor_r = 6;  
@@ -129,7 +129,7 @@ int queue_read_nonblocking(SafeQueue *q, char *out_buf, int max_len) {
     return idx;
 }
 
-// Intercepted POSIX standard I/O implementations
+// Intercepted POSIX implementations (Called from Cfish thread)
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream) {
     static char local_line[4096];
     int idx = 0;
@@ -185,7 +185,6 @@ void* cfish_worker_thread(void *arg) {
     options_init();
     search_clear();
 
-    // Pass control to Cfish standard UCI loop
     char *argv[] = {"Cfish", NULL};
     uci_loop(1, argv);
 
@@ -197,7 +196,15 @@ void start_engine() {
     queue_init(&engine_to_gui);
     
     engine_running = 1;
-    pthread_create(&engine_thread, NULL, cfish_worker_thread, NULL);
+
+    // Configure thread parameters to enforce 256KB stack limit
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 256 * 1024); 
+
+    pthread_create(&engine_thread, &attr, cfish_worker_thread, NULL);
+    pthread_attr_destroy(&attr);
+
     send_to_engine("uci\nisready\n");
 }
 
@@ -211,7 +218,6 @@ int screen_to_board_sq(int r, int c) {
     return (board_orientation == 1) ? (r * 8 + c) : ((7 - r) * 8 + (7 - c));
 }
 
-// Renamed to prevent collision with Cfish functions
 void gui_move_to_uci(GuiMove m, char *buf) {
     int f_col = m.from % 8;
     int f_row = 8 - (m.from / 8);
@@ -227,7 +233,6 @@ void gui_move_to_uci(GuiMove m, char *buf) {
     }
 }
 
-// Renamed to prevent collision with Cfish's uci_to_move
 GuiMove gui_uci_to_move(const char *str) {
     GuiMove m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
@@ -370,7 +375,6 @@ void read_from_engine() {
     }
 }
 
-// Game Rules Logic 
 int find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
@@ -630,10 +634,8 @@ void make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Top-Screen Drawing Loop (VT100 ANSI Translation Layer)
-// FIXED: Swapped out unsupported 256-colors for standard 3DS-supported 16 color codes.
 void draw_ui() {
-    printf("\033[H\r\n"); // Move cursor home position without flickering
+    printf("\033[H\r\n"); 
 
     const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
     int king = find_king(&current_state, current_state.turn);
@@ -719,25 +721,23 @@ void draw_ui() {
                 }
             }
 
-            // Using standard 16-color ANSI backgrounds compatible with CTRU terminal
             if (is_cursor) {
-                bg_color = "\033[45m"; // Magenta (Cursor Target Selection)
+                bg_color = "\033[45m"; 
             } else if (is_selected) {
-                bg_color = "\033[42m"; // Green (Piece Selected)
+                bg_color = "\033[42m"; 
             } else if (sq == king_in_check) {
-                bg_color = "\033[41m"; // Red (King under Attack)
+                bg_color = "\033[41m"; 
             } else if (is_prev_move) {
-                bg_color = "\033[43m"; // Yellow highlight (Last Move Path)
+                bg_color = "\033[43m"; 
             } else if (is_legal_dest) {
-                bg_color = "\033[46m"; // Cyan highlight (Legal Destination Squares)
+                bg_color = "\033[46m"; 
             } else {
-                bg_color = is_light ? "\033[47m" : "\033[40m"; // White vs Black standard squares
+                bg_color = is_light ? "\033[47m" : "\033[40m"; 
             }
 
             const char *piece_str = " ";
-            const char *fg_color = "\033[30m"; // Dark pieces default to Black text
+            const char *fg_color = "\033[30m"; 
             if (p != 0) {
-                // White pieces default to Bold bright White text
                 if (p > 0) fg_color = "\033[1;37m"; 
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
@@ -954,7 +954,7 @@ void adjust_time_control() {
             time_control_val = time_list[found_idx + 1];
         }
     } else if (time_control_type == 1) { 
-        time_control_val = (time_control_val % 10) + 1; // Limit 3DS searches to depth 10 max
+        time_control_val = (time_control_val % 10) + 1; 
     } else { 
         int nodes_list[] = {256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
         int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
@@ -1067,7 +1067,6 @@ int main() {
         draw_ui();
         handle_3ds_input();
 
-        // FIXED: Flush and swap graphic buffers to display console changes on the Top Screen LCD
         gfxFlushBuffers();
         gfxSwapBuffers();
 
