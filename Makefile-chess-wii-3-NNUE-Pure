@@ -6,6 +6,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITPPC	:= $(DEVKITPRO)/devkitPPC
 include $(DEVKITPPC)/wii_rules
 CC 					:= $(DEVKITPPC)/bin/powerpc-eabi-gcc
+OBJCOPY 			:= $(DEVKITPPC)/bin/powerpc-eabi-objcopy
 MACHDEP := -DGEKKO -mrvl -mcpu=750 -meabi -mhard-float -fsigned-char -ffast-math -funroll-loops -fauto-inc-dec -finline-functions
 INCLUDES += -I/opt/devkitpro/portlibs/wii/include -I/opt/devkitpro/portlibs/ppc/include -I/opt/devkitpro/libogc/include
 CFLAGS 	+= -O3 -flto \
@@ -39,8 +40,11 @@ $(TARGET).elf: $(OBJECTS)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 network.o: $(NNUE)
+    cp $< network.bin
+	$(OBJCOPY) -I binary -O elf32-powerpc -B powerpc:common network.bin $@
+	rm network.bin
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS)
+	rm -f $(TARGET).elf $(TARGET).dol $(TARGET).map $(OBJECTS) network.bin
 
 .PHONY: clean test
