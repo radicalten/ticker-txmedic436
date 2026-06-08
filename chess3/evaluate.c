@@ -919,6 +919,13 @@ Value evaluate(const Position *pos)
 
 #else /* NNUE_PURE */
 
+#include "nnue.h"
+
+// Define adjusted_NNUE for pure NNUE mode (no fix_FRC, no hybrid blending)
+#define adjusted_NNUE() \
+  (nnue_evaluate(pos) * (580 + mat / 32 - 4 * rule50_count()) / 1024 \
+   + Time.tempoNNUE)
+
 Value evaluate(const Position *pos)
 {
   Value v;
