@@ -9,7 +9,6 @@ CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP) \
 -DIS_32BIT -DNO_NNUE
 LDFLAGS := $(CFLAGS) \
--Wl,--wrap=printf -Wl,--wrap=puts -Wl,--wrap=putchar -Wl,--wrap=getline \
 -specs=3dsx.specs \
 -Wl,-Map,$(TARGET).map \
 -L/opt/devkitpro/portlibs/3ds/lib \
