@@ -650,7 +650,7 @@ int get_promo_choice(void) {
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     
     int choice = 5;
-    while (aptKeepLoop()) {
+    while (aptMainLoop()) {
         hidScanInput();
         u32 kDown = hidKeysDown();
         if (kDown & KEY_Y) { choice = 5; break; }
@@ -823,7 +823,7 @@ int main(int argc, char **argv) {
     sf_send_command("uci");
     sf_send_command("isready");
 
-    while (aptKeepLoop()) {
+    while (aptMainLoop()) {
         hidScanInput();
         u32 kDown = hidKeysDown();
 
