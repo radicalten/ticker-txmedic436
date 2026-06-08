@@ -382,7 +382,7 @@ Value EvaluateKNNK(const Position *pos, Color strongSide)
 // and a bishop of the wrong color. If such a draw is detected,
 // SCALE_FACTOR_DRAW is returned. If not, the return value is
 // SCALE_FACTOR_NONE, i.e. no scaling will be used.
-int ScaleKBPsK(const Position *pos, Color strongSide)
+Value ScaleKBPsK(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -449,7 +449,7 @@ int ScaleKBPsK(const Position *pos, Color strongSide)
 
 // KQ vs KR and one or more pawns. It tests for fortress draws with a rook
 // on the third rank defended by a pawn.
-static int ScaleKQKRPs(const Position *pos, Color strongSide)
+static Value ScaleKQKRPs(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -478,7 +478,7 @@ static int ScaleKQKRPs(const Position *pos, Color strongSide)
 //
 // It would also be nice to rewrite the actual code for this function,
 // which is mostly copied from Glaurung 1.x, and is not very pretty.
-static int ScaleKRPKR(const Position *pos, Color strongSide)
+static Value ScaleKRPKR(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -573,7 +573,7 @@ static int ScaleKRPKR(const Position *pos, Color strongSide)
   return SCALE_FACTOR_NONE;
 }
 
-static int ScaleKRPKB(const Position *pos, Color strongSide)
+static Value ScaleKRPKB(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -619,7 +619,7 @@ static int ScaleKRPKB(const Position *pos, Color strongSide)
 // KRPP vs KRP. There is just a single rule: if the stronger side has no
 // passed pawns and the defending king is actively placed, the position
 // is drawish.
-static int ScaleKRPPKRP(const Position *pos, Color strongSide)
+static Value ScaleKRPPKRP(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -650,7 +650,7 @@ static int ScaleKRPPKRP(const Position *pos, Color strongSide)
 // K and two or more pawns vs K. There is just a single rule here: If all
 // pawns are on the same rook file and are blocked by the defending king,
 // it is a draw.
-static int ScaleKPsK(const Position *pos, Color strongSide)
+static Value ScaleKPsK(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -674,7 +674,7 @@ static int ScaleKPsK(const Position *pos, Color strongSide)
 // along the path of the pawn, and the square of the king is not of the
 // same color as the stronger side's bishop, it is a draw. If the two
 // bishops have opposite color, it's almost always a draw.
-static int ScaleKBPKB(const Position *pos, Color strongSide)
+static Value ScaleKBPKB(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -702,7 +702,7 @@ static int ScaleKBPKB(const Position *pos, Color strongSide)
 
 
 // KBPP vs KB. It detects a few basic draws with opposite-colored bishops.
-static int ScaleKBPPKB(const Position *pos, Color strongSide)
+static Value ScaleKBPPKB(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -771,7 +771,7 @@ static int ScaleKBPPKB(const Position *pos, Color strongSide)
 // KBP vs KN. There is a single rule: If the defending king is somewhere
 // along the path of the pawn, and the square of the king is not of the
 // same color as the stronger side's bishop, it is a draw.
-static int ScaleKBPKN(const Position *pos, Color strongSide)
+static Value ScaleKBPKN(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
@@ -798,7 +798,7 @@ static int ScaleKBPKN(const Position *pos, Color strongSide)
 // is when the stronger side's pawn is far advanced and not on a rook
 // file; in this case it is often possible to win
 // (e.g. 8/4k3/3p4/3P4/6K1/8/8/8 w - - 0 1).
-static int ScaleKPKP(const Position *pos, Color strongSide)
+static Value ScaleKPKP(const Position *pos, Color strongSide)
 {
   Color weakSide = !strongSide;
 
