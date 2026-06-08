@@ -25,8 +25,13 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__3DS__)
+#include <stdlib.h>
+#include <unistd.h>
+#include <malloc.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #include "misc.h"
@@ -355,7 +360,20 @@ size_t file_size(FD fd)
 
 const void *map_file(FD fd, map_t *map)
 {
-#ifndef _WIN32
+#if defined(__3DS__)
+  // 3DS Fallback: Allocate standard heap memory and read the file into it
+  size_t size = file_size(fd);
+  *map = (map_t)size;
+  void *data = malloc(size);
+  if (!data) return NULL;
+
+  if (read(fd, data, size) != (ssize_t)size) {
+    free(data);
+    return NULL;
+  }
+  return data;
+
+#elif !defined(_WIN32)
   *map = file_size(fd);
   void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
 #ifdef MADV_RANDOM
@@ -378,7 +396,10 @@ void unmap_file(const void *data, map_t map)
 {
   if (!data) return;
 
-#ifndef _WIN32
+#if defined(__3DS__)
+  free((void *)data);
+
+#elif !defined(_WIN32)
   munmap((void *)data, map);
 
 #else
@@ -401,6 +422,14 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   } else
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
   alloc->ptr = ptr;
+  return ptr;
+
+#elif defined(__3DS__)
+  // 3DS doesn't support Virtual/Large pages. 
+  // We use memalign with 64-byte alignment (optimal for ARM cache-lines).
+  ptr = memalign(64, size);
+  alloc->ptr = ptr;
+  alloc->size = size;
   return ptr;
 
 #else /* Unix */
@@ -437,6 +466,10 @@ void free_memory(alloc_t *alloc)
 {
 #ifdef _WIN32
   VirtualFree(alloc->ptr, 0, MEM_RELEASE);
+#elif defined(__3DS__)
+  if (alloc->ptr) {
+    free(alloc->ptr);
+  }
 #else
   munmap(alloc->ptr, alloc->size);
 #endif
