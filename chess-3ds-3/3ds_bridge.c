@@ -1,4 +1,5 @@
 #include "3ds_bridge.h"
+#include <3ds.h>
 #include <string.h>
 #include <pthread.h>
 
@@ -9,7 +10,6 @@ typedef struct {
     int head;
     int tail;
     pthread_mutex_t mutex;
-    pthread_cond_t cond;
 } MsgQueue;
 
 static MsgQueue q_gui_to_engine;
@@ -18,11 +18,9 @@ static MsgQueue q_engine_to_gui;
 void sf_bridge_init(void) {
     q_gui_to_engine.head = q_gui_to_engine.tail = 0;
     pthread_mutex_init(&q_gui_to_engine.mutex, NULL);
-    pthread_cond_init(&q_gui_to_engine.cond, NULL);
 
     q_engine_to_gui.head = q_engine_to_gui.tail = 0;
     pthread_mutex_init(&q_engine_to_gui.mutex, NULL);
-    pthread_cond_init(&q_engine_to_gui.cond, NULL);
 }
 
 void sf_send_command(const char *cmd) {
@@ -34,30 +32,31 @@ void sf_send_command(const char *cmd) {
     // Append newline automatically
     q_gui_to_engine.data[q_gui_to_engine.head] = '\n';
     q_gui_to_engine.head = (q_gui_to_engine.head + 1) % MSG_QUEUE_SIZE;
-
-    pthread_cond_signal(&q_gui_to_engine.cond);
     pthread_mutex_unlock(&q_gui_to_engine.mutex);
 }
 
 void sf_recv_command(char *buf, size_t max_len) {
-    pthread_mutex_lock(&q_gui_to_engine.mutex);
-    
-    while (q_gui_to_engine.head == q_gui_to_engine.tail) {
-        pthread_cond_wait(&q_gui_to_engine.cond, &q_gui_to_engine.mutex);
-    }
-
-    size_t i = 0;
-    while (q_gui_to_engine.head != q_gui_to_engine.tail && i < max_len - 1) {
-        char c = q_gui_to_engine.data[q_gui_to_engine.tail];
-        q_gui_to_engine.tail = (q_gui_to_engine.tail + 1) % MSG_QUEUE_SIZE;
-        if (c == '\n') {
-            break;
+    while (1) {
+        pthread_mutex_lock(&q_gui_to_engine.mutex);
+        if (q_gui_to_engine.head != q_gui_to_engine.tail) {
+            size_t i = 0;
+            while (q_gui_to_engine.head != q_gui_to_engine.tail && i < max_len - 1) {
+                char c = q_gui_to_engine.data[q_gui_to_engine.tail];
+                q_gui_to_engine.tail = (q_gui_to_engine.tail + 1) % MSG_QUEUE_SIZE;
+                if (c == '\n') {
+                    break;
+                }
+                buf[i++] = c;
+            }
+            buf[i] = '\0';
+            pthread_mutex_unlock(&q_gui_to_engine.mutex);
+            return;
         }
-        buf[i++] = c;
+        pthread_mutex_unlock(&q_gui_to_engine.mutex);
+        
+        // Sleep for 2ms to yield CPU core time back to the OS/GUI
+        svcSleepThread(2000000LL);
     }
-    buf[i] = '\0';
-
-    pthread_mutex_unlock(&q_gui_to_engine.mutex);
 }
 
 #undef printf
