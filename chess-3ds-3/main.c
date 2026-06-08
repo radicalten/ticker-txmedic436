@@ -460,7 +460,13 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 }
 
 void draw_ui(void) {
+    static bool top_screen_cleared = false;
+    
     consoleSelect(&topConsole);
+    if (!top_screen_cleared) {
+        printf("\x1b[2J"); // Completely wipe the "Loading..." screen once
+        top_screen_cleared = true;
+    }
     printf("\x1b[1;1H"); 
 
     const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
@@ -605,6 +611,10 @@ void draw_ui(void) {
         printf(" | Eval: M%d", engine_score_val);
     }
     printf("\x1b[K\n");
+
+    // CRITICAL: Restore Bottom Console active focus immediately.
+    // This locks standard stdout calls from Stockfish back to the bottom screen!
+    consoleSelect(&bottomConsole);
 }
 
 void print_side_panel_line(int panel_row) {
@@ -797,7 +807,6 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-// Background thread entry point
 extern int main_stockfish(int argc, char **argv);
 void stockfish_thread_func(void* arg) {
     char *argv[] = {"stockfish", NULL};
@@ -813,30 +822,31 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // DRAW LOADING SCREEN FIRST (Lites up display and shows progress)
+    // Initial load screens
     consoleSelect(&topConsole);
+    printf("\x1b[2J");
     printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
     printf("   Initializing Stockfish Engine...\n");
     printf("   Please wait, setting up transposition tables...\n");
     
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1HSetting up frame buffers...\n");
+    printf("\x1b[2J");
+    printf("Setting up console registers...\n");
     
     gfxFlushBuffers();
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // Spawn Stockfish using safe, native CTRU thread allocations on Core 1 (Secondary CPU)
+    // Spawn Stockfish safely on Core 1
     Thread stockfish_thread;
-    s32 prio = 0x3F; // Default system homebrew priority level
+    s32 prio = 0x3F; 
     stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
 
-    // Feed initial startup commands
     sf_send_command("uci");
     sf_send_command("isready");
 
     consoleSelect(&bottomConsole);
-    printf("\x1b[2;1HBackground Engine Thread spawned successfully on Core 1.\n\n");
+    printf("Background Engine Thread spawned successfully on Core 1.\n\n");
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -883,7 +893,6 @@ int main(int argc, char **argv) {
         gspWaitForVBlank();
     }
 
-    // Stop background thread on exit
     sf_send_command("quit");
     threadJoin(stockfish_thread, U64_MAX);
     threadFree(stockfish_thread);
