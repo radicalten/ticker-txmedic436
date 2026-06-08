@@ -7,84 +7,20 @@
 #include <unistd.h>
 #include <3ds.h>
 
-// main.c does NOT define ENGINE_MODE, so it uses the real console standard I/O
-#include "3ds_bridge.h"
-
 #define MAX_HISTORY 2048
 
-// Thread-safe queues instantiated
+// --- THREAD-SAFE QUEUE SYSTEM ---
+typedef struct {
+    char buffer[16384];
+    int head;
+    int tail;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} SafeQueue;
+
 SafeQueue gui_to_engine;
 SafeQueue engine_to_gui;
 
-// Board representation 
-typedef struct {
-    int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
-    int turn;      // 1 = White, -1 = Black
-    int castle;    // Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ
-    int ep;        // En-passant square (0-63), -1 if none
-    int halfmoves; // For 50-move rule
-    int fullmoves;
-} BoardState;
-
-typedef struct {
-    int from;
-    int to;
-    int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} GuiMove;
-
-// Global GUI state
-BoardState current_state;
-BoardState history[MAX_HISTORY];
-GuiMove move_history[MAX_HISTORY];
-int history_count = 0;
-
-int cursor_r = 6;  
-int cursor_c = 4;  
-int selected_sq = -1;
-
-int board_orientation = 1; 
-int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
-
-int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1000; // 3DS default: 1000ms
-
-pthread_t engine_thread;
-int engine_thinking = 0;
-long long engine_nps = 0;    
-int engine_score_type = -1;  // -1 = None, 0 = cp, 1 = mate
-int engine_score_val = 0;    
-
-char engine_buffer[8192];
-int engine_buf_len = 0;
-int engine_running = 0;
-
-// External initializers from the Cfish engine 
-extern void psqt_init();
-extern void bitboards_init();
-extern void zob_init();
-extern void bitbases_init();
-#ifndef NNUE_PURE
-extern void endgames_init();
-#endif
-extern void threads_init();
-extern void options_init();
-extern void search_clear();
-extern void uci_loop(int argc, char **argv);
-
-// Forward Declarations
-void init_board(BoardState *state);
-int is_legal_move(const BoardState *state, GuiMove m);
-int has_legal_moves(const BoardState *state);
-int is_square_attacked(const BoardState *state, int sq, int attacker);
-void make_move(const BoardState *src, BoardState *dst, GuiMove m);
-void print_side_panel_line(int panel_row);
-void send_to_engine(const char *cmd);
-int find_king(const BoardState *state, int color);
-int count_repetitions(const BoardState *state);
-int get_promo_choice();
-void draw_ui();
-
-// Queue Utility Functions
 void queue_init(SafeQueue *q) {
     q->head = 0;
     q->tail = 0;
@@ -102,8 +38,6 @@ void queue_write(SafeQueue *q, const char *str, int len) {
     pthread_mutex_unlock(&q->lock);
 }
 
-// FIXED: Removed the "max_len - 1" logical boundary block. 
-// This allows single-byte requests (like reading standard characters) to succeed instead of returning 0.
 int queue_read_blocking(SafeQueue *q, char *out_buf, int max_len) {
     pthread_mutex_lock(&q->lock);
     while (q->head == q->tail) {
@@ -118,7 +52,6 @@ int queue_read_blocking(SafeQueue *q, char *out_buf, int max_len) {
     return idx;
 }
 
-// FIXED: Modified similarly to prevent empty/0-byte reads during background cycles
 int queue_read_nonblocking(SafeQueue *q, char *out_buf, int max_len) {
     pthread_mutex_lock(&q->lock);
     int idx = 0;
@@ -130,8 +63,42 @@ int queue_read_nonblocking(SafeQueue *q, char *out_buf, int max_len) {
     return idx;
 }
 
-// Intercepted POSIX implementations (Called from Cfish thread)
-ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream) {
+
+// --- LINKER WRAPPING FOR INTERCEPTING CFISH STANDARD I/O ---
+// These are the real, underlying 3DS system functions
+extern int __real_printf(const char *format, ...);
+extern int __real_putchar(int c);
+extern int __real_puts(const char *s);
+extern ssize_t __real_getline(char **lineptr, size_t *n, FILE *stream);
+
+// Define a macro so our GUI functions can write directly to the LCD screen
+#define gui_printf(...) __real_printf(__VA_ARGS__)
+
+// Any printf call in Cfish's files will automatically route through here instead
+int __wrap_printf(const char *format, ...) {
+    char temp[2048];
+    va_list args;
+    va_start(args, format);
+    int n = vsnprintf(temp, sizeof(temp), format, args);
+    va_end(args);
+    queue_write(&engine_to_gui, temp, n);
+    return n;
+}
+
+int __wrap_putchar(int c) {
+    char ch = (char)c;
+    queue_write(&engine_to_gui, &ch, 1);
+    return c;
+}
+
+int __wrap_puts(const char *s) {
+    int len = strlen(s);
+    queue_write(&engine_to_gui, s, len);
+    queue_write(&engine_to_gui, "\n", 1);
+    return len + 1;
+}
+
+ssize_t __wrap_getline(char **lineptr, size_t *n, FILE *stream) {
     static char local_line[4096];
     int idx = 0;
     while (idx < (int)sizeof(local_line) - 1) {
@@ -152,30 +119,72 @@ ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream) {
     return idx;
 }
 
-int cfish_printf(const char *format, ...) {
-    char temp[2048];
-    va_list args;
-    va_start(args, format);
-    int n = vsnprintf(temp, sizeof(temp), format, args);
-    va_end(args);
-    queue_write(&engine_to_gui, temp, n);
-    return n;
-}
 
-int cfish_putchar(int c) {
-    char ch = (char)c;
-    queue_write(&engine_to_gui, &ch, 1);
-    return c;
-}
+// --- CHESS ENGINE & GUI STATE MANAGEMENT ---
+typedef struct {
+    int board[64];
+    int turn;      
+    int castle;    
+    int ep;        
+    int halfmoves; 
+    int fullmoves;
+} BoardState;
 
-int cfish_puts(const char *s) {
-    int len = strlen(s);
-    queue_write(&engine_to_gui, s, len);
-    queue_write(&engine_to_gui, "\n", 1);
-    return len + 1;
-}
+typedef struct {
+    int from;
+    int to;
+    int promo; 
+} GuiMove;
 
-// Background Cfish Worker Thread
+BoardState current_state;
+BoardState history[MAX_HISTORY];
+GuiMove move_history[MAX_HISTORY];
+int history_count = 0;
+
+int cursor_r = 6;  
+int cursor_c = 4;  
+int selected_sq = -1;
+
+int board_orientation = 1; 
+int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch
+
+int time_control_type = 0;   
+int time_control_val = 1000; 
+
+pthread_t engine_thread;
+int engine_thinking = 0;
+long long engine_nps = 0;    
+int engine_score_type = -1;  
+int engine_score_val = 0;    
+
+char engine_buffer[8192];
+int engine_buf_len = 0;
+int engine_running = 0;
+
+extern void psqt_init();
+extern void bitboards_init();
+extern void zob_init();
+extern void bitbases_init();
+#ifndef NNUE_PURE
+extern void endgames_init();
+#endif
+extern void threads_init();
+extern void options_init();
+extern void search_clear();
+extern void uci_loop(int argc, char **argv);
+
+void init_board(BoardState *state);
+int is_legal_move(const BoardState *state, GuiMove m);
+int has_legal_moves(const BoardState *state);
+int is_square_attacked(const BoardState *state, int sq, int attacker);
+void make_move(const BoardState *src, BoardState *dst, GuiMove m);
+void print_side_panel_line(int panel_row);
+void send_to_engine(const char *cmd);
+int find_king(const BoardState *state, int color);
+int count_repetitions(const BoardState *state);
+int get_promo_choice();
+void draw_ui();
+
 void* cfish_worker_thread(void *arg) {
     psqt_init();
     bitboards_init();
@@ -200,7 +209,6 @@ void start_engine() {
     
     engine_running = 1;
 
-    // Configure thread parameters to enforce 256KB stack limit
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 256 * 1024); 
@@ -355,7 +363,7 @@ void process_engine_output(char *line) {
 void read_from_engine() {
     char tmp[4096];
     int n;
-    while ((n = queue_read_nonblocking(&engine_to_gui, tmp, sizeof(tmp) - 1)) > 0) {
+    while ((n = queue_read_nonblocking(&engine_to_gui, tmp, sizeof(tmp))) > 0) {
         tmp[n] = '\0';
         for (int i = 0; i < n; i++) {
             if (tmp[i] == '\n') {
@@ -378,6 +386,7 @@ void read_from_engine() {
     }
 }
 
+// --- STANDARD BOARD RULES LOGIC ---
 int find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
@@ -637,8 +646,10 @@ void make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
+
+// --- 3DS RENDERING LAYOUT ---
 void draw_ui() {
-    printf("\033[H\r\n"); 
+    gui_printf("\033[H\r\n"); 
 
     const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
     int king = find_king(&current_state, current_state.turn);
@@ -648,39 +659,39 @@ void draw_ui() {
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = count_repetitions(&current_state);
 
-    printf("  ");
+    gui_printf("  ");
     if (current_state.halfmoves >= 100) {
-        printf("\033[1;36mDRAW (50-move rule)\033[0m");
+        gui_printf("\033[1;36mDRAW (50-move rule)\033[0m");
     } else if (repetitions >= 3) {
-        printf("\033[1;36mDRAW (threefold repetition)\033[0m");
+        gui_printf("\033[1;36mDRAW (threefold repetition)\033[0m");
     } else if (!has_mov) {
-        if (is_ch) printf("\033[1;31mCHECKMATE!\033[0m");
-        else printf("\033[1;36mSTALEMATE!\033[0m");
+        if (is_ch) gui_printf("\033[1;31mCHECKMATE!\033[0m");
+        else gui_printf("\033[1;36mSTALEMATE!\033[0m");
     } else if (is_ch) {
-        printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
+        gui_printf("%s (\033[1;31mCHECK!\033[0m)", turn_str);
     } else {
-        printf("%s's Turn", turn_str);
+        gui_printf("%s's Turn", turn_str);
     }
-    printf(" | W:%s B:%s", w_play, b_play);
+    gui_printf(" | W:%s B:%s", w_play, b_play);
 
     const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
-    printf(" | %s", types[time_control_type]);
+    gui_printf(" | %s", types[time_control_type]);
     if (time_control_type == 0) {
-        printf(" (%d ms)", time_control_val);
+        gui_printf(" (%d ms)", time_control_val);
     } else if (time_control_type == 1) {
-        printf(" (depth %d)", time_control_val);
+        gui_printf(" (depth %d)", time_control_val);
     } else {
-        printf(" (%d nodes)", time_control_val);
+        gui_printf(" (%d nodes)", time_control_val);
     }
-    printf("\033[K\r\n\r\n");
+    gui_printf("\033[K\r\n\r\n");
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        gui_printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        gui_printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(0);
-    printf("\033[K\r\n");
+    gui_printf("\033[K\r\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -693,7 +704,7 @@ void draw_ui() {
 
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
-        printf("  %d ", rank_lbl);
+        gui_printf("  %d ", rank_lbl);
 
         for (int c = 0; c < 8; c++) {
             int sq = screen_to_board_sq(r, c);
@@ -752,55 +763,55 @@ void draw_ui() {
                 }
             }
 
-            printf("%s%s %s \033[0m", bg_color, fg_color, piece_str);
+            gui_printf("%s%s %s \033[0m", bg_color, fg_color, piece_str);
         }
 
-        printf(" %d ", rank_lbl);
+        gui_printf(" %d ", rank_lbl);
         print_side_panel_line(r + 1);
-        printf("\033[K\r\n"); 
+        gui_printf("\033[K\r\n"); 
     }
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        gui_printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        gui_printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(9);
-    printf("\033[K\r\n\r\n");
+    gui_printf("\033[K\r\n\r\n");
 
-    printf(" \033[1;30m[D-Pad] Move  | [A] Select | [B] Undo | [START] Reset\033[0m\033[K\r\n");
-    printf(" \033[1;30m[X] Flip Board | [Y] Switch Sides | [L] Time Control Type\033[0m\033[K\r\n");
-    printf(" \033[1;30m[R] Adjust Value | [SELECT] Exit to Homebrew\033[0m\033[K\r\n\r\n");
+    gui_printf(" \033[1;30m[D-Pad] Move  | [A] Select | [B] Undo | [START] Reset\033[0m\033[K\r\n");
+    gui_printf(" \033[1;30m[X] Flip Board | [Y] Switch Sides | [L] Time Control Type\033[0m\033[K\r\n");
+    gui_printf(" \033[1;30m[R] Adjust Value | [SELECT] Exit to Homebrew\033[0m\033[K\r\n\r\n");
     
-    printf(" \033[1;37mEngine Status:\033[0m (%s)", (engine_running) ? "\033[1;32mActive\033[0m" : "\033[1;31mOffline\033[0m");
+    gui_printf(" \033[1;37mEngine Status:\033[0m (%s)", (engine_running) ? "\033[1;32mActive\033[0m" : "\033[1;31mOffline\033[0m");
     if (engine_running) {
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
-                printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
+                gui_printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
             } else if (engine_nps >= 1000) {
-                printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
+                gui_printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
             } else {
-                printf(" | NPS: %lld", engine_nps);
+                gui_printf(" | NPS: %lld", engine_nps);
             }
         }
         if (engine_score_type == 0) {
-            printf(" | \033[1;36mEval:\033[0m %+.2f", (double)engine_score_val / 100.0);
+            gui_printf(" | \033[1;36mEval:\033[0m %+.2f", (double)engine_score_val / 100.0);
         } else if (engine_score_type == 1) {
             if (engine_score_val > 0) {
-                printf(" | \033[1;31mEval: +M%d\033[0m", engine_score_val);
+                gui_printf(" | \033[1;31mEval: +M%d\033[0m", engine_score_val);
             } else if (engine_score_val < 0) {
-                printf(" | \033[1;31mEval: -M%d\033[0m", -engine_score_val);
+                gui_printf(" | \033[1;31mEval: -M%d\033[0m", -engine_score_val);
             } else {
-                printf(" | \033[1;31mEval: M0\033[0m");
+                gui_printf(" | \033[1;31mEval: M0\033[0m");
             }
         }
     }
-    printf("\033[K\r\n\033[J");
+    gui_printf("\033[K\r\n\033[J");
     fflush(stdout);
 }
 
 void print_side_panel_line(int panel_row) {
-    printf(" ");
+    gui_printf(" ");
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) return;
     
@@ -814,29 +825,29 @@ void print_side_panel_line(int panel_row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    printf("   %2d. ", display);
+    gui_printf("   %2d. ", display);
     if (w_idx < history_count) {
         char w_str[10];
         gui_move_to_uci(move_history[w_idx], w_str);
-        printf("%-6s", w_str);
+        gui_printf("%-6s", w_str);
     } else {
-        printf("------");
+        gui_printf("------");
     }
 
-    printf(" ");
+    gui_printf(" ");
 
     if (b_idx < history_count) {
         char b_str[10];
         gui_move_to_uci(move_history[b_idx], b_str);
-        printf("%-6s", b_str);
+        gui_printf("%-6s", b_str);
     } else {
-        if (w_idx < history_count) printf("...");
-        else printf("------");
+        if (w_idx < history_count) gui_printf("...");
+        else gui_printf("------");
     }
 }
 
 int get_promo_choice() {
-    printf("\r\n \033[1;33mPromote pawn: [A] Queen, [B] Rook, [X] Bishop, [Y] Knight\033[0m");
+    gui_printf("\r\n \033[1;33mPromote pawn: [A] Queen, [B] Rook, [X] Bishop, [Y] Knight\033[0m");
     fflush(stdout);
     int choice = 5;
     while (aptMainLoop()) {
@@ -848,7 +859,7 @@ int get_promo_choice() {
         if (kDown & KEY_Y) { choice = 2; break; }
         gspWaitForVBlank();
     }
-    printf("\r\033[K\033[A\033[K");
+    gui_printf("\r\033[K\033[A\033[K");
     fflush(stdout);
     return choice;
 }
