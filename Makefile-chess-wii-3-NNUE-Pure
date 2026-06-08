@@ -23,7 +23,8 @@ EXCLUDE := chess-wii-2/numa.c
 SRCDIR 	:= chess-wii-2
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
-OBJECTS = $(SOURCES:.c=.o)
+NNUE    := chess3/nn-62ef826d1a6d.nnue
+OBJECTS = $(SOURCES:.c=.o) network.o
 
 ELF2DOL     := elf2dol
 
