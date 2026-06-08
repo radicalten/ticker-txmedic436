@@ -57,6 +57,9 @@ int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice(void);
 
+// Renamed here to avoid collision with Stockfish's internal uci_to_move
+Move gui_uci_to_move(const char *str);
+
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
         return r * 8 + c;
@@ -80,7 +83,8 @@ void move_to_uci(Move m, char *buf) {
     }
 }
 
-Move uci_to_move(const char *str) {
+// Renamed here to avoid collision with Stockfish's internal uci_to_move
+Move gui_uci_to_move(const char *str) {
     Move m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
     int f_col = str[0] - 'a';
@@ -183,7 +187,8 @@ void process_engine_output(char *line) {
                 engine_thinking = 0;
                 return;
             }
-            Move m = uci_to_move(move_str);
+            // CHANGED: Use gui_uci_to_move to fetch local GUI Move struct format
+            Move m = gui_uci_to_move(move_str);
             if (is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
                 BoardState next;
