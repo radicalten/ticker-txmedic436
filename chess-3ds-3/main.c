@@ -562,7 +562,7 @@ void draw_ui(void) {
         printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(0);
-    printf("\x1b[K\n");
+    printf("\x1b[K");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
