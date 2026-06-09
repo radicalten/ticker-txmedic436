@@ -554,11 +554,11 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Top Rank Labels: Perfectly aligned to match the new 23-column square board layout
+    // 2. Top Rank Labels: Perfectly aligned at column 32 with 3-character horizontal spacing
     if (board_orientation == 1) {
-        printf("     a b c d e f g h   ");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h g f e d c b a   ");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(0);
     printf("\x1b[K\n");
@@ -572,7 +572,7 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Board Ranks: Compacted to 2 characters per square for a perfect square look
+    // 3. Render 8 Board Ranks: Center-aligned 3-character wide squares (" %s ")
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -636,8 +636,8 @@ void draw_ui(void) {
                     case 6: piece_str = "K"; break;
                 }
             }
-            // Exactly 2 characters wide (" %s") inside the colored background block
-            printf("%s%s %s\x1b[0m", bg_color, fg_color, piece_str);
+            // " %s " yields perfect horizontal centering within the 3-character wide block
+            printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
         }
 
         printf(" %d ", rank_lbl);
@@ -645,11 +645,11 @@ void draw_ui(void) {
         printf("\x1b[K\n");
     }
 
-    // 4. Bottom Rank Labels: Perfectly aligned to match the new 23-column square board layout
+    // 4. Bottom Rank Labels: Perfectly aligned with the 3-character horizontally centered board
     if (board_orientation == 1) {
-        printf("     a b c d e f g h   ");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("     h g f e d c b a   ");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(9);
     printf("\x1b[K\n\n");
@@ -701,7 +701,7 @@ void print_recent_moves(int row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    // Standard 10-move slice formatting. Highly compact to prevent column line wrapping.
+    // Fixed compact PGN column spacing to prevent wrapping and preserve formatting
     printf(" %2d.", display);
     if (w_idx < history_count) {
         char w_str[10];
