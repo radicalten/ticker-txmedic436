@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>  // Enforced inclusion for explicit attribute handling
 #include <3ds.h>
 
 #include "material.h"
@@ -127,9 +128,14 @@ static THREAD_FUNC thread_init(void *arg)
   atomic_store(&pos->resetCalls, false);
   pos->selDepth = pos->callsCnt = 0;
 
+  // Store the initialized Position structural handle
   Threads.pos[idx] = pos;
 
-  // Signal completion using a cooperative yield to prevent race conditions
+  // GCC Hardware Barrier: Force Thread 0 to finish mapping and writing memory addresses
+  // before the parent execution flow wakes up from its yield sleep block.
+  __sync_synchronize();
+
+  // Signal completion
   Threads.initializing = false;
 
   thread_idle_loop(pos);
@@ -141,14 +147,27 @@ static THREAD_FUNC thread_init(void *arg)
 static void thread_create(int idx)
 {
   pthread_t thread;
+  pthread_attr_t attr;
 
   Threads.initializing = true;
+
+  // Initialize and explicitly set stack size to 256KB.
+  // This shields the recursive alpha-beta depth search execution from silently 
+  // overflowing the default 3DS thread stacks.
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 256 * 1024);
   
-  pthread_create(&thread, NULL, thread_init, (void *)(intptr_t)idx);
+  if (pthread_create(&thread, &attr, thread_init, (void *)(intptr_t)idx) != 0) {
+    printf("\x1b[1;31m[ERROR] Failed to spawn pthread for Thread %d!\x1b[0m\n", idx);
+    fflush(stdout);
+  }
+  
+  // Attributes can be immediately destroyed once the thread is safely registered
+  pthread_attr_destroy(&attr);
   
   // Safe yield loop replacing POSIX condvars to prevent startup freezes
   while (Threads.initializing) {
-    __asm__ __volatile__("" ::: "memory"); // Force memory reload
+    __sync_synchronize();       // Force memory sync across cores
     svcSleepThread(1000000ULL); // Yield 1ms to let the worker thread run
   }
 
@@ -159,6 +178,7 @@ static void thread_create(int idx)
 static void thread_destroy(Position *pos)
 {
   pos->action = THREAD_EXIT;
+  __sync_synchronize();
   
   // Explicitly wait for thread termination
   pthread_join(pos->nativeThread, NULL);
@@ -182,7 +202,7 @@ void thread_wait_until_sleeping(Position *pos)
 {
   // High-performance cooperative yield loop with compile-time memory barriers
   while (pos->action != THREAD_SLEEP) {
-    __asm__ __volatile__("" ::: "memory"); // FIX: Force GCC to reload pos->action from RAM
+    __sync_synchronize();       // Force memory synchronization across CPU cores
     svcSleepThread(1000000ULL); // Yield 1ms
   }
 
@@ -194,15 +214,17 @@ void thread_wait_until_sleeping(Position *pos)
 void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
-    __asm__ __volatile__("" ::: "memory"); // Force memory reload
+    __sync_synchronize();       // Force hardware memory coherence update
     svcSleepThread(1000000ULL); // Yield 1ms
   }
 }
 
 void thread_wake_up(Position *pos, int action)
 {
-  if (action != THREAD_RESUME)
+  if (action != THREAD_RESUME) {
     pos->action = action;
+    __sync_synchronize();       // Force instant cache line flush to ARM RAM
+  }
 }
 
 // thread_idle_loop() is where the thread is parked when it has no work to do.
@@ -211,7 +233,7 @@ static void thread_idle_loop(Position *pos)
   while (true) {
     // Cooperative park loop
     while (pos->action == THREAD_SLEEP) {
-      __asm__ __volatile__("" ::: "memory"); // Force memory reload
+      __sync_synchronize();       // Force core-to-core synchronicity checks
       svcSleepThread(2000000ULL); // Sleep 2ms to prevent CPU starvation
     }
 
@@ -227,6 +249,7 @@ static void thread_idle_loop(Position *pos)
     }
 
     pos->action = THREAD_SLEEP;
+    __sync_synchronize();         // Commit the state change globally immediately
   }
 }
 
