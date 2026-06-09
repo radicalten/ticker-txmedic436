@@ -176,7 +176,9 @@ void process_engine_output(char *line) {
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
             sf_send_command("setoption name Hash value 16"); 
-            
+            // Explicitly disable pondering to optimize battery and CPU usage
+            sf_send_command("setoption name Ponder value false");
+
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
             printf("[GUI] Received 'readyok' -> Handshake Complete.\n");
