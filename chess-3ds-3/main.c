@@ -519,7 +519,7 @@ void draw_ui(void) {
     printf("\x1b[K\n");   // Clear Row 1 as a blank spacer line
 
     // Pre-calculate side panel state strings to match the 26 vertical print scanlines
-    char rp[26][32];
+    char rp[26][64];
     for (int i = 0; i < 26; i++) {
         sprintf(rp[i], "                  "); // Default clear padding
     }
@@ -532,68 +532,66 @@ void draw_ui(void) {
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = count_repetitions(&current_state);
 
-    strcpy(rp[0], "\x1b[1;36m  GAME STATUS:\x1b[0m");
-
-    // Active Turn Alert state
+    // Active Turn / Status alert shifts to topmost index [0]
     if (current_state.halfmoves >= 100) {
-        strcpy(rp[1], "  [DRAW (50m-rule)]");
+        strcpy(rp[0], "  [DRAW (50m-rule)]");
     } else if (repetitions >= 3) {
-        strcpy(rp[1], "  [DRAW (3-fold)]");
+        strcpy(rp[0], "  [DRAW (3-fold)]");
     } else if (!has_mov) {
         if (is_ch) {
-            strcpy(rp[1], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
+            strcpy(rp[0], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
         } else {
-            strcpy(rp[1], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
+            strcpy(rp[0], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
         }
     } else if (is_ch) {
-        sprintf(rp[1], "  \x1b[1;31m%s (CHECK!)\x1b[0m", (current_state.turn == 1) ? "White" : "Black");
+        sprintf(rp[0], "  \x1b[1;31m%s (CHECK!)\x1b[0m", (current_state.turn == 1) ? "White" : "Black");
     } else {
-        sprintf(rp[1], "  %s to play", (current_state.turn == 1) ? "White" : "Black");
+        sprintf(rp[0], "  %s to play", (current_state.turn == 1) ? "White" : "Black");
     }
 
-    // Modes & limits
-    sprintf(rp[2], "  W: %s | B: %s", w_play, b_play);
+    // Modes & limits shift up
+    sprintf(rp[1], "  W: %s | B: %s", w_play, b_play);
     if (time_control_type == 0) {
-        sprintf(rp[3], "  Limit: %d ms", time_control_val);
+        sprintf(rp[2], "  Limit: %d ms", time_control_val);
     } else if (time_control_type == 1) {
-        sprintf(rp[3], "  Limit: depth %d", time_control_val);
+        sprintf(rp[2], "  Limit: depth %d", time_control_val);
     } else {
-        sprintf(rp[3], "  Limit: %d nodes", time_control_val);
+        sprintf(rp[2], "  Limit: %d nodes", time_control_val);
     }
 
-    // Engine speed and score
+    // Engine speed and score shift up
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_score_type == 0) {
-            sprintf(rp[4], "  Eval: %+.2f", (double)engine_score_val / 100.0);
+            sprintf(rp[3], "  Eval: %+.2f", (double)engine_score_val / 100.0);
         } else if (engine_score_type == 1) {
-            sprintf(rp[4], "  Eval: M%d", engine_score_val);
+            sprintf(rp[3], "  Eval: M%d", engine_score_val);
         } else {
-            strcpy(rp[4], "  Eval: ----");
+            strcpy(rp[3], "  Eval: ----");
         }
 
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
-                sprintf(rp[5], "  NPS:  %.2fM", (double)engine_nps / 1000000.0);
+                sprintf(rp[4], "  NPS:  %.2fM", (double)engine_nps / 1000000.0);
             } else if (engine_nps >= 1000) {
-                sprintf(rp[5], "  NPS:  %.1fk", (double)engine_nps / 1000.0);
+                sprintf(rp[4], "  NPS:  %.1fk", (double)engine_nps / 1000.0);
             } else {
-                sprintf(rp[5], "  NPS:  %lld", engine_nps);
+                sprintf(rp[4], "  NPS:  %lld", engine_nps);
             }
         } else {
-            strcpy(rp[5], "  NPS:  ----");
+            strcpy(rp[4], "  NPS:  ----");
         }
     } else {
-        strcpy(rp[4], "  Eval: Config");
-        strcpy(rp[5], "  NPS:  Config");
+        strcpy(rp[3], "  Eval: Config");
+        strcpy(rp[4], "  NPS:  Config");
     }
 
-    strcpy(rp[6], "  ----------------");
-    strcpy(rp[7], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
+    // Header label shifts to slot [5]
+    strcpy(rp[5], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
 
-    // Single spaced Move History compilation expanded directly from indices [8] to [23]
+    // Single-spaced Move History expanded directly from index [6] to [25] (displays exactly 20 moves)
     int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 16) ? (total_full_moves - 15) : 1;
-    for (int idx = 0; idx < 16; idx++) {
+    int start_move = (total_full_moves > 20) ? (total_full_moves - 19) : 1;
+    for (int idx = 0; idx < 20; idx++) {
         int display = start_move + idx;
         if (total_full_moves > 0 && display <= total_full_moves) {
             int w_idx = (display - 1) * 2;
@@ -608,9 +606,9 @@ void draw_ui(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(rp[8 + idx], "   %2d. %-5s %-5s", display, w_str, b_str);
+            sprintf(rp[6 + idx], "   %2d. %-5s %-5s", display, w_str, b_str);
         } else {
-            sprintf(rp[8 + idx], "   %2d.  ---   --- ", display);
+            sprintf(rp[6 + idx], "   %2d.  ---   --- ", display);
         }
     }
 
