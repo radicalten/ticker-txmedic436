@@ -516,9 +516,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 void draw_ui(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H"); // Flick-free frame reset
-
-    // Top screen elegant title
-    printf(" \x1b[1;33m-- CHESS 3DS --\x1b[0m\x1b[K\n\n");
+    printf("\x1b[K\n");   // Clear Row 1 as a blank spacer line
 
     // Pre-calculate side panel state strings to match the 26 vertical print scanlines
     char rp[26][32];
@@ -616,7 +614,7 @@ void draw_ui(void) {
         }
     }
 
-    // 2. Top Rank Labels: Compacted spacing to align side panel exactly at index 30
+    // 2. Top Rank Labels: Compacted spacing to align side panel exactly at index 30 (Row 2)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h   ");
     } else {
