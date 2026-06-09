@@ -16,6 +16,7 @@
 #include "tbprobe.h"
 #include "thread.h"
 #include "uci.h"
+#include "3ds_bridge.h"
 
 #define TB_PIECES 7
 #define TB_HASHBITS  (TB_PIECES < 7 ?  11 : 12)
