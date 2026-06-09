@@ -22,29 +22,20 @@
 #define THREAD_H
 
 #include <stdatomic.h>
-#ifndef _WIN32
 #include <pthread.h>
-#else
-#include <windows.h>
-#endif
+#include <3ds.h>
 
 #include "types.h"
 
-#define MAX_THREADS 512
+// Max search threads scaled to 4 for optimal performance on New 3DS models
+#define MAX_THREADS 4
 
-#ifndef _WIN32
-#define LOCK_T pthread_mutex_t
-#define LOCK_INIT(x) pthread_mutex_init(&(x), NULL)
-#define LOCK_DESTROY(x) pthread_mutex_destroy(&(x))
-#define LOCK(x) pthread_mutex_lock(&(x))
-#define UNLOCK(x) pthread_mutex_unlock(&(x))
-#else
-#define LOCK_T HANDLE
-#define LOCK_INIT(x) do { x = CreateMutex(NULL, FALSE, NULL); } while (0)
-#define LOCK_DESTROY(x) CloseHandle(x)
-#define LOCK(x) WaitForSingleObject(x, INFINITE)
-#define UNLOCK(x) ReleaseMutex(x)
-#endif
+// Redirect locks to highly-stable native 3DS LightLocks
+#define LOCK_T LightLock
+#define LOCK_INIT(x) LightLock_Init(&(x))
+#define LOCK_DESTROY(x) do {} while (0)
+#define LOCK(x) LightLock_Lock(&(x))
+#define UNLOCK(x) LightLock_Unlock(&(x))
 
 enum {
   THREAD_SLEEP, THREAD_SEARCH, THREAD_TT_CLEAR, THREAD_EXIT, THREAD_RESUME
@@ -54,9 +45,6 @@ void thread_search(Position *pos);
 void thread_wake_up(Position *pos, int action);
 void thread_wait_until_sleeping(Position *pos);
 void thread_wait(Position *pos, atomic_bool *b);
-
-
-// MainThread struct seems to exist mostly for easy move.
 
 struct MainThread {
   double previousTimeReduction;
@@ -70,21 +58,11 @@ extern MainThread mainThread;
 
 void mainthread_search(void);
 
-
-// ThreadPool struct handles all the threads-related stuff like init,
-// starting, parking and, most importantly, launching a thread. All the
-// access to threads data is done through this class.
-
 struct ThreadPool {
   Position *pos[MAX_THREADS];
   int numThreads;
-#ifndef _WIN32
-  pthread_mutex_t mutex;
-  pthread_cond_t sleepCondition;
-  bool initializing;
-#else
-  HANDLE event;
-#endif
+  LightLock mutex;
+  volatile bool initializing;
   bool searching, sleeping, stopOnPonderhit;
   atomic_bool ponder, stop, increaseDepth;
   LOCK_T lock;
@@ -101,7 +79,7 @@ uint64_t threads_tb_hits(void);
 
 extern ThreadPool Threads;
 
-INLINE Position *threads_main(void)
+static inline Position *threads_main(void)
 {
   return Threads.pos[0];
 }
@@ -109,4 +87,4 @@ INLINE Position *threads_main(void)
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
-#endif
+#endif // THREAD_H
