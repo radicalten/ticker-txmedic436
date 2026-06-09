@@ -7,6 +7,7 @@
 #include "thread.h"
 #include "tt.h"
 #include "types.h"
+#include "3ds_bridge.h"
 
 struct settings settings, delayedSettings;
 
