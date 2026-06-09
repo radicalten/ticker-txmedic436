@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +22,10 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 int sf_get_output(char *buf, size_t max_len);
 
+// Custom thread override to set stack sizes and cores
+int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                      void *(*start_routine) (void *), void *arg);
+
 #ifdef __cplusplus
 }
 #endif
@@ -31,6 +36,7 @@ int sf_get_output(char *buf, size_t max_len);
 #define puts sf_puts
 #define putchar sf_putchar
 #define fwrite sf_fwrite
+#define pthread_create sf_pthread_create
 #endif
 
 #endif // THREEDS_BRIDGE_H
