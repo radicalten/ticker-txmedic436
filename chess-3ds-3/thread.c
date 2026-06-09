@@ -50,10 +50,10 @@ static THREAD_FUNC thread_init(void *arg)
 {
   int idx = (intptr_t)arg;
 
-  // FIX: Explicitly assign worker calculations to lower priority layers.
+  // FIX: Use native 3DS system call to assign worker calculations to lower priority layers.
   // Thread 0 gets 0x3D, Thread 1 gets 0x3E, etc.
   // This keeps the master thread (at 0x3B) highly responsive to check timer structures.
-  threadSetPriority(threadGetCurrent(), 0x3D + idx);
+  svcSetThreadPriority(CUR_THREAD_HANDLE, 0x3D + idx);
 
   int t = 0; // NUMA disabled for 3DS
   if (t >= numCmhTables) {
