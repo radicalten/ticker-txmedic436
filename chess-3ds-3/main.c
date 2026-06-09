@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE (256 * 1024)
+#define ENGINE_STACK_SIZE (1024 * 1024) // Increased to 1MB to accommodate NNUE execution
 
 // Handshake state machine definitions
 typedef enum {
@@ -177,8 +177,8 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 4"); // Safe size bounds
-            sf_send_command("setoption name Use NNUE value false"); 
+            // Memory Optimization: 16MB Hash is safe for 128MB RAM while loading NNUE files
+            sf_send_command("setoption name Hash value 16"); 
             
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
@@ -520,7 +520,7 @@ void draw_ui(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H"); // Flick-free coordinates frame reset
 
-    // 1. Matched Status Header Layout (Status, Player Sides, Time Parameters)
+    // 1. Status Header Layout (Status, Player Sides, Time Parameters)
     const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -655,7 +655,7 @@ void draw_ui(void) {
     printf("\x1b[K\n\n");
 
     // Dynamic Engine metric parsing output block
-    printf(" \x1b[38;5;248mEngine Status:\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
+    printf(" \x1b[38;5;248mEngine Status:\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive (NNUE)\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
