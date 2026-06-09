@@ -23,7 +23,10 @@ static MsgQueue q_engine_to_gui;
 #undef vfprintf
 #undef fflush
 #undef puts
+#undef fputs
 #undef putchar
+#undef fputc
+#undef putc
 #undef fwrite
 #undef pthread_create
 
@@ -167,11 +170,32 @@ int sf_puts(const char *str) {
     return i + 1;
 }
 
+int sf_fputs(const char *str, FILE *stream) {
+    if (stream == stdout || stream == stderr) {
+        return sf_puts(str);
+    }
+    return fputs(str, stream);
+}
+
 int sf_putchar(int character) {
     LightLock_Lock(&q_engine_to_gui.lock);
     queue_push_char(&q_engine_to_gui, (char)character);
     LightLock_Unlock(&q_engine_to_gui.lock);
     return character;
+}
+
+int sf_fputc(int character, FILE *stream) {
+    if (stream == stdout || stream == stderr) {
+        return sf_putchar(character);
+    }
+    return fputc(character, stream);
+}
+
+int sf_putc(int character, FILE *stream) {
+    if (stream == stdout || stream == stderr) {
+        return sf_putchar(character);
+    }
+    return putc(character, stream);
 }
 
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
