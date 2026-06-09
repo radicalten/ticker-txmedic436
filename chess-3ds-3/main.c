@@ -46,10 +46,9 @@ int selected_sq = -1;
 int board_orientation = 1; 
 int user_side = 1;         
 
-// FIX: Default time control adjusted to Depth 6. 
-// A 500ms time limit on a 268Mhz CPU limits depth search to 2-3 plies, rendering Stockfish blind.
-int time_control_type = 1; // 1 = Depth mode
-int time_control_val = 6;  // Search depth 6
+// REVERTED: Restored original time control settings
+int time_control_type = 0; 
+int time_control_val = 500; 
 
 int engine_thinking = 0;
 long long engine_nps = 0;
@@ -180,7 +179,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            // FIX: Enforce safe RAM and NNUE resource limits on the engine thread.
+            // Enforce safe RAM and NNUE resource limits on the engine thread.
             // Spares the 3DS from heap exhaustion.
             sf_send_command("setoption name Hash value 4"); // 4MB maximum transposition tables
             sf_send_command("setoption name Use NNUE value false"); // Disable NNUE
