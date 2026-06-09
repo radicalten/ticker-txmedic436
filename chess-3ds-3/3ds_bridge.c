@@ -146,9 +146,5 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     // to prevent deep recursive searches from blowing up the 3DS stack limit.
     pthread_attr_setstacksize(&local_attr, 128 * 1024);
 
-    // Assign Stockfish search threads to Core 1 (Sys Core / Secondary CPU Core)
-    // to prevent CPU calculation spikes from blocking the GUI thread on Core 0.
-    pthread_attr_setprocessor_np(&local_attr, 1);
-
     return pthread_create(thread, &local_attr, start_routine, arg);
 }
