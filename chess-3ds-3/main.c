@@ -230,12 +230,32 @@ void process_engine_output(char *line) {
     }
 }
 
+// FIX: Added robust static line accumulator to split stream packets on newlines.
+// This matches the optimized streaming in 3ds_bridge.c
 void read_from_engine(void) {
     char tmp[512];
-    int count = 0;
-    while (count < 10 && sf_get_output(tmp, sizeof(tmp) - 1) > 0) {
-        process_engine_output(tmp);
-        count++;
+    static char line_buf[1024];
+    static int line_len = 0;
+    int bytes_read;
+
+    // Read raw data block until the bridge queue is empty
+    while ((bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
+        tmp[bytes_read] = '\0'; // Safe null-termination
+        
+        for (int i = 0; i < bytes_read; i++) {
+            char c = tmp[i];
+            if (c == '\n' || c == '\r') {
+                if (line_len > 0) {
+                    line_buf[line_len] = '\0';
+                    process_engine_output(line_buf);
+                    line_len = 0;
+                }
+            } else {
+                if (line_len < (int)sizeof(line_buf) - 1) {
+                    line_buf[line_len++] = c;
+                }
+            }
+        }
     }
 }
 
@@ -873,18 +893,28 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // Spawn Stockfish Core 1 background thread
+    // FIX: Core ID set to -1 (system-assigned default safe core)
+    // Runs on Core 0 (alongside UI) using 0x3F low priority scheduling. Fully works on Old 3DS.
     Thread stockfish_thread;
     s32 prio = 0x3F; 
-    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
+    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, -1, false);
+
+    if (stockfish_thread == NULL) {
+        consoleSelect(&bottomConsole);
+        printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
+        fflush(stdout);
+    } else {
+        consoleSelect(&bottomConsole);
+        printf("Background Engine Thread spawned successfully on Safe Core.\n\n");
+        fflush(stdout);
+    }
+
+    // FIX: Brief sleep cycle to allow background engine streams to fully initialize
+    svcSleepThread(50000000ULL); // 50ms
 
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
-
-    consoleSelect(&bottomConsole);
-    printf("Background Engine Thread spawned successfully on Core 1.\n\n");
-    fflush(stdout);
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -933,8 +963,10 @@ int main(int argc, char **argv) {
     }
 
     sf_send_command("quit");
-    threadJoin(stockfish_thread, U64_MAX);
-    threadFree(stockfish_thread);
+    if (stockfish_thread) {
+        threadJoin(stockfish_thread, U64_MAX);
+        threadFree(stockfish_thread);
+    }
 
     gfxExit();
     return 0;
