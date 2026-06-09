@@ -67,11 +67,9 @@ INLINE void prefetch2(void *addr)
 
 typedef int64_t TimePoint; // A value in milliseconds
 
-INLINE TimePoint now(void) {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return 1000 * (uint64_t)tv.tv_sec + (uint64_t)tv.tv_usec / 1000;
-}
+// FIX: Changed inline definition to a standard function declaration.
+// This forces all source files to use our hardware-native osGetTime() implementation inside misc.c
+TimePoint now(void);
 
 #ifdef _WIN32
 bool large_pages_supported(void);
