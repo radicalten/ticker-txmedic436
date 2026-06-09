@@ -47,7 +47,7 @@ int board_orientation = 1;
 int user_side = 1;         
 
 int time_control_type = 0; 
-int time_control_val = 500; 
+int time_control_val = 1;  // Default matched to 1ms
 
 int engine_thinking = 0;
 long long engine_nps = 0;
@@ -56,13 +56,13 @@ int engine_score_val = 0;
 
 PrintConsole topConsole, bottomConsole;
 
-// Function Declarations
 void init_board(BoardState *state);
 int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
 int is_square_attacked(const BoardState *state, int sq, int attacker);
 void make_move(const BoardState *src, BoardState *dst, Move m);
-void get_move_history_line_string(int row, char *buf, size_t max_len);
+void print_side_panel_line(int panel_row);
+void print_recent_moves(int row);
 void trigger_engine_move(void);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
@@ -177,12 +177,12 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 4"); // 4MB maximum transposition tables
-            sf_send_command("setoption name Use NNUE value false"); // Disable NNUE
+            sf_send_command("setoption name Hash value 4"); // Safe size bounds
+            sf_send_command("setoption name Use NNUE value false"); 
             
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
-            printf("[GUI] Received 'readyok' -> Engine Ready!\n");
+            printf("[GUI] Received 'readyok' -> Handshake Complete.\n");
             fflush(stdout);
         }
     }
@@ -515,142 +515,54 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Compact, styled move history string compiler (fits perfect 16-character column format)
-void get_move_history_line_string(int row, char *buf, size_t max_len) {
-    int total_full_moves = (history_count + 1) / 2;
-    if (total_full_moves == 0) {
-        snprintf(buf, max_len, "                "); // 16 space padding
-        return;
-    }
-    
-    int start_move = 1;
-    if (total_full_moves > 8) {
-        start_move = total_full_moves - 7;
-    }
-    
-    int display = start_move + row;
-    if (display > total_full_moves) {
-        snprintf(buf, max_len, "                ");
-        return;
-    }
-
-    int w_idx = (display - 1) * 2;
-    int b_idx = w_idx + 1;
-
-    char w_str[8] = "";
-    char b_str[8] = "";
-
-    if (w_idx < history_count) {
-        move_to_uci(move_history[w_idx], w_str);
-    } else {
-        strcpy(w_str, "....");
-    }
-
-    if (b_idx < history_count) {
-        move_to_uci(move_history[b_idx], b_str);
-    } else {
-        if (w_idx < history_count) {
-            strcpy(b_str, "....");
-        } else {
-            strcpy(b_str, "");
-        }
-    }
-
-    snprintf(buf, max_len, "  %2d.%-5s %-5s", display, w_str, b_str);
-}
-
-// Redesigned Top-Screen Render Loop
+// GUI Drawing and 3DS Screen Output matching Visual Theme of Desktop CLI
 void draw_ui(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H"); // Frame reset at top-left to avoid screen flickering
+    printf("\x1b[1;1H"); // Flick-free coordinates frame reset
 
-    char title_left[32] = " CHESS 3DS v1.0";
-    char title_right[18] = " ENGINE STATS";
-    char row1_left[32] = "";
-    char row1_right[18] = "";
-    char row2_left[32] = "";
-    char row2_right[18] = "";
-
-    const char *turn_lbl = (current_state.turn == 1) ? "White" : "Black";
+    // 1. Matched Status Header Layout (Status, Player Sides, Time Parameters)
+    const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = has_legal_moves(&current_state);
-    int repetitions = count_repetitions(&current_state);
-
-    // Formulate Game State Strings safely (without ANSI codes to prevent tab-spacing drift)
-    if (current_state.halfmoves >= 100) {
-        snprintf(row1_left, sizeof(row1_left), " Turn: DRAW (50-moves)");
-    } else if (repetitions >= 3) {
-        snprintf(row1_left, sizeof(row1_left), " Turn: DRAW (Repetition)");
-    } else if (!has_mov) {
-        if (is_ch) {
-            snprintf(row1_left, sizeof(row1_left), " Turn: CHECKMATE!");
-        } else {
-            snprintf(row1_left, sizeof(row1_left), " Turn: STALEMATE!");
-        }
-    } else {
-        if (is_ch) {
-            snprintf(row1_left, sizeof(row1_left), " Turn: %s (CHECK)", turn_lbl);
-        } else {
-            snprintf(row1_left, sizeof(row1_left), " Turn: %s", turn_lbl);
-        }
-    }
-
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    if (time_control_type == 0) {
-        snprintf(row2_left, sizeof(row2_left), " W:%s B:%s | TC: %dms", w_play, b_play, time_control_val);
-    } else if (time_control_type == 1) {
-        snprintf(row2_left, sizeof(row2_left), " W:%s B:%s | TC: d:%d", w_play, b_play, time_control_val);
-    } else {
-        snprintf(row2_left, sizeof(row2_left), " W:%s B:%s | TC: n:%d", w_play, b_play, time_control_val);
-    }
+    int repetitions = count_repetitions(&current_state);
 
-    if (engine_thinking) {
-        if (engine_nps >= 1000000) {
-            snprintf(row1_right, sizeof(row1_right), " NPS: %.2fM", (double)engine_nps / 1000000.0);
-        } else if (engine_nps >= 1000) {
-            snprintf(row1_right, sizeof(row1_right), " NPS: %.1fk", (double)engine_nps / 1000.0);
-        } else {
-            snprintf(row1_right, sizeof(row1_right), " NPS: %lld", engine_nps);
-        }
-    } else {
-        snprintf(row1_right, sizeof(row1_right), " NPS: Idle");
-    }
-
-    if (engine_score_type == 0) {
-        snprintf(row2_right, sizeof(row2_right), " Eval: %+.2f", (double)engine_score_val / 100.0);
-    } else if (engine_score_type == 1) {
-        snprintf(row2_right, sizeof(row2_right), " Eval: M%d", engine_score_val);
-    } else {
-        snprintf(row2_right, sizeof(row2_right), " Eval: ---");
-    }
-
-    // Print Header Panels (Perfect 50-column layout alignment)
-    printf("\x1b[1;36m┌──────────────────────────────┬─────────────────┐\x1b[0m\n");
-    printf("\x1b[1;36m│\x1b[1;37m%-30s\x1b[1;36m│\x1b[1;37m%-17s\x1b[1;36m│\x1b[0m\n", title_left, title_right);
-    printf("\x1b[1;36m├──────────────────────────────┼─────────────────┤\x1b[0m\n");
-
-    printf("\x1b[1;36m│\x1b[0m");
-    if (!has_mov && is_ch) {
-        printf("\x1b[1;31m%-30s\x1b[0m", row1_left);
+    printf("  ");
+    if (current_state.halfmoves >= 100) {
+        printf("\x1b[1;36mDRAW (50-move rule)\x1b[0m");
+    } else if (repetitions >= 3) {
+        printf("\x1b[1;36mDRAW (threefold repetition)\x1b[0m");
+    } else if (!has_mov) {
+        if (is_ch) printf("\x1b[1;31mCHECKMATE!\x1b[0m");
+        else printf("\x1b[1;36mSTALEMATE!\x1b[0m");
     } else if (is_ch) {
-        printf("\x1b[1;33m%-30s\x1b[0m", row1_left);
+        printf("%s (\x1b[1;31mCHECK!\x1b[0m)", turn_str);
     } else {
-        printf("\x1b[0m%-30s", row1_left);
+        printf("%s's Turn", turn_str);
     }
-    printf("\x1b[1;36m│\x1b[0m%-17s\x1b[1;36m│\x1b[0m\n", row1_right);
+    printf(" | W:%s B:%s", w_play, b_play);
 
-    printf("\x1b[1;36m│\x1b[0m%-30s\x1b[1;36m│\x1b[0m%-17s\x1b[1;36m│\x1b[0m\n", row2_left, row2_right);
-    printf("\x1b[1;36m├──────────────────────────────┴─────────────────┤\x1b[0m\n");
+    const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
+    printf(" | %s", types[time_control_type]);
+    if (time_control_type == 0) {
+        printf(" (%d ms)", time_control_val);
+    } else if (time_control_type == 1) {
+        printf(" (depth %d)", time_control_val);
+    } else {
+        printf(" (%d nodes)", time_control_val);
+    }
+    printf("\x1b[K\n\n");
 
+    // 2. Transferred 31-character spacing alignment for Side Panel Column alignment
     if (board_orientation == 1) {
-        printf("\x1b[1;36m│\x1b[0m      a  b  c  d  e  f  g  h     \x1b[1;36m│\x1b[0m                 \x1b[1;36m│\x1b[0m\n");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("\x1b[1;36m│\x1b[0m      h  g  f  e  d  c  b  a     \x1b[1;36m│\x1b[0m                 \x1b[1;36m│\x1b[0m\n");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
-
-    printf("\x1b[1;36m│\x1b[0m   ┌────────────────────────┐    \x1b[1;36m│\x1b[1;33m Move History:   \x1b[1;36m│\x1b[0m\n");
+    print_side_panel_line(0);
+    printf("\x1b[K\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -661,10 +573,10 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // Build the 8 board ranks alongside the move list side-panel
+    // 3. Render 8 Custom Maple/Walnut Squares
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
-        printf("\x1b[1;36m│\x1b[0m %d │", rank_lbl);
+        printf("  %d ", rank_lbl);
 
         for (int c = 0; c < 8; c++) {
             int sq = screen_to_board_sq(r, c);
@@ -695,28 +607,26 @@ void draw_ui(void) {
                 }
             }
 
-            // Square coloring logic
+            // Ported CLI terminal ANSI color palette values
             if (is_cursor) {
-                bg_color = "\x1b[46m"; // Cyan cursor
+                bg_color = "\x1b[48;5;208m"; // Bright orange active cursor
             } else if (is_selected) {
-                bg_color = "\x1b[42m"; // Green selection
+                bg_color = "\x1b[48;5;34m";  // Forest Green selection
             } else if (sq == king_in_check) {
-                bg_color = "\x1b[41m"; // Red warning
+                bg_color = "\x1b[48;5;196m"; // Danger warnings red
             } else if (is_prev_move) {
-                bg_color = "\x1b[44m"; // Dark blue path
+                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Steel/Sky Blue historical path
             } else if (is_legal_dest) {
-                bg_color = "\x1b[45m"; // Magenta target hint
+                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Soft green legal path guides
             } else {
-                bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; // Light/Dark chessboard squares
+                bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Wood patterns: Maple vs Walnut
             }
 
-            const char *piece_str = is_light ? "." : " ";
-            const char *fg_color = "\x1b[30m"; 
+            const char *piece_str = " ";
+            const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
             if (p != 0) {
                 if (p > 0) {
-                    fg_color = "\x1b[1;37m"; // Bold white for White pieces
-                } else {
-                    fg_color = "\x1b[1;36m"; // Ice blue for Black pieces
+                    fg_color = "\x1b[38;5;255m\x1b[1m"; // Solid Bold White pieces
                 }
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
@@ -730,36 +640,98 @@ void draw_ui(void) {
             printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
         }
 
-        printf("│ %d \x1b[1;36m│\x1b[0m", rank_lbl);
-
-        // Print corresponding sidebar move history
-        char move_line_buf[32] = "";
-        get_move_history_line_string(r, move_line_buf, sizeof(move_line_buf));
-        printf("%-16s\x1b[1;36m│\x1b[0m\n", move_line_buf);
+        printf(" %d ", rank_lbl);
+        print_side_panel_line(r + 1);
+        printf("\x1b[K\n");
     }
 
-    printf("\x1b[1;36m│\x1b[0m   └────────────────────────┘    \x1b[1;36m│\x1b[0m                \x1b[1;36m│\x1b[0m\n");
-
+    // 4. Coordinates footer aligned perfectly alongside side panel index 9
     if (board_orientation == 1) {
-        printf("\x1b[1;36m│\x1b[0m      a  b  c  d  e  f  g  h     \x1b[1;36m│\x1b[0m                \x1b[1;36m│\x1b[0m\n");
+        printf("     a  b  c  d  e  f  g  h    ");
     } else {
-        printf("\x1b[1;36m│\x1b[0m      h  g  f  e  d  c  b  a     \x1b[1;36m│\x1b[0m                \x1b[1;36m│\x1b[0m\n");
+        printf("     h  g  f  e  d  c  b  a    ");
     }
+    print_side_panel_line(9);
+    printf("\x1b[K\n\n");
 
-    printf("\x1b[1;36m└────────────────────────────────────────────────┘\x1b[0m\n");
+    // Ported instructions redesigned for 3DS inputs
+    printf(" \x1b[38;5;245m[D-pad] Move Cursor | [A] Select/Play | [B] Undo | [SELECT] Reset\x1b[0m\x1b[K\n");
+    printf(" \x1b[38;5;245m[X] Flip Board | [Y] Switch Sides | [L] Cycle TC Mode\x1b[0m\x1b[K\n");
+    printf(" \x1b[38;5;245m[R] Adjust Value | [START] Quit Chess\x1b[0m\x1b[K\n\n");
+
+    // Dynamic Engine metric parsing output block
+    printf(" \x1b[38;5;248mEngine Status:\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
+    if (engine_state == ENGINE_STATE_READY) {
+        if (engine_nps > 0) {
+            if (engine_nps >= 1000000) {
+                printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 1000) {
+                printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
+            } else {
+                printf(" | NPS: %lld", engine_nps);
+            }
+        }
+        if (engine_score_type == 0) {
+            printf(" | \x1b[1;36mEval:\x1b[0m %+.2f", (double)engine_score_val / 100.0);
+        } else if (engine_score_type == 1) {
+            if (engine_score_val > 0) {
+                printf(" | \x1b[1;31mEval: +M%d\x1b[0m", engine_score_val);
+            } else if (engine_score_val < 0) {
+                printf(" | \x1b[1;31mEval: -M%d\x1b[0m", -engine_score_val);
+            } else {
+                printf(" | \x1b[1;31mEval: M0\x1b[0m");
+            }
+        }
+    }
+    printf("\x1b[K\n");
 
     fflush(stdout); 
     consoleSelect(&bottomConsole);
 }
 
+void print_side_panel_line(int panel_row) {
+    printf(" ");
+    print_recent_moves(panel_row);
+}
+
+void print_recent_moves(int row) {
+    int total_full_moves = (history_count + 1) / 2;
+    if (total_full_moves == 0) return;
+    int start_move = 1;
+    if (total_full_moves > 10) {
+        start_move = total_full_moves - 9;
+    }
+    int display = start_move + row;
+    if (display > total_full_moves) return;
+
+    int w_idx = (display - 1) * 2;
+    int b_idx = w_idx + 1;
+
+    printf("   %2d. ", display);
+    if (w_idx < history_count) {
+        char w_str[10];
+        move_to_uci(move_history[w_idx], w_str);
+        printf("%-6s", w_str);
+    } else {
+        printf("------");
+    }
+
+    printf(" ");
+
+    if (b_idx < history_count) {
+        char b_str[10];
+        move_to_uci(move_history[b_idx], b_str);
+        printf("%-6s", b_str);
+    } else {
+        if (w_idx < history_count) printf("...");
+        else printf("------");
+    }
+}
+
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
-    // Overwrite bottom log zone temporarily inside scrolling boundaries without altering dashboard layout
-    printf("\x1b[4;1H\x1b[J");
-    printf("\x1b[1;33mPROMOTION REQUIRED!\n");
-    printf(" Please select your choice on D-Pad:\n\n");
-    printf("  [Y] Queen  \n  [X] Rook   \n  [B] Bishop \n  [A] Knight \x1b[0m\n");
-    fflush(stdout);
+    printf("\n\x1b[1;33mPROMOTION! Tap Screen / Key selection:\n");
+    printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     
     int choice = 5;
     while (aptMainLoop()) {
@@ -771,8 +743,6 @@ int get_promo_choice(void) {
         if (kDown & KEY_A) { choice = 2; break; }
         gspWaitForVBlank();
     }
-    printf("\x1b[4;1H\x1b[J"); // Restore logs area cleanly
-    fflush(stdout);
     return choice;
 }
 
@@ -879,9 +849,10 @@ void handle_switch_sides(void) {
     else user_side = 1;
 }
 
+// Ported dynamic lists from Desktop CLI adjusting parameters safely
 void adjust_time_control(void) {
     if (time_control_type == 0) { 
-        int time_list[] = {50, 100, 500, 1000, 2000, 5000};
+        int time_list[] = {1, 10, 50, 100, 500, 1000, 1500, 2000, 3000, 5000, 10000};
         int time_count = sizeof(time_list) / sizeof(time_list[0]);
         int found_idx = -1;
         for (int i = 0; i < time_count; i++) {
@@ -892,9 +863,9 @@ void adjust_time_control(void) {
         }
         time_control_val = (found_idx == -1 || found_idx == time_count - 1) ? time_list[0] : time_list[found_idx + 1];
     } else if (time_control_type == 1) { 
-        time_control_val = (time_control_val % 15) + 1;
+        time_control_val = (time_control_val % 20) + 1; // 1 to 20 range
     } else { 
-        int nodes_list[] = {1024, 4096, 16384, 65536, 262144};
+        int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608};
         int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
         int found_idx = -1;
         for (int i = 0; i < nodes_count; i++) {
@@ -944,35 +915,14 @@ int main(int argc, char **argv) {
     // Initial Loading screen on Top screen
     consoleSelect(&topConsole);
     printf("\x1b[2J");
-    printf("\x1b[1;1H\x1b[1;36m┌────────────────────────────────────────────────┐\x1b[0m\n");
-    printf("\x1b[1;36m│\x1b[0m \x1b[1;37mCHESS 3DS v1.0\x1b[0m                              \x1b[1;36m│\x1b[0m\n");
-    printf("\x1b[1;36m├────────────────────────────────────────────────┤\x1b[0m\n");
-    printf("\x1b[1;36m│\x1b[0m \x1b[1;33mInitializing Stockfish Engine...\x1b[0m               \x1b[1;36m│\x1b[0m\n");
-    printf("\x1b[1;36m│\x1b[0m Please wait, setting up transposition tables... \x1b[1;36m│\x1b[0m\n");
-    printf("\x1b[1;36m│\x1b[0m Spawning background thread safely...            \x1b[1;36m│\x1b[0m\n");
-    for (int fill = 0; fill < 14; fill++) {
-        printf("\x1b[1;36m│\x1b[0m                                                \x1b[1;36m│\x1b[0m\n");
-    }
-    printf("\x1b[1;36m└────────────────────────────────────────────────┘\x1b[0m\n");
+    printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
+    printf("   Initializing Stockfish Engine...\n");
+    printf("   Please wait, setting up transposition tables...\n");
     fflush(stdout);
     
-    // Bottom Screen Static Setup: Prints permanent structures and defines log region limits
     consoleSelect(&bottomConsole);
     printf("\x1b[2J");
-    printf("\x1b[1;1H\x1b[1;33m┌──────────────────────────────────────┐\n");
-    printf("│         STOCKFISH ENGINE LOGS        │\n");
-    printf("└──────────────────────────────────────┘\x1b[0m\n");
-    
-    printf("\x1b[22;1H\x1b[1;36m╞══════════════════════════════════════╡\n");
-    printf("\x1b[1;37m [D-PAD] Move Cursor   [A] Select/Move   \n");
-    printf(" [B] Undo Move        [Y] Switch Sides  \n");
-    printf(" [X] Flip Board       [L] Cycle Mode    \n");
-    printf(" [R] Time Settings    [SELECT] Reset    \n");
-    printf(" [START] Quit Chess Engine              \x1b[0m\x1b[K");
-
-    // Sets restricted virtual scrolling boundaries between lines 4 and 21 (prevents panel overwrite)
-    printf("\x1b[4;21r");
-    printf("\x1b[4;1H");
+    printf("Setting up console registers...\n");
     fflush(stdout);
     
     gfxFlushBuffers();
@@ -989,7 +939,7 @@ int main(int argc, char **argv) {
         fflush(stdout);
     } else {
         consoleSelect(&bottomConsole);
-        printf("Background Engine thread spawned.\n\n");
+        printf("Background Engine Thread spawned successfully on Safe Core.\n\n");
         fflush(stdout);
     }
 
@@ -1018,7 +968,7 @@ int main(int argc, char **argv) {
 
         if (kDown & KEY_L) {
             time_control_type = (time_control_type + 1) % 3;
-            time_control_val = (time_control_type == 0) ? 500 : (time_control_type == 1 ? 5 : 16384);
+            time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
         }
         if (kDown & KEY_R) {
             adjust_time_control();
