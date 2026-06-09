@@ -168,7 +168,7 @@ void process_engine_output(char *line) {
     consoleSelect(&bottomConsole);
     printf("%s\n", line);
     fflush(stdout);
-    
+
     // Coordinate state-machine transitions (using safe strstr parsing)
     if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
         if (strstr(line, "uciok") != NULL) {
@@ -230,17 +230,20 @@ void process_engine_output(char *line) {
     }
 }
 
-// FIX: Added robust static line accumulator to split stream packets on newlines.
-// This matches the optimized streaming in 3ds_bridge.c
+// FIX: Added robust static line accumulator with a frame chunk-processing guard
+// to prevent the intense Stockfish calculation stream from starving the GUI thread.
 void read_from_engine(void) {
     char tmp[512];
     static char line_buf[1024];
     static int line_len = 0;
     int bytes_read;
+    int chunks_processed = 0;
 
-    // Read raw data block until the bridge queue is empty
-    while ((bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
+    // Limit processed chunks per frame to 8. Unprocessed logs will wait safely
+    // in the 64KB message queue, allowing the GUI to render and maintain 60FPS.
+    while (chunks_processed < 8 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
         tmp[bytes_read] = '\0'; // Safe null-termination
+        chunks_processed++;
         
         for (int i = 0; i < bytes_read; i++) {
             char c = tmp[i];
@@ -893,7 +896,7 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // FIX: Core ID set to -1 (system-assigned default safe core)
+    // Core ID set to -1 (system-assigned default safe core)
     // Runs on Core 0 (alongside UI) using 0x3F low priority scheduling. Fully works on Old 3DS.
     Thread stockfish_thread;
     s32 prio = 0x3F; 
@@ -909,7 +912,7 @@ int main(int argc, char **argv) {
         fflush(stdout);
     }
 
-    // FIX: Brief sleep cycle to allow background engine streams to fully initialize
+    // Brief sleep cycle to allow background engine streams to fully initialize
     svcSleepThread(50000000ULL); // 50ms
 
     // Initiate Phase 1 of Handshake
