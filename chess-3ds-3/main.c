@@ -230,7 +230,7 @@ void process_engine_output(char *line) {
     }
 }
 
-// FIX: Added robust static line accumulator with a frame chunk-processing guard
+// Robust static line accumulator with a frame chunk-processing guard
 // to prevent the intense Stockfish calculation stream from starving the GUI thread.
 void read_from_engine(void) {
     char tmp[512];
@@ -731,6 +731,26 @@ int get_promo_choice(void) {
 }
 
 void handle_select(void) {
+    // FIX 1: Lock out human interactions if the engine is thinking
+    if (engine_thinking) {
+        return;
+    }
+
+    // FIX 2: Lock out human interactions if it is currently the engine's turn to play
+    int is_engine_turn = 0;
+    if (user_side == 2) {
+        is_engine_turn = 1; // Engine vs Engine mode
+    } else if (user_side == 1 && current_state.turn == -1) {
+        is_engine_turn = 1; // Human is White, engine is Black
+    } else if (user_side == -1 && current_state.turn == 1) {
+        is_engine_turn = 1; // Human is Black, engine is White
+    }
+
+    if (is_engine_turn) {
+        return; // Silently discard interactions during the engine's turn
+    }
+
+    // Standard Game-Over / Draw Guards
     if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
         return;
     }
