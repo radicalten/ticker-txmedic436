@@ -78,9 +78,13 @@ void position(Position *pos, char *str)
     if (pos->st->pliesFromNull > 99)
       pos->st->pliesFromNull = 99;
 
-    int k = (pos->st - (pos->stack + 100)) - max(7, pos->st->pliesFromNull);
-    for (; k < 0; k++)
-      memcpy(pos->stack + 100 + k, pos->stack + 200 + k, StateSize);
+    // FIX: Only slide the stack back if we actually exceeded 100 plies.
+    // This prevents pulling uninitialized heap garbage into the history evaluation indices.
+    if (ply >= 100) {
+        int k = (pos->st - (pos->stack + 100)) - max(7, pos->st->pliesFromNull);
+        for (; k < 0; k++)
+          memcpy(pos->stack + 100 + k, pos->stack + 200 + k, StateSize);
+    }
   }
 
   pos->rootKeyFlip = pos->st->key;
@@ -203,7 +207,9 @@ void uci_loop(int argc, char **argv)
   for (int i = 1; i < argc; i++)
     buf_size += strlen(argv[i]) + 1;
 
-  if (buf_size < 1024) buf_size = 1024;
+  // FIX: Increased command allocation limit from 1024 bytes to 8192 bytes.
+  // This prevents late-game desynchronizations when move history strings overflow the buffer.
+  if (buf_size < 8192) buf_size = 8192;
 
   char *cmd = malloc(buf_size);
   cmd[0] = 0;
@@ -221,8 +227,14 @@ void uci_loop(int argc, char **argv)
         sf_recv_command(cmd, buf_size);
     }
 
-    if (cmd[strlen(cmd) - 1] == '\n')
-      cmd[strlen(cmd) - 1] = 0;
+    // FIX: Safely strip Windows carriage returns (\r), Unix newlines (\n), and empty spaces 
+    // at the end of the line buffer. This stops the engine from rejecting the final move in
+    // a move list.
+    size_t cmd_len = strlen(cmd);
+    while (cmd_len > 0 && (cmd[cmd_len - 1] == '\n' || cmd[cmd_len - 1] == '\r' || cmd[cmd_len - 1] == ' ')) {
+      cmd[cmd_len - 1] = 0;
+      cmd_len--;
+    }
 
     // DIAGNOSTIC LOG: Print exactly what command the engine received back to GUI
     printf("[ENGINE_RECV] %s\n", cmd);
