@@ -9,6 +9,16 @@
 #define MAX_HISTORY 2048
 #define ENGINE_STACK_SIZE (256 * 1024)
 
+// Handshake state machine definitions
+typedef enum {
+    ENGINE_STATE_BOOTING,
+    ENGINE_STATE_WAIT_UCIOK,
+    ENGINE_STATE_WAIT_READYOK,
+    ENGINE_STATE_READY,
+} EngineInitState;
+
+EngineInitState engine_state = ENGINE_STATE_BOOTING;
+
 typedef struct {
     int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
     int turn;      // 1 = White, -1 = Black
@@ -117,7 +127,7 @@ void trigger_engine_move(void) {
 
     static char cmd[8192];
     
-    // Safety Fix: If there are no moves yet, send "position startpos" without trailing modifiers
+    // Safety Fix: If there are no moves yet, send "position startpos"
     if (history_count == 0) {
         strcpy(cmd, "position startpos");
     } else {
@@ -158,6 +168,23 @@ void process_engine_output(char *line) {
     consoleSelect(&bottomConsole);
     printf("%s\n", line);
     fflush(stdout);
+
+    // Coordinate state-machine transitions
+    if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
+        if (strcmp(line, "uciok") == 0) {
+            sf_send_command("isready");
+            engine_state = ENGINE_STATE_WAIT_READYOK;
+            printf("[GUI] Received 'uciok' -> Sending 'isready'\n");
+            fflush(stdout);
+        }
+    } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
+        if (strcmp(line, "readyok") == 0) {
+            sf_send_command("ucinewgame");
+            engine_state = ENGINE_STATE_READY;
+            printf("[GUI] Received 'readyok' -> Handshake Complete. Engine Ready!\n");
+            fflush(stdout);
+        }
+    }
 
     if (strncmp(line, "info", 4) == 0) {
         char *nps_ptr = strstr(line, " nps ");
@@ -851,8 +878,9 @@ int main(int argc, char **argv) {
     s32 prio = 0x3F; 
     stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
 
+    // Initiate Phase 1 of Handshake
     sf_send_command("uci");
-    sf_send_command("isready");
+    engine_state = ENGINE_STATE_WAIT_UCIOK;
 
     consoleSelect(&bottomConsole);
     printf("Background Engine Thread spawned successfully on Core 1.\n\n");
@@ -883,8 +911,9 @@ int main(int argc, char **argv) {
             adjust_time_control();
         }
 
+        // Engine can only think once the Handshake is complete
         int engine_active = 0;
-        if (has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
+        if (engine_state == ENGINE_STATE_READY && has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
