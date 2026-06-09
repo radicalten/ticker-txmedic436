@@ -560,11 +560,11 @@ void draw_ui(void) {
     // Modes & limits shift up
     sprintf(rp[1], "  W: %s | B: %s", w_play, b_play);
     if (time_control_type == 0) {
-        sprintf(rp[2], "  Limit: %d ms", time_control_val);
+        sprintf(rp[2], "  Lim: %d ms", time_control_val);
     } else if (time_control_type == 1) {
-        sprintf(rp[2], "  Limit: depth %d", time_control_val);
+        sprintf(rp[2], "  Lim: depth %d", time_control_val);
     } else {
-        sprintf(rp[2], "  Limit: %d nodes", time_control_val);
+        sprintf(rp[2], "  Lim: %d nodes", time_control_val);
     }
 
     // Engine speed and score shift up
