@@ -239,9 +239,9 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         local_attr = *attr;
     }
 
-    // Force a stable stack size (128 KB) for Stockfish search threads 
+    // Force a stable stack size (512 KB) for Stockfish search threads 
     // to prevent deep recursive searches from blowing up the 3DS stack limit.
-    pthread_attr_setstacksize(&local_attr, 128 * 1024);
+    pthread_attr_setstacksize(&local_attr, 512 * 1024);
 
     return pthread_create(thread, &local_attr, start_routine, arg);
 }
