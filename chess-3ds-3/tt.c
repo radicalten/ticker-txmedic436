@@ -32,6 +32,7 @@
 #include "tt.h"
 #include "types.h"
 #include "uci.h"
+#include "3ds_bridge.h"
 
 TranspositionTable TT; // Our global transposition table
 
