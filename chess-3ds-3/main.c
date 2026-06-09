@@ -917,10 +917,10 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // Core ID set to -1 (system-assigned default safe core)
-    // Runs on Core 0 (alongside UI) using 0x3F low priority scheduling. Fully works on Old 3DS.
+    // FIX: Set master thread priority to 0x3B (higher than search workers at 0x3C+)
+    // This guarantees the master thread can preempt calculation loops to process timer events!
     Thread stockfish_thread;
-    s32 prio = 0x3F; 
+    s32 prio = 0x3B; 
     stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, -1, false);
 
     if (stockfish_thread == NULL) {
