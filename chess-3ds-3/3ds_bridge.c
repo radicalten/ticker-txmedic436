@@ -51,11 +51,15 @@ void sf_recv_command(char *buf, size_t max_len) {
             return;
         }
         LightLock_Unlock(&q_gui_to_engine.lock);
-        svcSleepThread(2000000LL); // Yield CPU to prevent starvation
+        svcSleepThread(2000000LL); 
     }
 }
 
 #undef printf
+#undef puts
+#undef putchar
+#undef fwrite
+
 int sf_printf(const char *format, ...) {
     char temp_buf[1024];
     va_list args;
@@ -70,6 +74,40 @@ int sf_printf(const char *format, ...) {
     }
     LightLock_Unlock(&q_engine_to_gui.lock);
     return written;
+}
+
+int sf_puts(const char *str) {
+    LightLock_Lock(&q_engine_to_gui.lock);
+    int i = 0;
+    for (; str[i] != '\0'; i++) {
+        q_engine_to_gui.data[q_engine_to_gui.head] = str[i];
+        q_engine_to_gui.head = (q_engine_to_gui.head + 1) % MSG_QUEUE_SIZE;
+    }
+    q_engine_to_gui.data[q_engine_to_gui.head] = '\n';
+    q_engine_to_gui.head = (q_engine_to_gui.head + 1) % MSG_QUEUE_SIZE;
+    LightLock_Unlock(&q_engine_to_gui.lock);
+    return i + 1;
+}
+
+int sf_putchar(int character) {
+    LightLock_Lock(&q_engine_to_gui.lock);
+    q_engine_to_gui.data[q_engine_to_gui.head] = (char)character;
+    q_engine_to_gui.head = (q_engine_to_gui.head + 1) % MSG_QUEUE_SIZE;
+    LightLock_Unlock(&q_engine_to_gui.lock);
+    return character;
+}
+
+size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    size_t total_bytes = size * nmemb;
+    const char *char_ptr = (const char *)ptr;
+    
+    LightLock_Lock(&q_engine_to_gui.lock);
+    for (size_t i = 0; i < total_bytes; i++) {
+        q_engine_to_gui.data[q_engine_to_gui.head] = char_ptr[i];
+        q_engine_to_gui.head = (q_engine_to_gui.head + 1) % MSG_QUEUE_SIZE;
+    }
+    LightLock_Unlock(&q_engine_to_gui.lock);
+    return nmemb;
 }
 
 int sf_get_output(char *buf, size_t max_len) {
