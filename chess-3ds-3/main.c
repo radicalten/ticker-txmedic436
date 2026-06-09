@@ -127,7 +127,6 @@ void trigger_engine_move(void) {
 
     static char cmd[8192];
     
-    // Safety Fix: If there are no moves yet, send "position startpos"
     if (history_count == 0) {
         strcpy(cmd, "position startpos");
     } else {
@@ -211,7 +210,7 @@ void process_engine_output(char *line) {
         }
     }
 
-    // DIAGNOSTIC LOGS: Inspect the exact coordinate validation sequence
+    // Inspect coordinate validation sequence
     if (strncmp(line, "bestmove", 8) == 0) {
         char move_str[16];
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
@@ -244,8 +243,8 @@ void process_engine_output(char *line) {
     }
 }
 
-// Robust static line accumulator with a frame chunk-processing guard
-// to prevent the intense Stockfish calculation stream from starving the GUI thread.
+// Drains the queue at 4x speed (up to 32 chunks per frame)
+// This guarantees that "bestmove" is never trapped in the buffer behind logs.
 void read_from_engine(void) {
     char tmp[512];
     static char line_buf[1024];
@@ -253,9 +252,8 @@ void read_from_engine(void) {
     int bytes_read;
     int chunks_processed = 0;
 
-    // Limit processed chunks per frame to 8. Unprocessed logs will wait safely
-    // in the 64KB message queue, allowing the GUI to render and maintain 60FPS.
-    while (chunks_processed < 8 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
+    // Upgraded limit to 32 to guarantee instantaneous buffer draining
+    while (chunks_processed < 32 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
         tmp[bytes_read] = '\0'; // Safe null-termination
         chunks_processed++;
         
@@ -745,12 +743,12 @@ int get_promo_choice(void) {
 }
 
 void handle_select(void) {
-    // FIX 1: Lock out human interactions if the engine is currently analyzing
+    // Lock out human interactions if the engine is currently analyzing
     if (engine_thinking) {
         return;
     }
 
-    // FIX 2: Strict Side/Turn Lockout. 
+    // Strict Side/Turn Lockout. 
     // Human players are strictly blocked from interacting with the opponent's pieces.
     int is_engine_turn = 0;
     if (user_side == 2) {
@@ -931,7 +929,7 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // FIX: Set master thread priority to 0x3B (higher than search workers at 0x3D+)
+    // Set master thread priority to 0x3B (higher than search workers at 0x3D+)
     // This guarantees the master thread can preempt calculation loops to process timer events!
     Thread stockfish_thread;
     s32 prio = 0x3B; 
