@@ -152,6 +152,7 @@ void process_engine_output(char *line) {
 
     consoleSelect(&bottomConsole);
     printf("%s\n", line);
+    fflush(stdout);
 
     if (strncmp(line, "info", 4) == 0) {
         char *nps_ptr = strstr(line, " nps ");
@@ -199,11 +200,10 @@ void process_engine_output(char *line) {
 
 void read_from_engine(void) {
     char tmp[512];
-    int lines_processed = 0;
-    // Process at most 10 lines per frame to prevent engine spam from freezing the main thread
-    while (lines_processed < 10 && sf_get_output(tmp, sizeof(tmp) - 1) > 0) {
+    int count = 0;
+    while (count < 10 && sf_get_output(tmp, sizeof(tmp) - 1) > 0) {
         process_engine_output(tmp);
-        lines_processed++;
+        count++;
     }
 }
 
@@ -464,7 +464,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 
 void draw_ui(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[2J\x1b[1;1H"); // Safe clear screen and reset cursor
+    printf("\x1b[2J\x1b[1;1H"); // Complete top screen refresh
 
     const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
     int king = find_king(&current_state, current_state.turn);
@@ -551,26 +551,27 @@ void draw_ui(void) {
             }
 
             if (is_cursor) {
-                bg_color = "\x1b[46m"; // Cyan
+                bg_color = "\x1b[46m"; 
             } else if (is_selected) {
-                bg_color = "\x1b[42m"; // Green
+                bg_color = "\x1b[42m"; 
             } else if (sq == king_in_check) {
-                bg_color = "\x1b[41m"; // Red
+                bg_color = "\x1b[41m"; 
             } else if (is_prev_move) {
-                bg_color = "\x1b[44m"; // Blue
+                bg_color = "\x1b[44m"; 
             } else if (is_legal_dest) {
-                bg_color = "\x1b[45m"; // Magenta
+                bg_color = "\x1b[45m"; 
             } else {
-                bg_color = is_light ? "\x1b[47m" : "\x1b[43m"; // White vs Yellow
+                bg_color = is_light ? "\x1b[47m" : "\x1b[43m"; 
             }
 
+            // ASCII Piece Characters (Unicode is not compatible on standard 3DS console)
             const char *piece_str = " ";
-            const char *fg_color = "\x1b[30m"; // Black Text
+            const char *fg_color = "\x1b[30m"; 
             if (p != 0) {
                 if (p > 0) {
-                    fg_color = "\x1b[1;37m"; // White pieces: Bold White text
+                    fg_color = "\x1b[1;37m"; // White: Bold White
                 } else {
-                    fg_color = "\x1b[1;36m"; // Black pieces: Bold Cyan text
+                    fg_color = "\x1b[1;36m"; // Black: Bold Cyan
                 }
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
@@ -613,8 +614,9 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n");
 
-    fflush(stdout); // FORCE THE 3DS SCREEN BUFFER TO RENDER!
+    fflush(stdout); 
 
+    // Relocate output device back to bottom screen
     consoleSelect(&bottomConsole);
 }
 
@@ -823,7 +825,7 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // Render loading screen immediately
+    // Initial Loading screen on Top screen
     consoleSelect(&topConsole);
     printf("\x1b[2J");
     printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
@@ -831,6 +833,7 @@ int main(int argc, char **argv) {
     printf("   Please wait, setting up transposition tables...\n");
     fflush(stdout);
     
+    // Bottom Screen startup message
     consoleSelect(&bottomConsole);
     printf("\x1b[2J");
     printf("Setting up console registers...\n");
@@ -840,7 +843,7 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // Spawn Stockfish safely on Core 1 (Secondary CPU Core)
+    // Spawn Stockfish Core 1 background thread
     Thread stockfish_thread;
     s32 prio = 0x3F; 
     stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
