@@ -50,7 +50,7 @@ static THREAD_FUNC thread_init(void *arg)
 {
   int idx = (intptr_t)arg;
 
-  // FIX: Use native 3DS system call to assign worker calculations to lower priority layers.
+  // Use native 3DS system call to assign worker calculations to lower priority layers.
   // Thread 0 gets 0x3D, Thread 1 gets 0x3E, etc.
   // This keeps the master thread (at 0x3B) highly responsive to check timer structures.
   svcSetThreadPriority(CUR_THREAD_HANDLE, 0x3D + idx);
@@ -148,6 +148,7 @@ static void thread_create(int idx)
   
   // Safe yield loop replacing POSIX condvars to prevent startup freezes
   while (Threads.initializing) {
+    __asm__ __volatile__("" ::: "memory"); // Force memory reload
     svcSleepThread(1000000ULL); // Yield 1ms to let the worker thread run
   }
 
@@ -179,8 +180,9 @@ static void thread_destroy(Position *pos)
 // thread_wait_for_search_finished() waits until not searching.
 void thread_wait_until_sleeping(Position *pos)
 {
-  // High-performance cooperative yield loop
+  // High-performance cooperative yield loop with compile-time memory barriers
   while (pos->action != THREAD_SLEEP) {
+    __asm__ __volatile__("" ::: "memory"); // FIX: Force GCC to reload pos->action from RAM
     svcSleepThread(1000000ULL); // Yield 1ms
   }
 
@@ -192,6 +194,7 @@ void thread_wait_until_sleeping(Position *pos)
 void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
+    __asm__ __volatile__("" ::: "memory"); // Force memory reload
     svcSleepThread(1000000ULL); // Yield 1ms
   }
 }
@@ -208,6 +211,7 @@ static void thread_idle_loop(Position *pos)
   while (true) {
     // Cooperative park loop
     while (pos->action == THREAD_SLEEP) {
+      __asm__ __volatile__("" ::: "memory"); // Force memory reload
       svcSleepThread(2000000ULL); // Sleep 2ms to prevent CPU starvation
     }
 
