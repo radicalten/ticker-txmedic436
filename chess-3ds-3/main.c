@@ -1,3 +1,4 @@
+#define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -564,14 +565,13 @@ void draw_ui(void) {
                 bg_color = is_light ? "\x1b[47m" : "\x1b[43m"; 
             }
 
-            // ASCII Piece Characters (Unicode is not compatible on standard 3DS console)
             const char *piece_str = " ";
             const char *fg_color = "\x1b[30m"; 
             if (p != 0) {
                 if (p > 0) {
-                    fg_color = "\x1b[1;37m"; // White: Bold White
+                    fg_color = "\x1b[1;37m"; 
                 } else {
-                    fg_color = "\x1b[1;36m"; // Black: Bold Cyan
+                    fg_color = "\x1b[1;36m"; 
                 }
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
@@ -616,7 +616,6 @@ void draw_ui(void) {
 
     fflush(stdout); 
 
-    // Relocate output device back to bottom screen
     consoleSelect(&bottomConsole);
 }
 
