@@ -554,11 +554,11 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Top Rank Labels: Perfectly aligned at column 32 with 3-character horizontal spacing
+    // 2. Top Rank Labels: Mapped to Row 0 of PGN Side Panel
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        printf("     a  b  c  d  e  f  g  h     ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        printf("     h  g  f  e  d  c  b  a     ");
     }
     print_side_panel_line(0);
     printf("\x1b[K\n");
@@ -572,84 +572,102 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Board Ranks: Center-aligned 3-character wide squares (" %s ")
+    // 3. Render 8 Board Ranks: Expanded to 3 character rows per rank (3x3 grid squares)
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
-        printf("  %d ", rank_lbl);
 
-        for (int c = 0; c < 8; c++) {
-            int sq = screen_to_board_sq(r, c);
-            int p = current_state.board[sq];
-
-            int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-            const char *bg_color;
-
-            int is_selected = (sq == selected_sq);
-            int is_cursor = (r == cursor_r && c == cursor_c);
-
-            int is_prev_move = 0;
-            if (history_count > 0) {
-                Move last_move = move_history[history_count - 1];
-                if (sq == last_move.from || sq == last_move.to) {
-                    is_prev_move = 1;
-                }
-            }
-
-            int is_legal_dest = 0;
-            if (selected_sq != -1) {
-                Move test_m = {selected_sq, sq, 0};
-                if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                    test_m.promo = 5;
-                }
-                if (is_legal_move(&current_state, test_m)) {
-                    is_legal_dest = 1;
-                }
-            }
-
-            // CLI terminal ANSI colors
-            if (is_cursor) {
-                bg_color = "\x1b[48;5;208m"; // Bright orange cursor
-            } else if (is_selected) {
-                bg_color = "\x1b[48;5;34m";  // Forest Green selection
-            } else if (sq == king_in_check) {
-                bg_color = "\x1b[48;5;196m"; // Danger warnings red
-            } else if (is_prev_move) {
-                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Sky/Steel Blue history path
-            } else if (is_legal_dest) {
-                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
+        for (int sub_r = 0; sub_r < 3; sub_r++) {
+            // Left Margin (Only print number coordinate in the middle row of the square)
+            if (sub_r == 1) {
+                printf("  %d ", rank_lbl);
             } else {
-                bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Maple/Walnut patterns
+                printf("    ");
             }
 
-            const char *piece_str = " ";
-            const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
-            if (p != 0) {
-                if (p > 0) {
-                    fg_color = "\x1b[38;5;255m\x1b[1m"; // Bold White pieces
+            for (int c = 0; c < 8; c++) {
+                int sq = screen_to_board_sq(r, c);
+                int p = current_state.board[sq];
+
+                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
+                const char *bg_color;
+
+                int is_selected = (sq == selected_sq);
+                int is_cursor = (r == cursor_r && c == cursor_c);
+
+                int is_prev_move = 0;
+                if (history_count > 0) {
+                    Move last_move = move_history[history_count - 1];
+                    if (sq == last_move.from || sq == last_move.to) {
+                        is_prev_move = 1;
+                    }
                 }
-                switch (abs(p)) {
-                    case 1: piece_str = "P"; break;
-                    case 2: piece_str = "N"; break;
-                    case 3: piece_str = "B"; break;
-                    case 4: piece_str = "R"; break;
-                    case 5: piece_str = "Q"; break;
-                    case 6: piece_str = "K"; break;
+
+                int is_legal_dest = 0;
+                if (selected_sq != -1) {
+                    Move test_m = {selected_sq, sq, 0};
+                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+                        test_m.promo = 5;
+                    }
+                    if (is_legal_move(&current_state, test_m)) {
+                        is_legal_dest = 1;
+                    }
+                }
+
+                // CLI terminal ANSI colors
+                if (is_cursor) {
+                    bg_color = "\x1b[48;5;208m"; // Bright orange cursor
+                } else if (is_selected) {
+                    bg_color = "\x1b[48;5;34m";  // Forest Green selection
+                } else if (sq == king_in_check) {
+                    bg_color = "\x1b[48;5;196m"; // Danger warnings red
+                } else if (is_prev_move) {
+                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Sky/Steel Blue history path
+                } else if (is_legal_dest) {
+                    bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
+                } else {
+                    bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Maple/Walnut patterns
+                }
+
+                if (sub_r == 1) {
+                    // Center sub-row: centere piece formatting (" %s ")
+                    const char *piece_str = " ";
+                    const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
+                    if (p != 0) {
+                        if (p > 0) {
+                            fg_color = "\x1b[38;5;255m\x1b[1m"; // Bold White pieces
+                        }
+                        switch (abs(p)) {
+                            case 1: piece_str = "P"; break;
+                            case 2: piece_str = "N"; break;
+                            case 3: piece_str = "B"; break;
+                            case 4: piece_str = "R"; break;
+                            case 5: piece_str = "Q"; break;
+                            case 6: piece_str = "K"; break;
+                        }
+                    }
+                    printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
+                } else {
+                    // Top and Bottom sub-rows: Solid empty colored background block
+                    printf("%s   \x1b[0m", bg_color);
                 }
             }
-            // " %s " yields perfect horizontal centering within the 3-character wide block
-            printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
+
+            // Right Margin: Only print number coordinate and align PGN moves on middle row
+            if (sub_r == 1) {
+                printf(" %d ", rank_lbl);
+                print_side_panel_line(r + 1); // Ranks 8-1 align directly to side panel items 1-8
+            } else {
+                printf("    ");
+            }
+            printf("\x1b[K\n");
         }
-
-        printf(" %d ", rank_lbl);
-        print_side_panel_line(r + 1);
-        printf("\x1b[K\n");
     }
 
-    // 4. Bottom Rank Labels: Perfectly aligned with the 3-character horizontally centered board
+    // 4. Bottom Rank Labels: Mapped directly to Row 9 of PGN Side Panel
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        printf("     a  b  c  d  e  f  g  h     ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        printf("     h  g  f  e  d  c  b  a     ");
     }
     print_side_panel_line(9);
     printf("\x1b[K\n\n");
@@ -701,7 +719,7 @@ void print_recent_moves(int row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    // Fixed compact PGN column spacing to prevent wrapping and preserve formatting
+    // Highly compact styling to prevent column wrapping on 3DS top screen
     printf(" %2d.", display);
     if (w_idx < history_count) {
         char w_str[10];
