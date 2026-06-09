@@ -544,9 +544,17 @@ void draw_ui(void) {
             strcpy(rp[0], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
         }
     } else if (is_ch) {
-        sprintf(rp[0], "  \x1b[1;31m%s (CHECK!)\x1b[0m", (current_state.turn == 1) ? "White" : "Black");
+        if (current_state.turn == 1) {
+            sprintf(rp[0], "  \x1b[1;32mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+        } else {
+            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+        }
     } else {
-        sprintf(rp[0], "  %s to play", (current_state.turn == 1) ? "White" : "Black");
+        if (current_state.turn == 1) {
+            sprintf(rp[0], "  \x1b[1;32mWhite\x1b[0m to play");
+        } else {
+            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m to play");
+        }
     }
 
     // Modes & limits shift up
@@ -562,9 +570,22 @@ void draw_ui(void) {
     // Engine speed and score shift up
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_score_type == 0) {
-            sprintf(rp[3], "  Eval: %+.2f", (double)engine_score_val / 100.0);
+            double eval = (double)engine_score_val / 100.0;
+            if (eval > 0.0) {
+                sprintf(rp[3], "  Eval: \x1b[1;32m%+.2f\x1b[0m", eval); // Green when positive (+)
+            } else if (eval < 0.0) {
+                sprintf(rp[3], "  Eval: \x1b[1;31m%+.2f\x1b[0m", eval); // Red when negative (-)
+            } else {
+                sprintf(rp[3], "  Eval: 0.00");                          // Default color when 0.0
+            }
         } else if (engine_score_type == 1) {
-            sprintf(rp[3], "  Eval: M%d", engine_score_val);
+            if (engine_score_val > 0) {
+                sprintf(rp[3], "  Eval: \x1b[1;32m+M%d\x1b[0m", engine_score_val);
+            } else if (engine_score_val < 0) {
+                sprintf(rp[3], "  Eval: \x1b[1;31m-M%d\x1b[0m", -engine_score_val);
+            } else {
+                sprintf(rp[3], "  Eval: M0");
+            }
         } else {
             strcpy(rp[3], "  Eval: ----");
         }
@@ -588,7 +609,7 @@ void draw_ui(void) {
     // Header label shifts to slot [5]
     strcpy(rp[5], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
 
-    // Single-spaced Move History compiled flush with RECENT MOVES header (uses 2 spaces instead of 3)
+    // Single-spaced Move History compiled flush with RECENT MOVES header
     int total_full_moves = (history_count + 1) / 2;
     int start_move = (total_full_moves > 20) ? (total_full_moves - 19) : 1;
     for (int idx = 0; idx < 20; idx++) {
