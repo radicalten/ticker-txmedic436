@@ -655,7 +655,7 @@ void draw_ui(void) {
     printf("\x1b[K\n\n");
 
     // Dynamic Engine metric parsing output block
-    printf(" \x1b[38;5;248m\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive \x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
+    printf(" \x1b[38;5;248m\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
