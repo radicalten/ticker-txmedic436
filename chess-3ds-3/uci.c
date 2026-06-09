@@ -273,9 +273,17 @@ void uci_loop(int argc, char **argv)
     else if (strcmp(token, "ucinewgame") == 0) {
       process_delayed_settings();
       search_clear();
-    } else if (strcmp(token, "isready") == 0) {
+    } 
+    else if (strcmp(token, "isready") == 0) {
+      // DIAGNOSTIC LOGS: Trace execution paths inside the isready command handler
+      printf("[DIAGNOSTIC] Engine entering 'isready' execution block...\n");
+      
+      printf("[DIAGNOSTIC] Resizing memory/threads via process_delayed_settings()...\n");
       process_delayed_settings();
+      
+      printf("[DIAGNOSTIC] process_delayed_settings() successfully completed!\n");
       printf("readyok\n");
+      printf("[DIAGNOSTIC] Sent 'readyok\\n' to bridge output.\n");
     }
     else if (strcmp(token, "go") == 0)        go(&pos, str);
     else if (strcmp(token, "position") == 0)  position(&pos, str);
