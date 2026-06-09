@@ -239,9 +239,13 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         local_attr = *attr;
     }
 
-    // Force a stable stack size (512 KB) for Stockfish search threads 
-    // to prevent deep recursive searches from blowing up the 3DS stack limit.
-    pthread_attr_setstacksize(&local_attr, 512 * 1024);
+    // Stable 256KB stack size mapping to Horizon OS limits
+    pthread_attr_setstacksize(&local_attr, 256 * 1024);
 
-    return pthread_create(thread, &local_attr, start_routine, arg);
+    int res = pthread_create(thread, &local_attr, start_routine, arg);
+    
+    // DIAGNOSTIC LOG: Print thread startup status to the bottom console
+    sf_printf("[BRIDGE] Spawning search thread... Status: %d\n", res);
+
+    return res;
 }
