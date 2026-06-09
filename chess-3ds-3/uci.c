@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #include "evaluate.h"
 #include "misc.h"
@@ -222,6 +223,9 @@ void uci_loop(int argc, char **argv)
 
     if (cmd[strlen(cmd) - 1] == '\n')
       cmd[strlen(cmd) - 1] = 0;
+
+    // DIAGNOSTIC LOG: Print exactly what command the engine received back to GUI
+    printf("[ENGINE_RECV] %s\n", cmd);
 
     token = cmd;
     while (isblank(*token))
