@@ -131,3 +131,24 @@ int sf_get_output(char *buf, size_t max_len) {
     LightLock_Unlock(&q_engine_to_gui.lock);
     return (int)i;
 }
+
+#undef pthread_create
+int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                      void *(*start_routine) (void *), void *arg) {
+    pthread_attr_t local_attr;
+    if (attr == NULL) {
+        pthread_attr_init(&local_attr);
+    } else {
+        local_attr = *attr;
+    }
+
+    // Force a stable stack size (128 KB) for Stockfish search threads 
+    // to prevent deep recursive searches from blowing up the 3DS stack limit.
+    pthread_attr_setstacksize(&local_attr, 128 * 1024);
+
+    // Assign Stockfish search threads to Core 1 (Sys Core / Secondary CPU Core)
+    // to prevent CPU calculation spikes from blocking the GUI thread on Core 0.
+    pthread_attr_setprocessor_np(&local_attr, 1);
+
+    return pthread_create(thread, &local_attr, start_routine, arg);
+}
