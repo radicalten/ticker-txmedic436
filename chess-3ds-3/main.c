@@ -116,20 +116,24 @@ void trigger_engine_move(void) {
     engine_score_val = 0;
 
     static char cmd[8192];
-    cmd[0] = '\0';
-    strcpy(cmd, "position startpos moves");
     
-    int len = strlen(cmd);
-    for (int i = 0; i < history_count; i++) {
-        char uci_m[10];
-        move_to_uci(move_history[i], uci_m);
-        int move_len = strlen(uci_m);
-        if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) break;
-        cmd[len++] = ' ';
-        strcpy(cmd + len, uci_m);
-        len += move_len;
+    // Safety Fix: If there are no moves yet, send "position startpos" without trailing modifiers
+    if (history_count == 0) {
+        strcpy(cmd, "position startpos");
+    } else {
+        strcpy(cmd, "position startpos moves");
+        int len = strlen(cmd);
+        for (int i = 0; i < history_count; i++) {
+            char uci_m[10];
+            move_to_uci(move_history[i], uci_m);
+            int move_len = strlen(uci_m);
+            if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) break;
+            cmd[len++] = ' ';
+            strcpy(cmd + len, uci_m);
+            len += move_len;
+        }
+        cmd[len] = '\0';
     }
-    cmd[len] = '\0';
     
     sf_send_command(cmd);
 
