@@ -590,10 +590,10 @@ void draw_ui(void) {
     strcpy(rp[6], "  ----------------");
     strcpy(rp[7], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
 
-    // Single spaced Move History compilation directly on indexes [8] to [17]
+    // Single spaced Move History compilation expanded directly from indices [8] to [23]
     int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 10) ? (total_full_moves - 9) : 1;
-    for (int idx = 0; idx < 10; idx++) {
+    int start_move = (total_full_moves > 16) ? (total_full_moves - 15) : 1;
+    for (int idx = 0; idx < 16; idx++) {
         int display = start_move + idx;
         if (total_full_moves > 0 && display <= total_full_moves) {
             int w_idx = (display - 1) * 2;
