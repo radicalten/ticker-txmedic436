@@ -211,19 +211,33 @@ void process_engine_output(char *line) {
         }
     }
 
+    // DIAGNOSTIC LOGS: Inspect the exact coordinate validation sequence
     if (strncmp(line, "bestmove", 8) == 0) {
         char move_str[16];
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
+            printf("\n\x1b[1;32m[GUI_DEBUG] Engine played bestmove: '%s'\x1b[0m\n", move_str);
+            fflush(stdout);
+            
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
                 return;
             }
+            
             Move m = gui_uci_to_move(move_str);
+            printf("[GUI_DEBUG] Decoded Move: from_sq=%d, to_sq=%d, promo=%d\n", m.from, m.to, m.promo);
+            fflush(stdout);
+            
             if (is_legal_move(&current_state, m)) {
+                printf("[GUI_DEBUG] Move is LEGAL. Playing move...\n");
+                fflush(stdout);
                 push_state(&current_state, m);
                 BoardState next;
                 make_move(&current_state, &next, m);
                 current_state = next;
+            } else {
+                printf("\x1b[1;31m[GUI_DEBUG] Move is ILLEGAL! turn=%d, piece_at_src=%d\x1b[0m\n", 
+                       current_state.turn, current_state.board[m.from]);
+                fflush(stdout);
             }
             engine_thinking = 0;
         }
@@ -917,7 +931,7 @@ int main(int argc, char **argv) {
     gfxSwapBuffers();
     gspWaitForVBlank();
 
-    // FIX: Set master thread priority to 0x3B (higher than search workers at 0x3C+)
+    // FIX: Set master thread priority to 0x3B (higher than search workers at 0x3D+)
     // This guarantees the master thread can preempt calculation loops to process timer events!
     Thread stockfish_thread;
     s32 prio = 0x3B; 
