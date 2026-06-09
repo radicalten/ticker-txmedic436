@@ -554,11 +554,11 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Top Rank Labels: Maps directly to Row 0 of PGN Move History Panel
+    // 2. Top Rank Labels: Perfectly aligned to match the new 23-column square board layout
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        printf("     a b c d e f g h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        printf("     h g f e d c b a   ");
     }
     print_side_panel_line(0);
     printf("\x1b[K\n");
@@ -572,7 +572,7 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Board Ranks: Maps directly to Rows 1 to 8 of PGN Panel
+    // 3. Render 8 Board Ranks: Compacted to 2 characters per square for a perfect square look
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -636,7 +636,8 @@ void draw_ui(void) {
                     case 6: piece_str = "K"; break;
                 }
             }
-            printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
+            // Exactly 2 characters wide (" %s") inside the colored background block
+            printf("%s%s %s\x1b[0m", bg_color, fg_color, piece_str);
         }
 
         printf(" %d ", rank_lbl);
@@ -644,11 +645,11 @@ void draw_ui(void) {
         printf("\x1b[K\n");
     }
 
-    // 4. Bottom Rank Labels: Maps directly to Row 9 of PGN Panel
+    // 4. Bottom Rank Labels: Perfectly aligned to match the new 23-column square board layout
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h    ");
+        printf("     a b c d e f g h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a    ");
+        printf("     h g f e d c b a   ");
     }
     print_side_panel_line(9);
     printf("\x1b[K\n\n");
@@ -684,7 +685,6 @@ void draw_ui(void) {
 }
 
 void print_side_panel_line(int panel_row) {
-    // Call recent moves directly. Do not print unnecessary leading space characters to prevent wrapping.
     print_recent_moves(panel_row);
 }
 
@@ -701,8 +701,7 @@ void print_recent_moves(int row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    // Fixed compact spacing (exactly 16 characters wide: " %2d." [4] + " %-5s" [6] + " %-5s" [6])
-    // This fits safely inside GFX_TOP with 0 wrapping, keeping squares fully connected!
+    // Standard 10-move slice formatting. Highly compact to prevent column line wrapping.
     printf(" %2d.", display);
     if (w_idx < history_count) {
         char w_str[10];
