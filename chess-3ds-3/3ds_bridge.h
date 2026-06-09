@@ -25,10 +25,12 @@ int sf_get_output(char *buf, size_t max_len);
 }
 #endif
 
-// Redirect all standard console write operations
+// Redirection applies ONLY to the Stockfish engine files, NOT the GUI main.c
+#ifndef IS_GUI
 #define printf sf_printf
 #define puts sf_puts
 #define putchar sf_putchar
 #define fwrite sf_fwrite
+#endif
 
 #endif // THREEDS_BRIDGE_H
