@@ -18,6 +18,7 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "3ds_bridge.h"
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
