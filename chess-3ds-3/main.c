@@ -46,7 +46,7 @@ int selected_sq = -1;
 int board_orientation = 1; 
 int user_side = 1;         
 
-// Reverted back to your original 500ms time control settings
+// REVERTED: Restored original time control settings
 int time_control_type = 0; 
 int time_control_val = 500; 
 
@@ -535,47 +535,6 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-void print_side_panel_line(int panel_row) {
-    printf(" ");
-    print_recent_moves(panel_row);
-}
-
-void print_recent_moves(int row) {
-    int total_full_moves = (history_count + 1) / 2;
-    if (total_full_moves == 0) return;
-    int start_move = 1;
-    
-    // Configured compact window alignment size to exactly 8 elements
-    if (total_full_moves > 8) {
-        start_move = total_full_moves - 7;
-    }
-    int display = start_move + row;
-    if (display > total_full_moves) return;
-
-    int w_idx = (display - 1) * 2;
-    int b_idx = w_idx + 1;
-
-    printf("  %2d. ", display);
-    if (w_idx < history_count) {
-        char w_str[10];
-        move_to_uci(move_history[w_idx], w_str);
-        printf("%-6s", w_str);
-    } else {
-        printf("------");
-    }
-
-    printf(" ");
-
-    if (b_idx < history_count) {
-        char b_str[10];
-        move_to_uci(move_history[b_idx], b_str);
-        printf("%-6s", b_str);
-    } else {
-        if (w_idx < history_count) printf("...");
-        else printf("------");
-    }
-}
-
 void draw_ui(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J\x1b[1;1H"); // Complete top screen refresh
@@ -619,7 +578,7 @@ void draw_ui(void) {
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
-    // Clean top boundary: No move-list panel prints on header ranks
+    print_side_panel_line(0);
     printf("\x1b[K\n");
 
     int king_in_check = -1;
@@ -699,9 +658,7 @@ void draw_ui(void) {
         }
 
         printf(" %d ", rank_lbl);
-        
-        // Compact alignment: Side panel prints mapped 1:1 next to board ranks 0-7
-        print_side_panel_line(r); 
+        print_side_panel_line(r + 1);
         printf("\x1b[K\n");
     }
 
@@ -710,7 +667,7 @@ void draw_ui(void) {
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
-    // Clean bottom boundary: No move-list panel prints on footer ranks
+    print_side_panel_line(9);
     printf("\x1b[K\n\n");
 
     printf(" NPS: ");
@@ -732,6 +689,45 @@ void draw_ui(void) {
     fflush(stdout); 
 
     consoleSelect(&bottomConsole);
+}
+
+void print_side_panel_line(int panel_row) {
+    printf(" ");
+    print_recent_moves(panel_row);
+}
+
+void print_recent_moves(int row) {
+    int total_full_moves = (history_count + 1) / 2;
+    if (total_full_moves == 0) return;
+    int start_move = 1;
+    if (total_full_moves > 10) {
+        start_move = total_full_moves - 9;
+    }
+    int display = start_move + row;
+    if (display > total_full_moves) return;
+
+    int w_idx = (display - 1) * 2;
+    int b_idx = w_idx + 1;
+
+    printf("  %2d. ", display);
+    if (w_idx < history_count) {
+        char w_str[10];
+        move_to_uci(move_history[w_idx], w_str);
+        printf("%-6s", w_str);
+    } else {
+        printf("------");
+    }
+
+    printf(" ");
+
+    if (b_idx < history_count) {
+        char b_str[10];
+        move_to_uci(move_history[b_idx], b_str);
+        printf("%-6s", b_str);
+    } else {
+        if (w_idx < history_count) printf("...");
+        else printf("------");
+    }
 }
 
 int get_promo_choice(void) {
