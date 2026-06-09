@@ -736,20 +736,19 @@ void handle_select(void) {
         return;
     }
 
-    // FIX 2: Lock out human interactions ONLY if the engine is fully initialized and it's the engine's turn
-    if (engine_state == ENGINE_STATE_READY) {
-        int is_engine_turn = 0;
-        if (user_side == 2) {
-            is_engine_turn = 1; // Engine vs Engine mode
-        } else if (user_side == 1 && current_state.turn == -1) {
-            is_engine_turn = 1; // Human is White, engine is Black
-        } else if (user_side == -1 && current_state.turn == 1) {
-            is_engine_turn = 1; // Human is Black, engine is White
-        }
+    // FIX 2: Strict Side/Turn Lockout. 
+    // Human players are strictly blocked from interacting with the opponent's pieces.
+    int is_engine_turn = 0;
+    if (user_side == 2) {
+        is_engine_turn = 1; // Engine vs Engine mode
+    } else if (user_side == 1 && current_state.turn == -1) {
+        is_engine_turn = 1; // Human is White, engine is Black
+    } else if (user_side == -1 && current_state.turn == 1) {
+        is_engine_turn = 1; // Human is Black, engine is White
+    }
 
-        if (is_engine_turn) {
-            return; // Silently discard interactions during the engine's turn
-        }
+    if (is_engine_turn) {
+        return; // Silently discard interactions during the engine's turn
     }
 
     // Standard Game-Over / Draw Guards
