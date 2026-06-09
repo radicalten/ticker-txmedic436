@@ -16,6 +16,9 @@ void sf_recv_command(char *buf, size_t max_len);
 
 // Custom stream overrides
 int sf_printf(const char *format, ...);
+int sf_fprintf(FILE *stream, const char *format, ...);
+int sf_vfprintf(FILE *stream, const char *format, va_list arg);
+int sf_fflush(FILE *stream);
 int sf_puts(const char *str);
 int sf_putchar(int character);
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
@@ -33,6 +36,9 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 // Redirection applies ONLY to the Stockfish engine files, NOT the GUI main.c
 #ifndef IS_GUI
 #define printf sf_printf
+#define fprintf sf_fprintf
+#define vfprintf sf_vfprintf
+#define fflush sf_fflush
 #define puts sf_puts
 #define putchar sf_putchar
 #define fwrite sf_fwrite
