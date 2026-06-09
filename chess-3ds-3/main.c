@@ -199,8 +199,11 @@ void process_engine_output(char *line) {
 
 void read_from_engine(void) {
     char tmp[512];
-    while (sf_get_output(tmp, sizeof(tmp) - 1) > 0) {
+    int lines_processed = 0;
+    // Process at most 10 lines per frame to prevent engine spam from freezing the main thread
+    while (lines_processed < 10 && sf_get_output(tmp, sizeof(tmp) - 1) > 0) {
         process_engine_output(tmp);
+        lines_processed++;
     }
 }
 
@@ -547,24 +550,22 @@ void draw_ui(void) {
                 }
             }
 
-            // CTRU-Compatible 16-color ANSI background codes
             if (is_cursor) {
-                bg_color = "\x1b[46m"; // Cyan background
+                bg_color = "\x1b[46m"; // Cyan
             } else if (is_selected) {
-                bg_color = "\x1b[42m"; // Green background
+                bg_color = "\x1b[42m"; // Green
             } else if (sq == king_in_check) {
-                bg_color = "\x1b[41m"; // Red background
+                bg_color = "\x1b[41m"; // Red
             } else if (is_prev_move) {
-                bg_color = "\x1b[44m"; // Blue background
+                bg_color = "\x1b[44m"; // Blue
             } else if (is_legal_dest) {
-                bg_color = "\x1b[45m"; // Magenta background
+                bg_color = "\x1b[45m"; // Magenta
             } else {
                 bg_color = is_light ? "\x1b[47m" : "\x1b[43m"; // White vs Yellow
             }
 
-            // High Compatibility pieces with high-visibility foreground colors
             const char *piece_str = " ";
-            const char *fg_color = "\x1b[30m"; // Default piece label: Black text
+            const char *fg_color = "\x1b[30m"; // Black Text
             if (p != 0) {
                 if (p > 0) {
                     fg_color = "\x1b[1;37m"; // White pieces: Bold White text
@@ -612,7 +613,8 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n");
 
-    // Immediately return output stream registers to bottom console
+    fflush(stdout); // FORCE THE 3DS SCREEN BUFFER TO RENDER!
+
     consoleSelect(&bottomConsole);
 }
 
@@ -827,10 +829,12 @@ int main(int argc, char **argv) {
     printf("\x1b[5;5H\x1b[33m-- Chess 3DS --\x1b[0m\n\n");
     printf("   Initializing Stockfish Engine...\n");
     printf("   Please wait, setting up transposition tables...\n");
+    fflush(stdout);
     
     consoleSelect(&bottomConsole);
     printf("\x1b[2J");
     printf("Setting up console registers...\n");
+    fflush(stdout);
     
     gfxFlushBuffers();
     gfxSwapBuffers();
@@ -846,6 +850,7 @@ int main(int argc, char **argv) {
 
     consoleSelect(&bottomConsole);
     printf("Background Engine Thread spawned successfully on Core 1.\n\n");
+    fflush(stdout);
 
     while (aptMainLoop()) {
         hidScanInput();
