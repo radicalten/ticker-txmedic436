@@ -61,8 +61,6 @@ int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
 int is_square_attacked(const BoardState *state, int sq, int attacker);
 void make_move(const BoardState *src, BoardState *dst, Move m);
-void print_side_panel_line(int panel_row);
-void print_recent_moves(int row);
 void trigger_engine_move(void);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
@@ -517,10 +515,18 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 // GUI Drawing and 3DS Screen Output matching Visual Theme of Desktop CLI
 void draw_ui(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H"); // Flick-free coordinates frame reset
+    printf("\x1b[1;1H"); // Flick-free frame reset
 
-    // 1. Status Header Layout (Status, Player Sides, Time Parameters)
-    const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
+    // Top screen elegant title
+    printf(" \x1b[1;33m-- CHESS 3DS --\x1b[0m\x1b[K\n\n");
+
+    // Pre-calculate side panel state strings to match the 26 vertical print scanlines
+    char rp[26][32];
+    for (int i = 0; i < 26; i++) {
+        sprintf(rp[i], "                  "); // Default clear padding
+    }
+
+    // Set up Side Panel Status Parameters
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = has_legal_moves(&current_state);
@@ -528,40 +534,95 @@ void draw_ui(void) {
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = count_repetitions(&current_state);
 
-    printf("  ");
+    strcpy(rp[0], "\x1b[1;36m  GAME STATUS:\x1b[0m");
+
+    // Active Turn Alert state
     if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;36mDRAW (50-move rule)\x1b[0m");
+        strcpy(rp[1], "  [DRAW (50m-rule)]");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;36mDRAW (3-fold rep.)\x1b[0m");
+        strcpy(rp[1], "  [DRAW (3-fold)]");
     } else if (!has_mov) {
-        if (is_ch) printf("\x1b[1;31mCHECKMATE!\x1b[0m");
-        else printf("\x1b[1;36mSTALEMATE!\x1b[0m");
+        if (is_ch) {
+            strcpy(rp[1], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
+        } else {
+            strcpy(rp[1], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
+        }
     } else if (is_ch) {
-        printf("%s (\x1b[1;31mCHECK!\x1b[0m)", turn_str);
+        sprintf(rp[1], "  \x1b[1;31m%s (CHECK!)\x1b[0m", (current_state.turn == 1) ? "White" : "Black");
     } else {
-        printf("%s's Turn", turn_str);
+        sprintf(rp[1], "  %s to play", (current_state.turn == 1) ? "White" : "Black");
     }
-    printf(" | W:%s B:%s", w_play, b_play);
 
-    const char *types[] = {"Time", "Depth", "Nodes"};
-    printf(" | %s", types[time_control_type]);
+    // Modes & limits
+    sprintf(rp[2], "  W: %s | B: %s", w_play, b_play);
     if (time_control_type == 0) {
-        printf(" (%d ms)", time_control_val);
+        sprintf(rp[3], "  Limit: %d ms", time_control_val);
     } else if (time_control_type == 1) {
-        printf(" (depth %d)", time_control_val);
+        sprintf(rp[3], "  Limit: depth %d", time_control_val);
     } else {
-        printf(" (%d nodes)", time_control_val);
+        sprintf(rp[3], "  Limit: %d nodes", time_control_val);
     }
-    printf("\x1b[K\n\n");
 
-    // 2. Top Rank Labels (Padded exactly to 32 characters for perfect alignment)
-    if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h     ");
+    // Engine speed and score
+    if (engine_state == ENGINE_STATE_READY) {
+        if (engine_score_type == 0) {
+            sprintf(rp[4], "  Eval: %+.2f", (double)engine_score_val / 100.0);
+        } else if (engine_score_type == 1) {
+            sprintf(rp[4], "  Eval: M%d", engine_score_val);
+        } else {
+            strcpy(rp[4], "  Eval: ----");
+        }
+
+        if (engine_nps > 0) {
+            if (engine_nps >= 1000000) {
+                sprintf(rp[5], "  NPS:  %.2fM", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 1000) {
+                sprintf(rp[5], "  NPS:  %.1fk", (double)engine_nps / 1000.0);
+            } else {
+                sprintf(rp[5], "  NPS:  %lld", engine_nps);
+            }
+        } else {
+            strcpy(rp[5], "  NPS:  ----");
+        }
     } else {
-        printf("     h  g  f  e  d  c  b  a     ");
+        strcpy(rp[4], "  Eval: Config");
+        strcpy(rp[5], "  NPS:  Config");
     }
-    print_side_panel_line(0);
-    printf("\x1b[K\n");
+
+    strcpy(rp[6], "  ----------------");
+    strcpy(rp[7], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
+
+    // Single spaced Move History compilation directly on indexes [8] to [17]
+    int total_full_moves = (history_count + 1) / 2;
+    int start_move = (total_full_moves > 10) ? (total_full_moves - 9) : 1;
+    for (int idx = 0; idx < 10; idx++) {
+        int display = start_move + idx;
+        if (total_full_moves > 0 && display <= total_full_moves) {
+            int w_idx = (display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) {
+                move_to_uci(move_history[w_idx], w_str);
+            }
+            if (b_idx < history_count) {
+                move_to_uci(move_history[b_idx], b_str);
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(rp[8 + idx], "   %2d. %-5s %-5s", display, w_str, b_str);
+        } else {
+            sprintf(rp[8 + idx], "   %2d.  ---   --- ", display);
+        }
+    }
+
+    // 2. Top Rank Labels: Aligned at exactly 33 characters wide
+    if (board_orientation == 1) {
+        printf("     a  b  c  d  e  f  g  h      ");
+    } else {
+        printf("     h  g  f  e  d  c  b  a      ");
+    }
+    printf("%s\x1b[K\n", rp[0]);
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -572,16 +633,16 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Board Ranks: Expanded to 3 character rows per rank (3x3 grid squares)
+    // 3. Render 8 Board Ranks: 3 character rows per rank
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 3; sub_r++) {
-            // Left Margin (Only print number coordinate in the middle row of the square)
+            // Left Margin coordinate labels
             if (sub_r == 1) {
-                printf("  %d ", rank_lbl); // exactly 4 characters
+                printf("  %d ", rank_lbl); 
             } else {
-                printf("    "); // exactly 4 characters
+                printf("    "); 
             }
 
             for (int c = 0; c < 8; c++) {
@@ -613,7 +674,6 @@ void draw_ui(void) {
                     }
                 }
 
-                // CLI terminal ANSI colors
                 if (is_cursor) {
                     bg_color = "\x1b[48;5;208m"; // Bright orange cursor
                 } else if (is_selected) {
@@ -621,7 +681,7 @@ void draw_ui(void) {
                 } else if (sq == king_in_check) {
                     bg_color = "\x1b[48;5;196m"; // Danger warnings red
                 } else if (is_prev_move) {
-                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Sky/Steel Blue history path
+                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // history path
                 } else if (is_legal_dest) {
                     bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
                 } else {
@@ -629,12 +689,11 @@ void draw_ui(void) {
                 }
 
                 if (sub_r == 1) {
-                    // Center sub-row: centered piece formatting (" %s ")
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
+                    const char *fg_color = "\x1b[38;5;232m"; 
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[38;5;255m\x1b[1m"; // Bold White pieces
+                            fg_color = "\x1b[38;5;255m\x1b[1m"; 
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
@@ -647,96 +706,32 @@ void draw_ui(void) {
                     }
                     printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
                 } else {
-                    // Top and Bottom sub-rows: Solid empty colored background block
                     printf("%s   \x1b[0m", bg_color);
                 }
             }
 
-            // Right Margin: Pads correctly to exactly 4 characters to achieve 32 columns alignment
+            // Right Margin: Pads correctly to achieve exactly 33 columns alignment
             if (sub_r == 1) {
-                printf(" %d  ", rank_lbl); // changed from " %d " to " %d  " to add 1 space
-                print_side_panel_line(r + 1); // Ranks 8-1 align directly to side panel items 1-8
+                printf(" %d  ", rank_lbl); 
+                printf("%s", rp[1 + (r * 3) + sub_r]); 
             } else {
-                printf("    "); // exactly 4 spaces
+                printf("    "); 
+                printf("%s", rp[1 + (r * 3) + sub_r]);
             }
             printf("\x1b[K\n");
         }
     }
 
-    // 4. Bottom Rank Labels (Padded exactly to 32 characters for perfect alignment)
+    // 4. Bottom Rank Labels: Mapped directly to Row 25 of the UI stack
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h     ");
+        printf("     a  b  c  d  e  f  g  h      ");
     } else {
-        printf("     h  g  f  e  d  c  b  a     ");
+        printf("     h  g  f  e  d  c  b  a      ");
     }
-    print_side_panel_line(9);
-    printf("\x1b[K\n\n");
-
-    // Dynamic Engine metric parsing output block
-    printf(" \x1b[38;5;248m\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
-    if (engine_state == ENGINE_STATE_READY) {
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
-            } else if (engine_nps >= 1000) {
-                printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
-            } else {
-                printf(" | NPS: %lld", engine_nps);
-            }
-        }
-        if (engine_score_type == 0) {
-            printf(" | \x1b[1;36mEval:\x1b[0m %+.2f", (double)engine_score_val / 100.0);
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                printf(" | \x1b[1;31mEval: +M%d\x1b[0m", engine_score_val);
-            } else if (engine_score_val < 0) {
-                printf(" | \x1b[1;31mEval: -M%d\x1b[0m", -engine_score_val);
-            } else {
-                printf(" | \x1b[1;31mEval: M0\x1b[0m");
-            }
-        }
-    }
-    printf("\x1b[K\n");
+    printf("%s\x1b[K\n\n", rp[25]);
 
     fflush(stdout); 
     consoleSelect(&bottomConsole);
-}
-
-void print_side_panel_line(int panel_row) {
-    print_recent_moves(panel_row);
-}
-
-void print_recent_moves(int row) {
-    int total_full_moves = (history_count + 1) / 2;
-    if (total_full_moves == 0) return;
-    int start_move = 1;
-    if (total_full_moves > 10) {
-        start_move = total_full_moves - 9;
-    }
-    int display = start_move + row;
-    if (display > total_full_moves) return;
-
-    int w_idx = (display - 1) * 2;
-    int b_idx = w_idx + 1;
-
-    // Highly compact styling to prevent column wrapping on 3DS top screen
-    printf(" %2d.", display);
-    if (w_idx < history_count) {
-        char w_str[10];
-        move_to_uci(move_history[w_idx], w_str);
-        printf(" %-5s", w_str);
-    } else {
-        printf(" -----");
-    }
-
-    if (b_idx < history_count) {
-        char b_str[10];
-        move_to_uci(move_history[b_idx], b_str);
-        printf(" %-5s", b_str);
-    } else {
-        if (w_idx < history_count) printf(" ...");
-        else printf(" -----");
-    }
 }
 
 int get_promo_choice(void) {
