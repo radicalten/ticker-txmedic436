@@ -168,17 +168,17 @@ void process_engine_output(char *line) {
     consoleSelect(&bottomConsole);
     printf("%s\n", line);
     fflush(stdout);
-
-    // Coordinate state-machine transitions
+    
+    // Coordinate state-machine transitions (using safe strstr parsing)
     if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
-        if (strcmp(line, "uciok") == 0) {
+        if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
             printf("[GUI] Received 'uciok' -> Sending 'isready'\n");
             fflush(stdout);
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
-        if (strcmp(line, "readyok") == 0) {
+        if (strstr(line, "readyok") != NULL) {
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
             printf("[GUI] Received 'readyok' -> Handshake Complete. Engine Ready!\n");
