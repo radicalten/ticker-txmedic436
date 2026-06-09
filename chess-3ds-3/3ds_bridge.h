@@ -20,7 +20,10 @@ int sf_fprintf(FILE *stream, const char *format, ...);
 int sf_vfprintf(FILE *stream, const char *format, va_list arg);
 int sf_fflush(FILE *stream);
 int sf_puts(const char *str);
+int sf_fputs(const char *str, FILE *stream);
 int sf_putchar(int character);
+int sf_fputc(int character, FILE *stream);
+int sf_putc(int character, FILE *stream);
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 int sf_get_output(char *buf, size_t max_len);
@@ -40,7 +43,10 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 #define vfprintf sf_vfprintf
 #define fflush sf_fflush
 #define puts sf_puts
+#define fputs sf_fputs
 #define putchar sf_putchar
+#define fputc sf_fputc
+#define putc sf_putc
 #define fwrite sf_fwrite
 #define pthread_create sf_pthread_create
 #endif
