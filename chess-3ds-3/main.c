@@ -177,7 +177,6 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            // Memory Optimization: 16MB Hash is safe for 128MB RAM while loading NNUE files
             sf_send_command("setoption name Hash value 16"); 
             
             sf_send_command("ucinewgame");
@@ -555,14 +554,14 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Transferred 31-character spacing alignment for Side Panel Column alignment
+    // 2. Top Rank Labels: Maps directly to Row 0 of PGN Move History Panel
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(0);
-    printf("\x1b[K");
+    printf("\x1b[K\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -573,7 +572,7 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Custom Maple/Walnut Squares
+    // 3. Render 8 Board Ranks: Maps directly to Rows 1 to 8 of PGN Panel
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -607,26 +606,26 @@ void draw_ui(void) {
                 }
             }
 
-            // Ported CLI terminal ANSI color palette values
+            // CLI terminal ANSI colors
             if (is_cursor) {
-                bg_color = "\x1b[48;5;208m"; // Bright orange active cursor
+                bg_color = "\x1b[48;5;208m"; // Bright orange cursor
             } else if (is_selected) {
                 bg_color = "\x1b[48;5;34m";  // Forest Green selection
             } else if (sq == king_in_check) {
                 bg_color = "\x1b[48;5;196m"; // Danger warnings red
             } else if (is_prev_move) {
-                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Steel/Sky Blue historical path
+                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Sky/Steel Blue history path
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Soft green legal path guides
+                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
             } else {
-                bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Wood patterns: Maple vs Walnut
+                bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Maple/Walnut patterns
             }
 
             const char *piece_str = " ";
             const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
             if (p != 0) {
                 if (p > 0) {
-                    fg_color = "\x1b[38;5;255m\x1b[1m"; // Solid Bold White pieces
+                    fg_color = "\x1b[38;5;255m\x1b[1m"; // Bold White pieces
                 }
                 switch (abs(p)) {
                     case 1: piece_str = "P"; break;
@@ -641,18 +640,18 @@ void draw_ui(void) {
         }
 
         printf(" %d ", rank_lbl);
-        print_side_panel_line(r);
+        print_side_panel_line(r + 1);
         printf("\x1b[K\n");
     }
 
-    // 4. Coordinates footer aligned perfectly alongside side panel index 9
+    // 4. Bottom Rank Labels: Maps directly to Row 9 of PGN Panel
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(9);
-    printf("\x1b[K\n");
+    printf("\x1b[K\n\n");
 
     // Dynamic Engine metric parsing output block
     printf(" \x1b[38;5;248m\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
@@ -685,7 +684,7 @@ void draw_ui(void) {
 }
 
 void print_side_panel_line(int panel_row) {
-    printf(" ");
+    // Call recent moves directly. Do not print unnecessary leading space characters to prevent wrapping.
     print_recent_moves(panel_row);
 }
 
@@ -702,24 +701,24 @@ void print_recent_moves(int row) {
     int w_idx = (display - 1) * 2;
     int b_idx = w_idx + 1;
 
-    printf("   %2d. ", display);
+    // Fixed compact spacing (exactly 16 characters wide: " %2d." [4] + " %-5s" [6] + " %-5s" [6])
+    // This fits safely inside GFX_TOP with 0 wrapping, keeping squares fully connected!
+    printf(" %2d.", display);
     if (w_idx < history_count) {
         char w_str[10];
         move_to_uci(move_history[w_idx], w_str);
-        printf("%-6s", w_str);
+        printf(" %-5s", w_str);
     } else {
-        printf("------");
+        printf(" -----");
     }
-
-    printf(" ");
 
     if (b_idx < history_count) {
         char b_str[10];
         move_to_uci(move_history[b_idx], b_str);
-        printf("%-6s", b_str);
+        printf(" %-5s", b_str);
     } else {
-        if (w_idx < history_count) printf("...");
-        else printf("------");
+        if (w_idx < history_count) printf(" ...");
+        else printf(" -----");
     }
 }
 
