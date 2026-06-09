@@ -20,6 +20,7 @@
 
 #include <assert.h>
 
+#include "3ds_bridge.h"
 #include "bitboard.h"
 #include "types.h"
 
