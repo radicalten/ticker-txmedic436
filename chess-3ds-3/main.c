@@ -554,7 +554,7 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Top Rank Labels: Mapped to Row 0 of PGN Side Panel
+    // 2. Top Rank Labels (Padded exactly to 32 characters for perfect alignment)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h     ");
     } else {
@@ -579,9 +579,9 @@ void draw_ui(void) {
         for (int sub_r = 0; sub_r < 3; sub_r++) {
             // Left Margin (Only print number coordinate in the middle row of the square)
             if (sub_r == 1) {
-                printf("  %d ", rank_lbl);
+                printf("  %d ", rank_lbl); // exactly 4 characters
             } else {
-                printf("    ");
+                printf("    "); // exactly 4 characters
             }
 
             for (int c = 0; c < 8; c++) {
@@ -629,7 +629,7 @@ void draw_ui(void) {
                 }
 
                 if (sub_r == 1) {
-                    // Center sub-row: centere piece formatting (" %s ")
+                    // Center sub-row: centered piece formatting (" %s ")
                     const char *piece_str = " ";
                     const char *fg_color = "\x1b[38;5;232m"; // Dark pieces
                     if (p != 0) {
@@ -652,18 +652,18 @@ void draw_ui(void) {
                 }
             }
 
-            // Right Margin: Only print number coordinate and align PGN moves on middle row
+            // Right Margin: Pads correctly to exactly 4 characters to achieve 32 columns alignment
             if (sub_r == 1) {
-                printf(" %d ", rank_lbl);
+                printf(" %d  ", rank_lbl); // changed from " %d " to " %d  " to add 1 space
                 print_side_panel_line(r + 1); // Ranks 8-1 align directly to side panel items 1-8
             } else {
-                printf("    ");
+                printf("    "); // exactly 4 spaces
             }
             printf("\x1b[K\n");
         }
     }
 
-    // 4. Bottom Rank Labels: Mapped directly to Row 9 of PGN Side Panel
+    // 4. Bottom Rank Labels (Padded exactly to 32 characters for perfect alignment)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h     ");
     } else {
