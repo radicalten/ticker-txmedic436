@@ -264,8 +264,8 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            // Memory Optimization: 16MB Hash is safe for 128MB RAM
-            sf_send_command("setoption name Hash value 16"); 
+            // Memory Optimization: More Hash = More speed 1HV = 1MB, 128MB 3DS
+            sf_send_command("setoption name Hash value 64"); 
             // Explicitly disable pondering to optimize battery and CPU usage
             sf_send_command("setoption name Ponder value false");
             
