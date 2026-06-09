@@ -47,7 +47,12 @@ static void queue_push_char(MsgQueue *q, char c) {
         q->tail = (q->tail + 1) % MSG_QUEUE_SIZE;
     }
     q->data[q->head] = c;
+
+    // ARM Memory Fence: Ensure the data is written to RAM before another CPU
+    // core can read the updated 'head' index pointer.
+    __sync_synchronize();
     q->head = next_head;
+    __sync_synchronize();
 }
 
 void sf_send_command(const char *cmd) {
@@ -63,6 +68,7 @@ void sf_send_command(const char *cmd) {
 void sf_recv_command(char *buf, size_t max_len) {
     while (1) {
         LightLock_Lock(&q_gui_to_engine.lock);
+        __sync_synchronize(); // Force synchronization across ARM L1/L2 caches
         
         if (q_gui_to_engine.head != q_gui_to_engine.tail) {
             // Scan queue to ensure a complete newline-terminated line is available
@@ -79,27 +85,45 @@ void sf_recv_command(char *buf, size_t max_len) {
             // Only extract and return data if we have the complete line
             if (has_newline) {
                 size_t i = 0;
-                while (q_gui_to_engine.head != q_gui_to_engine.tail && i < max_len - 1) {
+                int truncated = 0;
+                
+                while (q_gui_to_engine.head != q_gui_to_engine.tail) {
                     char c = q_gui_to_engine.data[q_gui_to_engine.tail];
                     q_gui_to_engine.tail = (q_gui_to_engine.tail + 1) % MSG_QUEUE_SIZE;
+                    
                     if (c == '\n') {
                         break;
                     }
-                    buf[i++] = c;
+                    
+                    // FIX: If the command is too large, we store what we can up to (max_len - 1)
+                    // but we CONTINUE to drain and discard the rest of this command line.
+                    // This keeps the parser safe and prevents stale buffer corruption.
+                    if (i < max_len - 1) {
+                        buf[i++] = c;
+                    } else {
+                        truncated = 1;
+                    }
                 }
                 buf[i] = '\0';
+                
+                if (truncated) {
+                    sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
+                }
+
+                __sync_synchronize();
                 LightLock_Unlock(&q_gui_to_engine.lock);
                 return;
             }
         }
         
+        __sync_synchronize();
         LightLock_Unlock(&q_gui_to_engine.lock);
         svcSleepThread(2000000LL); // Sleep 2ms to prevent CPU core starvation
     }
 }
 
 int sf_printf(const char *format, ...) {
-    char temp_buf[2048]; // Safe upper bound for engine info formats
+    char temp_buf[4096]; // Expanded to 4KB for deep Stockfish search PV traces
     va_list args;
     va_start(args, format);
     int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
@@ -116,7 +140,7 @@ int sf_printf(const char *format, ...) {
 int sf_fprintf(FILE *stream, const char *format, ...) {
     // If writing to standard out/err, redirect to our GUI message queue
     if (stream == stdout || stream == stderr) {
-        char temp_buf[2048];
+        char temp_buf[4096];
         va_list args;
         va_start(args, format);
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
@@ -139,7 +163,7 @@ int sf_fprintf(FILE *stream, const char *format, ...) {
 
 int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
     if (stream == stdout || stream == stderr) {
-        char temp_buf[2048];
+        char temp_buf[4096];
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, arg);
 
         LightLock_Lock(&q_engine_to_gui.lock);
@@ -213,7 +237,10 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 // Extracts raw stream chunks asynchronously for fast processing by main.c
 int sf_get_output(char *buf, size_t max_len) {
     LightLock_Lock(&q_engine_to_gui.lock);
+    __sync_synchronize();
+    
     if (q_engine_to_gui.head == q_engine_to_gui.tail) {
+        __sync_synchronize();
         LightLock_Unlock(&q_engine_to_gui.lock);
         return 0;
     }
@@ -226,6 +253,7 @@ int sf_get_output(char *buf, size_t max_len) {
     }
     buf[i] = '\0';
 
+    __sync_synchronize();
     LightLock_Unlock(&q_engine_to_gui.lock);
     return (int)i;
 }
@@ -233,16 +261,28 @@ int sf_get_output(char *buf, size_t max_len) {
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     pthread_attr_t local_attr;
-    if (attr == NULL) {
-        pthread_attr_init(&local_attr);
+    pthread_attr_init(&local_attr);
+
+    // FIX: Clean API-driven configuration of attributes.
+    // Rather than copying raw pointers and structures which causes heap conflicts,
+    // we fetch fields cleanly and set the mandatory 256KB execution stack.
+    if (attr != NULL) {
+        size_t stacksize = 0;
+        if (pthread_attr_getstacksize(attr, &stacksize) != 0 || stacksize < 256 * 1024) {
+            stacksize = 256 * 1024;
+        }
+        pthread_attr_setstacksize(&local_attr, stacksize);
+        
+        int detachstate = PTHREAD_CREATE_JOINABLE;
+        if (pthread_attr_getdetachstate(attr, &detachstate) == 0) {
+            pthread_attr_setdetachstate(&local_attr, detachstate);
+        }
     } else {
-        local_attr = *attr;
+        pthread_attr_setstacksize(&local_attr, 256 * 1024);
     }
 
-    // Stable 256KB stack size mapping to Horizon OS limits
-    pthread_attr_setstacksize(&local_attr, 256 * 1024);
-
     int res = pthread_create(thread, &local_attr, start_routine, arg);
+    pthread_attr_destroy(&local_attr);
     
     // DIAGNOSTIC LOG: Print thread startup status to the bottom console
     sf_printf("[BRIDGE] Spawning search thread... Status: %d\n", res);
