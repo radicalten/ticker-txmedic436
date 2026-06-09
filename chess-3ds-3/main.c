@@ -616,11 +616,11 @@ void draw_ui(void) {
         }
     }
 
-    // 2. Top Rank Labels: Aligned at exactly 33 characters wide
+    // 2. Top Rank Labels: Compacted spacing to align side panel exactly at index 30
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h      ");
+        printf("     a  b  c  d  e  f  g  h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a      ");
+        printf("     h  g  f  e  d  c  b  a   ");
     }
     printf("%s\x1b[K\n", rp[0]);
 
@@ -638,7 +638,7 @@ void draw_ui(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 3; sub_r++) {
-            // Left Margin coordinate labels
+            // Left Margin coordinate labels (4 columns)
             if (sub_r == 1) {
                 printf("  %d ", rank_lbl); 
             } else {
@@ -710,23 +710,23 @@ void draw_ui(void) {
                 }
             }
 
-            // Right Margin: Pads correctly to achieve exactly 33 columns alignment
+            // Right Margin: exactly 2 characters before side panel content (achieving 30-column alignment)
             if (sub_r == 1) {
-                printf(" %d  ", rank_lbl); 
+                printf(" %d", rank_lbl); 
                 printf("%s", rp[1 + (r * 3) + sub_r]); 
             } else {
-                printf("    "); 
+                printf("  "); 
                 printf("%s", rp[1 + (r * 3) + sub_r]);
             }
             printf("\x1b[K\n");
         }
     }
 
-    // 4. Bottom Rank Labels: Mapped directly to Row 25 of the UI stack
+    // 4. Bottom Rank Labels: Compacted spacing to align side panel exactly at index 30
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h      ");
+        printf("     a  b  c  d  e  f  g  h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a      ");
+        printf("     h  g  f  e  d  c  b  a   ");
     }
     printf("%s\x1b[K\n\n", rp[25]);
 
