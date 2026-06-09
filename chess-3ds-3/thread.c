@@ -35,6 +35,7 @@
 #include "tt.h"
 #include "uci.h"
 #include "tbprobe.h"
+#include "3ds_bridge.h"
 
 static void thread_idle_loop(Position *pos);
 
