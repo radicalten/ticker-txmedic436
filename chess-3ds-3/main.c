@@ -654,11 +654,6 @@ void draw_ui(void) {
     print_side_panel_line(9);
     printf("\x1b[K\n\n");
 
-    // Ported instructions redesigned for 3DS inputs
-    printf(" \x1b[38;5;245m[D-pad] Move Cursor | [A] Select/Play | [B] Undo | [SELECT] Reset\x1b[0m\x1b[K\n");
-    printf(" \x1b[38;5;245m[X] Flip Board | [Y] Switch Sides | [L] Cycle TC Mode\x1b[0m\x1b[K\n");
-    printf(" \x1b[38;5;245m[R] Adjust Value | [START] Quit Chess\x1b[0m\x1b[K\n\n");
-
     // Dynamic Engine metric parsing output block
     printf(" \x1b[38;5;248mEngine Status:\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
     if (engine_state == ENGINE_STATE_READY) {
