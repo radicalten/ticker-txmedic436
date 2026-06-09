@@ -50,6 +50,11 @@ static THREAD_FUNC thread_init(void *arg)
 {
   int idx = (intptr_t)arg;
 
+  // FIX: Explicitly assign worker calculations to lower priority layers.
+  // Thread 0 gets 0x3D, Thread 1 gets 0x3E, etc.
+  // This keeps the master thread (at 0x3B) highly responsive to check timer structures.
+  threadSetPriority(threadGetCurrent(), 0x3D + idx);
+
   int t = 0; // NUMA disabled for 3DS
   if (t >= numCmhTables) {
     int old = numCmhTables;
@@ -80,7 +85,6 @@ static THREAD_FUNC thread_init(void *arg)
             (*cmhTables[t])[chk][c][0][0][j][k] = CounterMovePruneThreshold - 1;
   }
 
-  // Robust error-checked structural allocations to prevent silent crashes
   Position *pos = calloc(1, sizeof(Position));
   if (!pos) {
     printf("\x1b[1;31m[OOM] Failed to allocate Position struct for Thread %d!\x1b[0m\n", idx);
