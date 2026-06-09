@@ -12,7 +12,7 @@ jobs:
       uses: actions/checkout@v6
     - name: Compile
       run: |
-        make -f Makefile-chess-3ds-3
+        make -f Makefile-chess-3ds-3-NNUE
     - name: Upload
       uses: actions/upload-artifact@v6
       with:
