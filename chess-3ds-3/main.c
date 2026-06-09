@@ -110,6 +110,95 @@ Move gui_uci_to_move(const char *str) {
     return m;
 }
 
+// Converts a raw move to Standard Algebraic Notation (SAN / PGN)
+void move_to_san(const BoardState *state, Move m, char *buf) {
+    int p = abs(state->board[m.from]);
+    int turn = state->turn;
+    
+    // Castling Checks
+    if (p == 6) {
+        if (m.from == 60 && m.to == 62 && turn == 1) { strcpy(buf, "O-O"); goto append_suffixes; }
+        if (m.from == 60 && m.to == 58 && turn == 1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
+        if (m.from == 4 && m.to == 6 && turn == -1) { strcpy(buf, "O-O"); goto append_suffixes; }
+        if (m.from == 4 && m.to == 2 && turn == -1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
+    }
+
+    char *ptr = buf;
+    int is_cap = (state->board[m.to] != 0) || (p == 1 && m.to == state->ep);
+
+    if (p == 1) {
+        // Pawn Moves
+        if (is_cap) {
+            *ptr++ = 'a' + (m.from % 8);
+            *ptr++ = 'x';
+        }
+    } else {
+        // Piece Moves
+        char p_chars[] = "?PNBRQK";
+        *ptr++ = p_chars[p];
+
+        // Disambiguation (e.g., Nf3 vs Ndf3 / R1e7)
+        int another_can_move = 0;
+        int same_file = 0;
+        int same_rank = 0;
+        for (int sq = 0; sq < 64; sq++) {
+            if (sq == m.from) continue;
+            if (state->board[sq] == state->board[m.from]) {
+                Move alt_m = {sq, m.to, 0};
+                if (is_legal_move(state, alt_m)) {
+                    another_can_move = 1;
+                    if (sq % 8 == m.from % 8) same_file = 1;
+                    if (sq / 8 == m.from / 8) same_rank = 1;
+                }
+            }
+        }
+        if (another_can_move) {
+            if (!same_file) {
+                *ptr++ = 'a' + (m.from % 8);
+            } else if (!same_rank) {
+                *ptr++ = '8' - (m.from / 8);
+            } else {
+                *ptr++ = 'a' + (m.from % 8);
+                *ptr++ = '8' - (m.from / 8);
+            }
+        }
+
+        if (is_cap) {
+            *ptr++ = 'x';
+        }
+    }
+
+    // Destination square
+    *ptr++ = 'a' + (m.to % 8);
+    *ptr++ = '8' - (m.to / 8);
+
+    // Promotion Suffix
+    if (m.promo != 0) {
+        *ptr++ = '=';
+        char p_chars[] = "?PNBRQK";
+        *ptr++ = p_chars[m.promo];
+    }
+    *ptr = '\0';
+
+append_suffixes:;
+    // Check and Checkmate Suffixes
+    BoardState next;
+    make_move(state, &next, m);
+    int op_king = find_king(&next, next.turn);
+    int is_check = (op_king != -1) && is_square_attacked(&next, op_king, -next.turn);
+    int has_moves = has_legal_moves(&next);
+    
+    ptr = buf + strlen(buf);
+    if (is_check) {
+        if (!has_moves) {
+            *ptr++ = '#'; // Checkmate
+        } else {
+            *ptr++ = '+'; // Check
+        }
+    }
+    *ptr = '\0';
+}
+
 void push_state(const BoardState *state, Move m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
@@ -175,10 +264,11 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
+            // Memory Optimization: 16MB Hash is safe for 128MB RAM
             sf_send_command("setoption name Hash value 16"); 
             // Explicitly disable pondering to optimize battery and CPU usage
             sf_send_command("setoption name Ponder value false");
-
+            
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
             printf("[GUI] Received 'readyok' -> Handshake Complete.\n");
@@ -562,11 +652,11 @@ void draw_ui(void) {
     // Modes & limits shift up
     sprintf(rp[1], "  W: %s | B: %s", w_play, b_play);
     if (time_control_type == 0) {
-        sprintf(rp[2], "  Lim: %d ms", time_control_val);
+        sprintf(rp[2], "  Limit: %d ms", time_control_val);
     } else if (time_control_type == 1) {
-        sprintf(rp[2], "  Lim: depth %d", time_control_val);
+        sprintf(rp[2], "  Limit: depth %d", time_control_val);
     } else {
-        sprintf(rp[2], "  Lim: %d nodes", time_control_val);
+        sprintf(rp[2], "  Limit: %d nodes", time_control_val);
     }
 
     // Engine speed and score shift up
@@ -611,7 +701,7 @@ void draw_ui(void) {
     // Header label shifts to slot [5]
     strcpy(rp[5], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
 
-    // Single-spaced Move History compiled flush with RECENT MOVES header
+    // Single-spaced Move History compiled flush with RECENT MOVES header (Now in full PGN notation)
     int total_full_moves = (history_count + 1) / 2;
     int start_move = (total_full_moves > 20) ? (total_full_moves - 19) : 1;
     for (int idx = 0; idx < 20; idx++) {
@@ -622,10 +712,10 @@ void draw_ui(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                move_to_uci(move_history[w_idx], w_str);
+                move_to_san(&history[w_idx], move_history[w_idx], w_str);
             }
             if (b_idx < history_count) {
-                move_to_uci(move_history[b_idx], b_str);
+                move_to_san(&history[b_idx], move_history[b_idx], b_str);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
