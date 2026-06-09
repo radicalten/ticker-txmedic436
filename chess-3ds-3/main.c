@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE (1024 * 1024) // Increased to 1MB to accommodate NNUE execution
+#define ENGINE_STACK_SIZE (1024 * 1024) // 1MB formerly 256*1024
 
 // Handshake state machine definitions
 typedef enum {
@@ -177,8 +177,8 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
+            // Memory Optimization: 16MB Hash is safe for 128MB RAM while loading NNUE files
             sf_send_command("setoption name Hash value 16"); 
-            sf_send_command("setoption name Use NNUE value true"); 
             
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
@@ -515,7 +515,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Drawing and 3DS Screen Output matching Visual Theme of Desktop CLI with Unicode Pieces
+// GUI Drawing and 3DS Screen Output matching Visual Theme of Desktop CLI
 void draw_ui(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H"); // Flick-free coordinates frame reset
@@ -573,7 +573,7 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Custom Maple/Walnut Squares with Unicode Pieces
+    // 3. Render 8 Custom Maple/Walnut Squares
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -628,14 +628,13 @@ void draw_ui(void) {
                 if (p > 0) {
                     fg_color = "\x1b[38;5;255m\x1b[1m"; // Solid Bold White pieces
                 }
-                // Updated with true Unicode Chess Glyphs
                 switch (abs(p)) {
-                    case 1: piece_str = "♟"; break;
-                    case 2: piece_str = "♞"; break;
-                    case 3: piece_str = "♝"; break;
-                    case 4: piece_str = "♜"; break;
-                    case 5: piece_str = "♛"; break;
-                    case 6: piece_str = "♚"; break;
+                    case 1: piece_str = "P"; break;
+                    case 2: piece_str = "N"; break;
+                    case 3: piece_str = "B"; break;
+                    case 4: piece_str = "R"; break;
+                    case 5: piece_str = "Q"; break;
+                    case 6: piece_str = "K"; break;
                 }
             }
             printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
@@ -656,7 +655,7 @@ void draw_ui(void) {
     printf("\x1b[K\n\n");
 
     // Dynamic Engine metric parsing output block
-    printf(" \x1b[38;5;248mEngine Status:\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive (NNUE)\x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
+    printf(" \x1b[38;5;248m\x1b[0m (%s)", (engine_state == ENGINE_STATE_READY) ? "\x1b[1;32mActive \x1b[0m" : "\x1b[1;31mConfiguring\x1b[0m");
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
