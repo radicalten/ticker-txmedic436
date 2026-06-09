@@ -177,7 +177,6 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            // Memory Optimization: 16MB Hash is safe for 128MB RAM while loading NNUE files
             sf_send_command("setoption name Hash value 16"); 
             
             sf_send_command("ucinewgame");
@@ -555,13 +554,18 @@ void draw_ui(void) {
     }
     printf("\x1b[K\n\n");
 
-    // 2. Transferred 31-character spacing alignment for Side Panel Column alignment
+    // 2. Top Rank Labels (Side Panel Move index 0)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
     print_side_panel_line(0);
+    printf("\x1b[K\n");
+
+    // 3. Top Spacer Row (Side Panel Move index 1)
+    printf("                               "); // Exactly 31 spaces
+    print_side_panel_line(1);
     printf("\x1b[K\n");
 
     int king_in_check = -1;
@@ -573,7 +577,7 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Custom Maple/Walnut Squares
+    // 4. Render 8 Custom Maple/Walnut Squares (Side Panel Moves index 2 to 9)
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -641,17 +645,22 @@ void draw_ui(void) {
         }
 
         printf(" %d ", rank_lbl);
-        print_side_panel_line(r + 1);
+        print_side_panel_line(r + 2); // Shifted by 2 to account for Top Label & Top Spacer
         printf("\x1b[K\n");
     }
 
-    // 4. Coordinates footer aligned perfectly alongside side panel index 9
+    // 5. Bottom Spacer Row (Side Panel Move index 10)
+    printf("                               "); // Exactly 31 spaces
+    print_side_panel_line(10);
+    printf("\x1b[K\n");
+
+    // 6. Coordinates footer (Side Panel Move index 11)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
         printf("     h  g  f  e  d  c  b  a    ");
     }
-    print_side_panel_line(9);
+    print_side_panel_line(11);
     printf("\x1b[K\n\n");
 
     // Dynamic Engine metric parsing output block
@@ -693,8 +702,8 @@ void print_recent_moves(int row) {
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) return;
     int start_move = 1;
-    if (total_full_moves > 10) {
-        start_move = total_full_moves - 9;
+    if (total_full_moves > 12) { // Increased history slice buffer from 10 to 12
+        start_move = total_full_moves - 11;
     }
     int display = start_move + row;
     if (display > total_full_moves) return;
