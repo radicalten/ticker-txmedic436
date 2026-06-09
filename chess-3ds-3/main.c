@@ -533,7 +533,7 @@ void draw_ui(void) {
     if (current_state.halfmoves >= 100) {
         printf("\x1b[1;36mDRAW (50-move rule)\x1b[0m");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;36mDRAW (threefold repetition)\x1b[0m");
+        printf("\x1b[1;36mDRAW (3-fold rep.)\x1b[0m");
     } else if (!has_mov) {
         if (is_ch) printf("\x1b[1;31mCHECKMATE!\x1b[0m");
         else printf("\x1b[1;36mSTALEMATE!\x1b[0m");
@@ -544,7 +544,7 @@ void draw_ui(void) {
     }
     printf(" | W:%s B:%s", w_play, b_play);
 
-    const char *types[] = {"Time-Limit", "Depth-Limit", "Node-Limit"};
+    const char *types[] = {"Time", "Depth", "Nodes"};
     printf(" | %s", types[time_control_type]);
     if (time_control_type == 0) {
         printf(" (%d ms)", time_control_val);
