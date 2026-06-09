@@ -29,9 +29,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
+#include <3ds.h> // FIX: Added native 3DS OS header for hardware timers
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#include <sys/time.h>
 #endif
 
 #include "misc.h"
@@ -472,5 +474,20 @@ void free_memory(alloc_t *alloc)
   }
 #else
   munmap(alloc->ptr, alloc->size);
+#endif
+}
+
+// FIX: Hardware-accurate millisecond timer implementation for 3DS
+// This guarantees that search timeouts, time-controls, and iterative deep plies
+// function properly in Stockfish/Cfish under CTRU.
+int64_t now(void) {
+#if defined(__3DS__)
+  return (int64_t)osGetTime();
+#elif !defined(_WIN32)
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+#else
+  return (int64_t)GetTickCount();
 #endif
 }
