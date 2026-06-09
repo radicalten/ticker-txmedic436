@@ -20,6 +20,7 @@
 
 #ifndef NNUE_PURE
 
+#include "3ds_bridge.h"
 #include <assert.h>
 #include <string.h>   // For memset
 
