@@ -1,1 +1,16 @@
+Latest version gets 14.2k nps with Cfish classical. Runs properly with gui and everything. The trick was to add the 3ds_bridge.h specific shim file to every single .c file. Not sure what the culprit was, but that was AI’s (gemini3pt5flash) suggestion and it worked.  
 
+The most heavily modified files were:
+3ds_bridge.c (NEW)
+3ds_bridge.h (NEW)
+main.c (NEW) 
+Main.c -> main_stockfish.c 
+Misc.c
+Misc.h
+Thread.c
+thread.h
+uci.c
+uci.h
+Ucioption.c 
+
+The gui was essentially mangled by gemini by the end with it arbitrarily chaging my default node time and depth values, changing from beautiful 256 ansi to 16 ansi colors, removing unicode chess pieces. Will need to double check if that is actually necessary or not. In other respects it is quite competent maintaining the nps (14.2k nps on Old 3DS) and move evaluation scores +/- centipawn. 
