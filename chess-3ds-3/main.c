@@ -588,7 +588,7 @@ void draw_ui(void) {
     // Header label shifts to slot [5]
     strcpy(rp[5], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
 
-    // Single-spaced Move History expanded directly from index [6] to [25] (displays exactly 20 moves)
+    // Single-spaced Move History compiled flush with RECENT MOVES header (uses 2 spaces instead of 3)
     int total_full_moves = (history_count + 1) / 2;
     int start_move = (total_full_moves > 20) ? (total_full_moves - 19) : 1;
     for (int idx = 0; idx < 20; idx++) {
@@ -606,9 +606,9 @@ void draw_ui(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(rp[6 + idx], "   %2d. %-5s %-5s", display, w_str, b_str);
+            sprintf(rp[6 + idx], "  %2d. %-5s %-5s", display, w_str, b_str);
         } else {
-            sprintf(rp[6 + idx], "   %2d.  ---   --- ", display);
+            sprintf(rp[6 + idx], "  %2d.  ---   --- ", display);
         }
     }
 
