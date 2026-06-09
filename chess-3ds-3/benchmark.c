@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "3ds_bridge.h"
 
 #include "evaluate.h"
 #include "misc.h"
