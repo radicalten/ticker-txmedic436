@@ -1,4 +1,4 @@
-/*
+]/*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
@@ -89,7 +89,7 @@ int board_orientation = 1;
 int user_side = 1;         
 
 int time_control_type = 0; 
-int time_control_val = 100; // Default matches 100ms
+int time_control_val = 100; // Default: 100ms
 
 int engine_thinking = 0;
 long long engine_nps = 0;
@@ -103,7 +103,7 @@ int term_fd = -1; // File descriptor dedicated to writing directly to the active
 struct termios orig_termios;
 
 // Scrollable background log console variables
-#define LOG_WINDOW_SIZE 6
+#define LOG_WINDOW_SIZE 4
 char bottom_logs[LOG_WINDOW_SIZE][128];
 
 // Function prototypes prefixed with gui_ to prevent collisions with Stockfish internals
@@ -154,7 +154,7 @@ void add_log(const char *line) {
 void disable_raw_mode(void) {
     if (term_fd != -1) {
         tcsetattr(term_fd, TCSAFLUSH, &orig_termios);
-        dprintf(term_fd, "\x1b[?25h\x1b[0m\n"); // Restore standard pointer visibility
+        dprintf(term_fd, "\x1b[?25h\x1b[2J\x1b[H\x1b[0m\n"); // Restore standard pointer visibility and clear screen
     }
 }
 
@@ -741,17 +741,12 @@ void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Drawing and Terminal ANSI Output
+// GUI Drawing and Terminal ANSI Output (Sized strictly for 80x24 layout boundaries)
 void draw_ui(void) {
-    // Flick-free home position reset
+    // Flick-free cursor jump home
     dprintf(term_fd, "\x1b[1;1H");
 
-    // Dynamic sidebar array maps side-by-side with 16 terminal lines (8 ranks * 2 subrows)
-    char rp[18][64];
-    for (int i = 0; i < 18; i++) {
-        sprintf(rp[i], "                  "); 
-    }
-
+    const char *turn_str = (current_state.turn == 1) ? "\x1b[1;33mWhite\x1b[0m" : "\x1b[1;35mBlack\x1b[0m";
     int king = gui_find_king(&current_state, current_state.turn);
     int is_ch = gui_is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = gui_has_legal_moves(&current_state);
@@ -759,35 +754,29 @@ void draw_ui(void) {
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = gui_count_repetitions(&current_state);
 
-    // Sidebar Row 0: Status Indicators
-    if (current_state.halfmoves >= 100) {
-        strcpy(rp[0], "  [DRAW (50m-rule)]");
-    } else if (repetitions >= 3) {
-        strcpy(rp[0], "  [DRAW (3-fold)]");
-    } else if (!has_mov) {
-        if (is_ch) {
-            strcpy(rp[0], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
-        } else {
-            strcpy(rp[0], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
-        }
-    } else if (is_ch) {
-        if (current_state.turn == 1) {
-            sprintf(rp[0], "  \x1b[1;33mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
-        } else {
-            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
-        }
-    } else {
-        if (current_state.turn == 1) {
-            sprintf(rp[0], "  \x1b[1;33mWhite\x1b[0m to play");
-        } else {
-            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m to play");
-        }
+    // Dynamic 8-row sidebar to output side-by-side with the compact board ranks
+    char rp[8][64];
+    for (int i = 0; i < 8; i++) {
+        rp[i][0] = '\0';
     }
 
-    // Sidebar Row 1: Controller Side Layouts
+    // Row 0: Status
+    if (current_state.halfmoves >= 100) {
+        sprintf(rp[0], "  [DRAW (50m-rule)]");
+    } else if (repetitions >= 3) {
+        sprintf(rp[0], "  [DRAW (3-fold)]");
+    } else if (!has_mov) {
+        sprintf(rp[0], "  %s", is_ch ? "\x1b[1;31m[CHECKMATE!]\x1b[0m" : "\x1b[1;36m[STALEMATE!]\x1b[0m");
+    } else if (is_ch) {
+        sprintf(rp[0], "  %s (\x1b[1;31mCHECK!\x1b[0m)", turn_str);
+    } else {
+        sprintf(rp[0], "  %s to play", turn_str);
+    }
+
+    // Row 1: Controllers Config
     sprintf(rp[1], "  W: %s | B: %s", w_play, b_play);
 
-    // Sidebar Row 2: Search Depth limits
+    // Row 2: Limit Settings
     if (time_control_type == 0) {
         sprintf(rp[2], "  Lim: %d ms", time_control_val);
     } else if (time_control_type == 1) {
@@ -796,53 +785,32 @@ void draw_ui(void) {
         sprintf(rp[2], "  Lim: %d nodes", time_control_val);
     }
 
-    // Sidebar Row 3: Live Evaluation Centipawns
+    // Row 3: Eval & Engine NPS Metrics
+    char eval_str[32] = "----";
     if (engine_state == ENGINE_STATE_READY) {
         if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            if (eval > 0.0) {
-                sprintf(rp[3], "  Eval: \x1b[1;32m%+.2f\x1b[0m", eval); 
-            } else if (eval < 0.0) {
-                sprintf(rp[3], "  Eval: \x1b[1;31m%+.2f\x1b[0m", eval); 
-            } else {
-                sprintf(rp[3], "  Eval: 0.00");                          
-            }
+            sprintf(eval_str, "%+.2f", (double)engine_score_val / 100.0);
         } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                sprintf(rp[3], "  Eval: \x1b[1;32m+M%d\x1b[0m", engine_score_val);
-            } else if (engine_score_val < 0) {
-                sprintf(rp[3], "  Eval: \x1b[1;31m-M%d\x1b[0m", -engine_score_val);
-            } else {
-                sprintf(rp[3], "  Eval: M0");
-            }
-        } else {
-            strcpy(rp[3], "  Eval: ----");
+            sprintf(eval_str, "M%d", engine_score_val);
         }
-
-        // Sidebar Row 4: Nodes Per Second speeds
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                sprintf(rp[4], "  NPS:  %.2fM", (double)engine_nps / 1000000.0);
-            } else if (engine_nps >= 1000) {
-                sprintf(rp[4], "  NPS:  %.1fk", (double)engine_nps / 1000.0);
-            } else {
-                sprintf(rp[4], "  NPS:  %lld", engine_nps);
-            }
-        } else {
-            strcpy(rp[4], "  NPS:  ----");
-        }
-    } else {
-        strcpy(rp[3], "  Eval: Config");
-        strcpy(rp[4], "  NPS:  Config");
     }
+    char nps_str[32] = "----";
+    if (engine_nps >= 1000000) {
+        sprintf(nps_str, "%.1fM", (double)engine_nps / 1000000.0);
+    } else if (engine_nps >= 1000) {
+        sprintf(nps_str, "%.0fk", (double)engine_nps / 1000.0);
+    } else if (engine_nps > 0) {
+        sprintf(nps_str, "%lld", engine_nps);
+    }
+    sprintf(rp[3], "  Ev:%-5s Np:%-5s", eval_str, nps_str);
 
-    strcpy(rp[5], " ");
-    strcpy(rp[6], "  \x1b[1;33mRECENT MOVES:\x1b[0m");
+    // Row 4: Recent moves header
+    sprintf(rp[4], "  Recent Moves:");
 
-    // Dynamic History generation mapping to slots [7] through [16]
+    // Rows 5-7: Show the last 3 turns
     int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 10) ? (total_full_moves - 9) : 1; 
-    for (int idx = 0; idx < 10; idx++) {
+    int start_move = (total_full_moves > 3) ? (total_full_moves - 2) : 1;
+    for (int idx = 0; idx < 3; idx++) {
         int display = start_move + idx;
         if (total_full_moves > 0 && display <= total_full_moves) {
             int w_idx = (display - 1) * 2;
@@ -857,22 +825,19 @@ void draw_ui(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(rp[7 + idx], "  %2d. %-5s %-5s", display, w_str, b_str);
+            sprintf(rp[5 + idx], "  %2d. %-5s %-5s", display, w_str, b_str);
         } else {
-            sprintf(rp[7 + idx], "  %2d.  ---   --- ", display);
+            sprintf(rp[5 + idx], "  %2d.  ---   --- ", display);
         }
     }
-    strcpy(rp[17], " ");
 
-    // Rendering Step 1: Print top rank letters spaced to exactly center with 5-character columns
+    // Top rank coordinate layout
     if (board_orientation == 1) {
-        dprintf(term_fd, "      a    b    c    d    e    f    g    h  ");
+        dprintf(term_fd, "     a  b  c  d  e  f  g  h\n");
     } else {
-        dprintf(term_fd, "      h    g    f    e    d    c    b    a  ");
+        dprintf(term_fd, "     h  g  f  e  d  c  b  a\n");
     }
-    dprintf(term_fd, "%s\x1b[K\n", rp[0]);
 
-    // Determine check state highlights
     int king_in_check = -1;
     int w_king = gui_find_king(&current_state, 1);
     int b_king = gui_find_king(&current_state, -1);
@@ -882,106 +847,89 @@ void draw_ui(void) {
         king_in_check = b_king;
     }
 
-    // Rendering Step 2: Draw the Chessboard with aspect ratio corrected (2 subrows high, 5 spaces wide)
+    // Compact single-line board rows loop
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+        dprintf(term_fd, "  %d ", rank_lbl);
 
-        for (int sub_r = 0; sub_r < 2; sub_r++) {
-            if (sub_r == 0) {
-                dprintf(term_fd, "  %d ", rank_lbl); 
+        for (int c = 0; c < 8; c++) {
+            int sq = screen_to_board_sq(r, c);
+            int p = current_state.board[sq];
+
+            int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
+            const char *bg_color;
+
+            int is_selected = (sq == selected_sq);
+            int is_cursor = (r == cursor_r && c == cursor_c);
+
+            int is_prev_move = 0;
+            if (history_count > 0) {
+                GuiMove last_move = gui_move_history[history_count - 1];
+                if (sq == last_move.from || sq == last_move.to) {
+                    is_prev_move = 1;
+                }
+            }
+
+            int is_legal_dest = 0;
+            if (selected_sq != -1) {
+                GuiMove test_m = {selected_sq, sq, 0};
+                if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+                    test_m.promo = 5;
+                }
+                if (gui_is_legal_move(&current_state, test_m)) {
+                    is_legal_dest = 1;
+                }
+            }
+
+            if (is_cursor) {
+                bg_color = "\x1b[48;5;208m"; // Orange cursor
+            } else if (is_selected) {
+                bg_color = "\x1b[48;5;34m";  // Green selected piece
+            } else if (sq == king_in_check) {
+                bg_color = "\x1b[48;5;196m"; // Red checked king
+            } else if (is_prev_move) {
+                bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // Blue historical path
+            } else if (is_legal_dest) {
+                bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
             } else {
-                dprintf(term_fd, "    "); 
+                bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Classic wood tones
             }
 
-            for (int c = 0; c < 8; c++) {
-                int sq = screen_to_board_sq(r, c);
-                int p = current_state.board[sq];
-
-                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-                const char *bg_color;
-
-                int is_selected = (sq == selected_sq);
-                int is_cursor = (r == cursor_r && c == cursor_c);
-
-                int is_prev_move = 0;
-                if (history_count > 0) {
-                    GuiMove last_move = gui_move_history[history_count - 1];
-                    if (sq == last_move.from || sq == last_move.to) {
-                        is_prev_move = 1;
-                    }
-                }
-
-                int is_legal_dest = 0;
-                if (selected_sq != -1) {
-                    GuiMove test_m = {selected_sq, sq, 0};
-                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                        test_m.promo = 5;
-                    }
-                    if (gui_is_legal_move(&current_state, test_m)) {
-                        is_legal_dest = 1;
-                    }
-                }
-
-                if (is_cursor) {
-                    bg_color = "\x1b[48;5;208m"; // Cursor Amber Orange
-                } else if (is_selected) {
-                    bg_color = "\x1b[48;5;34m";  // Source Selection Green
-                } else if (sq == king_in_check) {
-                    bg_color = "\x1b[48;5;196m"; // Checked King Red
-                } else if (is_prev_move) {
-                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // History Path Light/Dark Blue
-                } else if (is_legal_dest) {
-                    bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Targets Sage Green
-                } else {
-                    bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Woodgrain Maple/Walnut
-                }
-
-                if (sub_r == 0) {
-                    const char *piece_str = " ";
-                    const char *fg_color = "\x1b[38;5;231m\x1b[1m"; // Bold White pieces
-                    if (p != 0) {
-                        if (p < 0) {
-                            fg_color = "\x1b[38;5;234m\x1b[1m"; // Bold Matte Black pieces
-                        }
-                        switch (abs(p)) {
-                            case 1: piece_str = "♟"; break;
-                            case 2: piece_str = "♞"; break;
-                            case 3: piece_str = "♝"; break;
-                            case 4: piece_str = "♜"; break;
-                            case 5: piece_str = "♛"; break;
-                            case 6: piece_str = "♚"; break;
-                        }
-                    }
-                    dprintf(term_fd, "%s  %s  \x1b[0m", bg_color, fg_color, piece_str);
-                } else {
-                    dprintf(term_fd, "%s     \x1b[0m", bg_color);
+            const char *piece_str = " ";
+            const char *fg_color = "\x1b[38;5;232m"; // Black Pieces
+            if (p != 0) {
+                if (p > 0) fg_color = "\x1b[38;5;255m\x1b[1m"; // Bold White Pieces
+                switch (abs(p)) {
+                    case 1: piece_str = "♟"; break;
+                    case 2: piece_str = "♞"; break;
+                    case 3: piece_str = "♝"; break;
+                    case 4: piece_str = "♜"; break;
+                    case 5: piece_str = "♛"; break;
+                    case 6: piece_str = "♚"; break;
                 }
             }
 
-            // Sync sidebar lines side-by-side with the double-height board
-            int sidebar_idx = 1 + (r * 2) + sub_r;
-            if (sub_r == 0) {
-                dprintf(term_fd, " %d%s\x1b[K\n", rank_lbl, rp[sidebar_idx]); 
-            } else {
-                dprintf(term_fd, "  %s\x1b[K\n", rp[sidebar_idx]);
-            }
+            dprintf(term_fd, "%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
         }
+
+        dprintf(term_fd, " %d %s\x1b[K\n", rank_lbl, rp[r]);
     }
 
-    // Rendering Step 3: Bottom Coordinates
+    // Bottom rank coordinates layout
     if (board_orientation == 1) {
-        dprintf(term_fd, "      a    b    c    d    e    f    g    h  ");
+        dprintf(term_fd, "     a  b  c  d  e  f  g  h\x1b[K\n\n");
     } else {
-        dprintf(term_fd, "      h    g    f    e    d    c    b    a  ");
+        dprintf(term_fd, "     h  g  f  e  d  c  b  a\x1b[K\n\n");
     }
-    dprintf(term_fd, "%s\x1b[K\n\n", rp[17]);
 
-    dprintf(term_fd, " \x1b[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\x1b[0m\x1b[K\r\n");
-    dprintf(term_fd, " \x1b[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\x1b[0m\x1b[K\r\n");
-    dprintf(term_fd, " \x1b[38;5;245m[V] Adjust Value | [Q] Quit\x1b[0m\x1b[K\r\n\r\n");
+    // Help Lines (Row 13 & 14)
+    dprintf(term_fd, " \x1b[38;5;245m[Arrows] Move | [Space/Enter] Select | [U] Undo | [R] Reset | [O] Flip\x1b[0m\x1b[K\n");
+    dprintf(term_fd, " \x1b[38;5;245m[S] Sides | [T] Lim Type | [V] Lim Adjust | [Q] Quit\x1b[0m\x1b[K\n");
 
-    // Bottom Anchored terminal background log window
-    dprintf(term_fd, "\x1b[1;33m--- ENGINE/GUI LOG WINDOW ---\x1b[0m\x1b[K\n");
+    // Divider Line (Row 15)
+    dprintf(term_fd, " \x1b[1;33m--- ENGINE LOG WINDOW ---\x1b[0m\x1b[K\n");
+
+    // Dynamic Engine output streams (Rows 16-19)
     for (int i = 0; i < LOG_WINDOW_SIZE; i++) {
         dprintf(term_fd, "%s\x1b[K\n", bottom_logs[i]);
     }
@@ -1221,10 +1169,10 @@ int main(int argc, char **argv) {
 
     gui_init_board(&current_state);
 
-    // Initial Loading screen on terminal
-    dprintf(term_fd, "\x1b[2J");
-    dprintf(term_fd, "\x1b[5;5H\x1b[33m-- Chess CLI (Direct Display) --\x1b[0m\n\n");
-    dprintf(term_fd, "   Initializing Stockfish Engine...\n");
+    // Clean loading layout inside safe 24-row coordinates
+    dprintf(term_fd, "\x1b[2J\x1b[H\n");
+    dprintf(term_fd, "   \x1b[1;33m-- Chess CLI --\x1b[0m\n\n");
+    dprintf(term_fd, "   Initializing Built-In CFish Engine...\n");
     dprintf(term_fd, "   Please wait, setting up transposition tables...\n");
 
     enable_raw_mode();
@@ -1280,7 +1228,7 @@ int main(int argc, char **argv) {
         read_from_engine();
         draw_ui();
 
-        // High resolution loop delay (approx 60 FPS update rate)
+        // 60 FPS update rate limit
         usleep(16000); 
     }
 
