@@ -1,12 +1,3 @@
-#ifeq ($(ARCH),apple-silicon)
-#	arch = arm64
-#	prefetch = yes
-#	popcnt = yes
-#	neon = yes
-#	lto = yes
-#	numa = no
-#endif
-
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
 -DNNUE -DNNUE_EMBEDDED -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
@@ -27,12 +18,3 @@ network.o: $(NNUE)
 	rm dummy.o
 clean:
 	rm -f $(OBJS) $(TARGET) dummy.o
-
-# Alternate working NNUE loading method for MacOS Apple Silicon: Generate a stub so ld has at least one object file
-#stub.c:
-#	@echo "// stub" > stub.c
-#stub.o: stub.c
-#	$(CC) -arch arm64 -c stub.c -o stub.o
-#network.o: stub.o $(NNUE)
-#	ld -r -arch arm64 -o network.o stub.o \
-#		-sectcreate binary network_nnue $(NNUE)
