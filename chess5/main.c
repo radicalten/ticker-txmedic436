@@ -69,15 +69,16 @@ typedef struct {
     int fullmoves;
 } BoardState;
 
+// Renamed to GuiMove to prevent namespace collision with types.h "Move" typedef
 typedef struct {
     int from;
     int to;
     int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} Move;
+} GuiMove;
 
 BoardState current_state;
 BoardState history[MAX_HISTORY];
-Move move_history[MAX_HISTORY];
+GuiMove gui_move_history[MAX_HISTORY];
 int history_count = 0;
 
 int cursor_r = 6;
@@ -88,36 +89,32 @@ int board_orientation = 1;
 int user_side = 1;         
 
 int time_control_type = 0; 
-int time_control_val = 100; // Default matches 100ms on Desktop systems
+int time_control_val = 100; // Default matches 100ms
 
 int engine_thinking = 0;
 long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
-// POSIX communication pipes
+// POSIX communication pipes and physical terminal file descriptor
 int pipe_gui_to_eng[2];
 int pipe_eng_to_gui[2];
+int term_fd = -1; // File descriptor dedicated to writing directly to the active screen
 struct termios orig_termios;
 
 // Scrollable background log console variables
 #define LOG_WINDOW_SIZE 6
 char bottom_logs[LOG_WINDOW_SIZE][128];
-int log_head = 0;
 
-// Dummy print structures to match 3DS references
-typedef struct { int dummy; } PrintConsole;
-PrintConsole topConsole, bottomConsole;
-#define consoleSelect(x) (void)(x)
-
-void init_board(BoardState *state);
-int is_legal_move(const BoardState *state, Move m);
-int has_legal_moves(const BoardState *state);
-int is_square_attacked(const BoardState *state, int sq, int attacker);
-void make_move(const BoardState *src, BoardState *dst, Move m);
+// Function prototypes prefixed with gui_ to prevent collisions with Stockfish internals
+void gui_init_board(BoardState *state);
+int gui_is_legal_move(const BoardState *state, GuiMove m);
+int gui_has_legal_moves(const BoardState *state);
+int gui_is_square_attacked(const BoardState *state, int sq, int attacker);
+void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m);
 void trigger_engine_move(void);
-int find_king(const BoardState *state, int color);
-int count_repetitions(const BoardState *state);
+int gui_find_king(const BoardState *state, int color);
+int gui_count_repetitions(const BoardState *state);
 int get_promo_choice(void);
 
 // Safe POSIX Engine Interfacing
@@ -152,36 +149,38 @@ void add_log(const char *line) {
     bottom_logs[LOG_WINDOW_SIZE - 1][127] = '\0';
 }
 
-// POSIX non-blocking raw terminal configurations
+// POSIX non-blocking raw terminal configurations on /dev/tty
 void disable_raw_mode(void) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-    printf("\x1b[?25h\x1b[0m\n"); // Restore standard pointer visibility
+    if (term_fd != -1) {
+        tcsetattr(term_fd, TCSAFLUSH, &orig_termios);
+        dprintf(term_fd, "\x1b[?25h\x1b[0m\n"); // Restore standard pointer visibility
+    }
 }
 
 void enable_raw_mode(void) {
-    tcgetattr(STDIN_FILENO, &orig_termios);
+    tcgetattr(term_fd, &orig_termios);
     atexit(disable_raw_mode);
     
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_iflag &= ~(IXON | ICRNL);
     raw.c_oflag &= ~(OPOST);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    tcsetattr(term_fd, TCSAFLUSH, &raw);
 
-    // Make input descriptors non-blocking
-    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-    printf("\x1b[?25l"); // Hide structural cursor pointer
+    // Make terminal descriptor non-blocking
+    int flags = fcntl(term_fd, F_GETFL, 0);
+    fcntl(term_fd, F_SETFL, flags | O_NONBLOCK);
+    dprintf(term_fd, "\x1b[?25l"); // Hide structural cursor pointer
 }
 
-// Read inputs and map them to 3DS button events
+// Read inputs from /dev/tty and map them to standard actions
 unsigned int read_terminal_input(void) {
     char c;
-    ssize_t r = read(STDIN_FILENO, &c, 1);
+    ssize_t r = read(term_fd, &c, 1);
     if (r == 1) {
         if (c == '\x1b') { // Handle arrow escape sequences
             char seq[3];
-            if (read(STDIN_FILENO, &seq[0], 1) == 1 && read(STDIN_FILENO, &seq[1], 1) == 1) {
+            if (read(term_fd, &seq[0], 1) == 1 && read(term_fd, &seq[1], 1) == 1) {
                 if (seq[0] == '[') {
                     switch (seq[1]) {
                         case 'A': return KEY_UP;
@@ -218,7 +217,7 @@ int screen_to_board_sq(int r, int c) {
     }
 }
 
-void move_to_uci(Move m, char *buf) {
+void move_to_uci(GuiMove m, char *buf) {
     int f_col = m.from % 8;
     int f_row = 8 - (m.from / 8);
     int t_col = m.to % 8;
@@ -233,8 +232,8 @@ void move_to_uci(Move m, char *buf) {
     }
 }
 
-Move gui_uci_to_move(const char *str) {
-    Move m = {-1, -1, 0};
+GuiMove gui_uci_to_move(const char *str) {
+    GuiMove m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
     int f_col = str[0] - 'a';
     int f_row = 8 - (str[1] - '0');
@@ -252,7 +251,7 @@ Move gui_uci_to_move(const char *str) {
     return m;
 }
 
-void move_to_san(const BoardState *state, Move m, char *buf) {
+void move_to_san(const BoardState *state, GuiMove m, char *buf) {
     int p = abs(state->board[m.from]);
     int turn = state->turn;
     
@@ -281,8 +280,8 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
         for (int sq = 0; sq < 64; sq++) {
             if (sq == m.from) continue;
             if (state->board[sq] == state->board[m.from]) {
-                Move alt_m = {sq, m.to, 0};
-                if (is_legal_move(state, alt_m)) {
+                GuiMove alt_m = {sq, m.to, 0};
+                if (gui_is_legal_move(state, alt_m)) {
                     another_can_move = 1;
                     if (sq % 8 == m.from % 8) same_file = 1;
                     if (sq / 8 == m.from / 8) same_rank = 1;
@@ -317,10 +316,10 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
 
 append_suffixes:;
     BoardState next;
-    make_move(state, &next, m);
-    int op_king = find_king(&next, next.turn);
-    int is_check = (op_king != -1) && is_square_attacked(&next, op_king, -next.turn);
-    int has_moves = has_legal_moves(&next);
+    gui_make_move(state, &next, m);
+    int op_king = gui_find_king(&next, next.turn);
+    int is_check = (op_king != -1) && gui_is_square_attacked(&next, op_king, -next.turn);
+    int has_moves = gui_has_legal_moves(&next);
     
     ptr = buf + strlen(buf);
     if (is_check) {
@@ -333,10 +332,10 @@ append_suffixes:;
     *ptr = '\0';
 }
 
-void push_state(const BoardState *state, Move m) {
+void push_state(const BoardState *state, GuiMove m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
-        move_history[history_count] = m;
+        gui_move_history[history_count] = m;
         history_count++;
     }
 }
@@ -355,7 +354,7 @@ void trigger_engine_move(void) {
         int len = strlen(cmd);
         for (int i = 0; i < history_count; i++) {
             char uci_m[10];
-            move_to_uci(move_history[i], uci_m);
+            move_to_uci(gui_move_history[i], uci_m);
             int move_len = strlen(uci_m);
             if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) break;
             cmd[len++] = ' ';
@@ -436,11 +435,11 @@ void process_engine_output(char *line) {
                 return;
             }
             
-            Move m = gui_uci_to_move(move_str);
-            if (is_legal_move(&current_state, m)) {
+            GuiMove m = gui_uci_to_move(move_str);
+            if (gui_is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
                 BoardState next;
-                make_move(&current_state, &next, m);
+                gui_make_move(&current_state, &next, m);
                 current_state = next;
             }
             engine_thinking = 0;
@@ -476,14 +475,14 @@ void read_from_engine(void) {
     }
 }
 
-int find_king(const BoardState *state, int color) {
+int gui_find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
     }
     return -1;
 }
 
-int is_square_attacked(const BoardState *state, int sq, int attacker) {
+int gui_is_square_attacked(const BoardState *state, int sq, int attacker) {
     int r = sq / 8, c = sq % 8;
 
     int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
@@ -542,7 +541,7 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
     return 0;
 }
 
-int is_pseudo_legal_move(const BoardState *state, Move m) {
+int gui_is_pseudo_legal_move(const BoardState *state, GuiMove m) {
     int p = state->board[m.from];
     int target = state->board[m.to];
     int turn = state->turn;
@@ -615,32 +614,32 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
                 if (turn == 1 && fr == 7 && fc == 4) {
                     if (m.to == 62 && (state->castle & 1)) {
                         if (state->board[61] == 0 && state->board[62] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 61, -1) &&
-                                !is_square_attacked(state, 62, -1)) return 1;
+                            if (!gui_is_square_attacked(state, 60, -1) &&
+                                !gui_is_square_attacked(state, 61, -1) &&
+                                !gui_is_square_attacked(state, 62, -1)) return 1;
                         }
                     }
                     if (m.to == 58 && (state->castle & 2)) {
                         if (state->board[59] == 0 && state->board[58] == 0 && state->board[57] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 59, -1) &&
-                                !is_square_attacked(state, 58, -1)) return 1;
+                            if (!gui_is_square_attacked(state, 60, -1) &&
+                                !gui_is_square_attacked(state, 59, -1) &&
+                                !gui_is_square_attacked(state, 58, -1)) return 1;
                         }
                     }
                 }
                 if (turn == -1 && fr == 0 && fc == 4) {
                     if (m.to == 6 && (state->castle & 4)) {
                         if (state->board[5] == 0 && state->board[6] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 5, 1) &&
-                                !is_square_attacked(state, 6, 1)) return 1;
+                            if (!gui_is_square_attacked(state, 4, 1) &&
+                                !gui_is_square_attacked(state, 5, 1) &&
+                                !gui_is_square_attacked(state, 6, 1)) return 1;
                         }
                     }
                     if (m.to == 2 && (state->castle & 8)) {
                         if (state->board[3] == 0 && state->board[2] == 0 && state->board[1] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 3, 1) &&
-                                !is_square_attacked(state, 2, 1)) return 1;
+                            if (!gui_is_square_attacked(state, 4, 1) &&
+                                !gui_is_square_attacked(state, 3, 1) &&
+                                !gui_is_square_attacked(state, 2, 1)) return 1;
                         }
                     }
                 }
@@ -651,31 +650,31 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
     return 0;
 }
 
-int is_legal_move(const BoardState *state, Move m) {
-    if (!is_pseudo_legal_move(state, m)) return 0;
+int gui_is_legal_move(const BoardState *state, GuiMove m) {
+    if (!gui_is_pseudo_legal_move(state, m)) return 0;
     BoardState next;
-    make_move(state, &next, m);
-    int king = find_king(&next, state->turn);
+    gui_make_move(state, &next, m);
+    int king = gui_find_king(&next, state->turn);
     if (king == -1) return 0;
-    return !is_square_attacked(&next, king, -state->turn);
+    return !gui_is_square_attacked(&next, king, -state->turn);
 }
 
-int has_legal_moves(const BoardState *state) {
+int gui_has_legal_moves(const BoardState *state) {
     for (int f = 0; f < 64; f++) {
         if (state->board[f] == 0) continue;
         if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
         for (int t = 0; t < 64; t++) {
-            Move m = {f, t, 0};
+            GuiMove m = {f, t, 0};
             if (abs(state->board[f]) == 1 && (t / 8 == 0 || t / 8 == 7)) {
                 m.promo = 5;
             }
-            if (is_legal_move(state, m)) return 1;
+            if (gui_is_legal_move(state, m)) return 1;
         }
     }
     return 0;
 }
 
-int count_repetitions(const BoardState *state) {
+int gui_count_repetitions(const BoardState *state) {
     int count = 1;
     for (int i = 0; i < history_count; i++) {
         if (state->turn == history[i].turn &&
@@ -688,7 +687,8 @@ int count_repetitions(const BoardState *state) {
     return count;
 }
 
-void make_move(const BoardState *src, BoardState *dst, Move m) {
+// Renamed to gui_make_move to prevent conflict with the make_move macro in types.h
+void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     *dst = *src;
     int p = dst->board[m.from];
     int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
@@ -733,20 +733,20 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 
 void draw_ui(void) {
     // Flick-free home reset
-    printf("\x1b[1;1H");
-    printf("\x1b[K\n");
+    dprintf(term_fd, "\x1b[1;1H");
+    dprintf(term_fd, "\x1b[K\n");
 
     char rp[26][64];
     for (int i = 0; i < 26; i++) {
         sprintf(rp[i], "                  "); 
     }
 
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
+    int king = gui_find_king(&current_state, current_state.turn);
+    int is_ch = gui_is_square_attacked(&current_state, king, -current_state.turn);
+    int has_mov = gui_has_legal_moves(&current_state);
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    int repetitions = count_repetitions(&current_state);
+    int repetitions = gui_count_repetitions(&current_state);
 
     if (current_state.halfmoves >= 100) {
         strcpy(rp[0], "  [DRAW (50m-rule)]");
@@ -831,10 +831,10 @@ void draw_ui(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                move_to_san(&history[w_idx], move_history[w_idx], w_str);
+                move_to_san(&history[w_idx], gui_move_history[w_idx], w_str);
             }
             if (b_idx < history_count) {
-                move_to_san(&history[b_idx], move_history[b_idx], b_str);
+                move_to_san(&history[b_idx], gui_move_history[b_idx], b_str);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
@@ -845,18 +845,18 @@ void draw_ui(void) {
     }
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h   ");
+        dprintf(term_fd, "     a  b  c  d  e  f  g  h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a   ");
+        dprintf(term_fd, "     h  g  f  e  d  c  b  a   ");
     }
-    printf("%s\x1b[K\n", rp[0]);
+    dprintf(term_fd, "%s\x1b[K\n", rp[0]);
 
     int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
+    int w_king = gui_find_king(&current_state, 1);
+    int b_king = gui_find_king(&current_state, -1);
+    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
         king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
+    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
         king_in_check = b_king;
     }
 
@@ -865,9 +865,9 @@ void draw_ui(void) {
 
         for (int sub_r = 0; sub_r < 3; sub_r++) {
             if (sub_r == 1) {
-                printf("  %d ", rank_lbl); 
+                dprintf(term_fd, "  %d ", rank_lbl); 
             } else {
-                printf("    "); 
+                dprintf(term_fd, "    "); 
             }
 
             for (int c = 0; c < 8; c++) {
@@ -882,7 +882,7 @@ void draw_ui(void) {
 
                 int is_prev_move = 0;
                 if (history_count > 0) {
-                    Move last_move = move_history[history_count - 1];
+                    GuiMove last_move = gui_move_history[history_count - 1];
                     if (sq == last_move.from || sq == last_move.to) {
                         is_prev_move = 1;
                     }
@@ -890,11 +890,11 @@ void draw_ui(void) {
 
                 int is_legal_dest = 0;
                 if (selected_sq != -1) {
-                    Move test_m = {selected_sq, sq, 0};
+                    GuiMove test_m = {selected_sq, sq, 0};
                     if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
                         test_m.promo = 5;
                     }
-                    if (is_legal_move(&current_state, test_m)) {
+                    if (gui_is_legal_move(&current_state, test_m)) {
                         is_legal_dest = 1;
                     }
                 }
@@ -929,44 +929,42 @@ void draw_ui(void) {
                             case 6: piece_str = "K"; break;
                         }
                     }
-                    printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
+                    dprintf(term_fd, "%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
                 } else {
-                    printf("%s   \x1b[0m", bg_color);
+                    dprintf(term_fd, "%s   \x1b[0m", bg_color);
                 }
             }
 
             if (sub_r == 1) {
-                printf(" %d", rank_lbl); 
-                printf("%s", rp[1 + (r * 3) + sub_r]); 
+                dprintf(term_fd, " %d", rank_lbl); 
+                dprintf(term_fd, "%s", rp[1 + (r * 3) + sub_r]); 
             } else {
-                printf("  "); 
-                printf("%s", rp[1 + (r * 3) + sub_r]);
+                dprintf(term_fd, "  "); 
+                dprintf(term_fd, "%s", rp[1 + (r * 3) + sub_r]);
             }
-            printf("\x1b[K\n");
+            dprintf(term_fd, "\x1b[K\n");
         }
     }
 
     if (board_orientation == 1) {
-        printf("     a  b  c  d  e  f  g  h   ");
+        dprintf(term_fd, "     a  b  c  d  e  f  g  h   ");
     } else {
-        printf("     h  g  f  e  d  c  b  a   ");
+        dprintf(term_fd, "     h  g  f  e  d  c  b  a   ");
     }
-    printf("%s\x1b[K\n\n", rp[25]);
+    dprintf(term_fd, "%s\x1b[K\n\n", rp[25]);
 
-    // Renders the bottom console logs to mirror the dual-screen output
-    printf("\x1b[1;33m--- ENGINE/GUI LOG WINDOW ---\x1b[0m\n");
+    // Bottom anchored background logs terminal screen
+    dprintf(term_fd, "\x1b[1;33m--- ENGINE/GUI LOG WINDOW ---\x1b[0m\n");
     for (int i = 0; i < LOG_WINDOW_SIZE; i++) {
-        printf("%s\x1b[K\n", bottom_logs[i]);
+        dprintf(term_fd, "%s\x1b[K\n", bottom_logs[i]);
     }
-    fflush(stdout); 
 }
 
 int get_promo_choice(void) {
-    printf("\n\x1b[1;33mPROMOTION! Type a Key Selection: [q] Queen  [r] Rook  [b] Bishop  [n] Knight\x1b[0m\n");
-    fflush(stdout);
+    dprintf(term_fd, "\n\x1b[1;33mPROMOTION! Type Selection: [q] Queen  [r] Rook  [b] Bishop  [n] Knight\x1b[0m\n");
     while (1) {
         char c;
-        if (read(STDIN_FILENO, &c, 1) == 1) {
+        if (read(term_fd, &c, 1) == 1) {
             if (c == 'q') return 5;
             if (c == 'r') return 4;
             if (c == 'b') return 3;
@@ -995,7 +993,7 @@ void handle_select(void) {
         return; 
     }
 
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
+    if (!gui_has_legal_moves(&current_state) || current_state.halfmoves >= 100 || gui_count_repetitions(&current_state) >= 3) {
         return;
     }
 
@@ -1006,18 +1004,18 @@ void handle_select(void) {
             selected_sq = sq;
         }
     } else {
-        Move m = {selected_sq, sq, 0};
+        GuiMove m = {selected_sq, sq, 0};
         int p = current_state.board[selected_sq];
         int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
         if (is_promo) m.promo = 5;
 
-        if (is_legal_move(&current_state, m)) {
+        if (gui_is_legal_move(&current_state, m)) {
             if (is_promo) {
                 m.promo = get_promo_choice();
             }
             push_state(&current_state, m);
             BoardState next;
-            make_move(&current_state, &next, m);
+            gui_make_move(&current_state, &next, m);
             current_state = next;
             selected_sq = -1;
             
@@ -1060,7 +1058,7 @@ void handle_reset_board(void) {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
-    init_board(&current_state);
+    gui_init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
     cursor_r = 6;
@@ -1108,7 +1106,7 @@ void adjust_time_control(void) {
     }
 }
 
-void init_board(BoardState *state) {
+void gui_init_board(BoardState *state) {
     int start[64] = {
         -4, -2, -3, -5, -6, -3, -2, -4,
         -1, -1, -1, -1, -1, -1, -1, -1,
@@ -1127,9 +1125,9 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-// POSIX Background Thread Worker
+// Background POSIX Worker Core
 void* stockfish_thread_func(void* arg) {
-    // Pipe redirection steps to make engine interaction transparent
+    // Pipe standard I/O redirection for the detached worker thread
     dup2(pipe_gui_to_eng[0], STDIN_FILENO);
     dup2(pipe_eng_to_gui[1], STDOUT_FILENO);
     dup2(pipe_eng_to_gui[1], STDERR_FILENO);
@@ -1137,7 +1135,7 @@ void* stockfish_thread_func(void* arg) {
     close(pipe_gui_to_eng[1]);
     close(pipe_eng_to_gui[0]);
 
-    // Setup Engine variables inside context
+    // Setup Engine variables inside isolated context
     print_engine_info(false);
     psqt_init();
     bitboards_init();
@@ -1166,14 +1164,21 @@ void* stockfish_thread_func(void* arg) {
 }
 
 int main(int argc, char **argv) {
-    // Initialize stdout logging and dynamic buffers
+    // Open Dedicated direct output file descriptor to bypass shared Standard IO
+    term_fd = open("/dev/tty", O_RDWR);
+    if (term_fd < 0) {
+        fprintf(stderr, "Failed to open controlling terminal /dev/tty!\n");
+        return 1;
+    }
+
     for (int i = 0; i < LOG_WINDOW_SIZE; i++) {
         strcpy(bottom_logs[i], " ");
     }
 
     // Set up standard POSIX read pipes
     if (pipe(pipe_gui_to_eng) < 0 || pipe(pipe_eng_to_gui) < 0) {
-        fprintf(stderr, "Failed to initialize IPC Pipes!\n");
+        dprintf(term_fd, "Failed to initialize IPC Pipes!\n");
+        close(term_fd);
         return 1;
     }
 
@@ -1181,21 +1186,21 @@ int main(int argc, char **argv) {
     int flags = fcntl(pipe_eng_to_gui[0], F_GETFL, 0);
     fcntl(pipe_eng_to_gui[0], F_SETFL, flags | O_NONBLOCK);
 
-    init_board(&current_state);
+    gui_init_board(&current_state);
 
-    // Initial Loading screen on stdout
-    printf("\x1b[2J");
-    printf("\x1b[5;5H\x1b[33m-- Chess CLI --\x1b[0m\n\n");
-    printf("   Initializing Stockfish Engine...\n");
-    printf("   Please wait, setting up transposition tables...\n");
-    fflush(stdout);
+    // Initial Loading screen on terminal
+    dprintf(term_fd, "\x1b[2J");
+    dprintf(term_fd, "\x1b[5;5H\x1b[33m-- Chess CLI (Direct Display) --\x1b[0m\n\n");
+    dprintf(term_fd, "   Initializing Stockfish Engine...\n");
+    dprintf(term_fd, "   Please wait, setting up transposition tables...\n");
 
     enable_raw_mode();
 
     pthread_t thread_id;
     if (pthread_create(&thread_id, NULL, stockfish_thread_func, NULL) != 0) {
         disable_raw_mode();
-        fprintf(stderr, "Failed to launch Stockfish Thread!\n");
+        dprintf(term_fd, "Failed to launch Stockfish Thread!\n");
+        close(term_fd);
         return 1;
     }
 
@@ -1228,7 +1233,7 @@ int main(int argc, char **argv) {
         }
 
         int engine_active = 0;
-        if (engine_state == ENGINE_STATE_READY && has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
+        if (engine_state == ENGINE_STATE_READY && gui_has_legal_moves(&current_state) && current_state.halfmoves < 100 && gui_count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
@@ -1242,13 +1247,14 @@ int main(int argc, char **argv) {
         read_from_engine();
         draw_ui();
 
-        // 60 FPS Target tick to manage CPU utilization safely
+        // 60 FPS loop delay
         usleep(16000); 
     }
 
     sf_send_command("quit");
     pthread_join(thread_id, NULL);
     disable_raw_mode();
+    close(term_fd);
 
     return 0;
 }
