@@ -102,6 +102,7 @@ void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice();
+void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
 
 // Clean up termios and terminate engine processes
 void gui_cleanup() {
@@ -207,6 +208,96 @@ void move_to_uci(GuiMove m, char *buf) {
         if (m.promo == 3) p = 'b';
         if (m.promo == 4) p = 'r';
         sprintf(buf + 4, "%c", p);
+    }
+}
+
+// Translates a GUI board position and raw move parameters into standardized PGN notation
+void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
+    int p = state->board[m.from];
+    int abs_p = abs(p);
+    int target = state->board[m.to];
+    int is_cap = (target != 0) || (abs_p == 1 && m.to == state->ep);
+
+    // Castling Detection
+    if (abs_p == 6 && abs(m.from - m.to) == 2) {
+        if (m.to > m.from) {
+            strcpy(buf, "O-O");
+        } else {
+            strcpy(buf, "O-O-O");
+        }
+    } else {
+        char *ptr = buf;
+        // Piece Type Prefixes
+        if (abs_p == 1) {
+            if (is_cap) {
+                *ptr++ = 'a' + (m.from % 8);
+                *ptr++ = 'x';
+            }
+        } else {
+            if (abs_p == 2) *ptr++ = 'N';
+            else if (abs_p == 3) *ptr++ = 'B';
+            else if (abs_p == 4) *ptr++ = 'R';
+            else if (abs_p == 5) *ptr++ = 'Q';
+            else if (abs_p == 6) *ptr++ = 'K';
+
+            // Disambiguate identical pieces capable of arriving at the same destination
+            if (abs_p >= 2 && abs_p <= 5) {
+                int file_conflict = 0;
+                int rank_conflict = 0;
+                int conflict_exists = 0;
+                for (int sq = 0; sq < 64; sq++) {
+                    if (sq == m.from) continue;
+                    if (state->board[sq] == p) { // Same piece type & color
+                        GuiMove test_m = {sq, m.to, 0};
+                        if (is_legal_gui_move(state, test_m)) {
+                            conflict_exists = 1;
+                            if (sq % 8 == m.from % 8) file_conflict = 1;
+                            if (sq / 8 == m.from / 8) rank_conflict = 1;
+                        }
+                    }
+                }
+                if (conflict_exists) {
+                    if (!file_conflict) {
+                        *ptr++ = 'a' + (m.from % 8);
+                    } else if (!rank_conflict) {
+                        *ptr++ = '8' - (m.from / 8);
+                    } else {
+                        *ptr++ = 'a' + (m.from % 8);
+                        *ptr++ = '8' - (m.from / 8);
+                    }
+                }
+            }
+
+            if (is_cap) {
+                *ptr++ = 'x';
+            }
+        }
+
+        // Destination Square coordinates
+        *ptr++ = 'a' + (m.to % 8);
+        *ptr++ = '8' - (m.to / 8);
+
+        // Promotions Suffix
+        if (abs_p == 1 && m.promo != 0) {
+            *ptr++ = '=';
+            if (m.promo == 5) *ptr++ = 'Q';
+            else if (m.promo == 4) *ptr++ = 'R';
+            else if (m.promo == 3) *ptr++ = 'B';
+            else if (m.promo == 2) *ptr++ = 'N';
+        }
+        *ptr = '\0';
+    }
+
+    // Check & Checkmate Evaluations
+    BoardState next;
+    make_gui_move(state, &next, m);
+    int opp_king = find_king(&next, next.turn);
+    if (opp_king != -1 && is_square_attacked(&next, opp_king, -next.turn)) {
+        if (!has_legal_moves(&next)) {
+            strcat(buf, "#");
+        } else {
+            strcat(buf, "+");
+        }
     }
 }
 
@@ -784,16 +875,22 @@ void draw_ui() {
                 printf(" | NPS: %lld", engine_nps);
             }
         }
-        // Format and print chess engine point value (Eval) normalized to White's perspective
+        // Format and print colorized engine point value evaluation normalized to White's perspective
         if (engine_score_type == 0) {
-            printf(" | \033[1;36mEval:\033[0m %+.2f", (double)engine_score_val / 100.0);
+            if (engine_score_val > 0) {
+                printf(" | \033[1;36mEval:\033[0m \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
+            } else if (engine_score_val < 0) {
+                printf(" | \033[1;36mEval:\033[0m \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
+            } else {
+                printf(" | \033[1;36mEval:\033[0m 0.00");
+            }
         } else if (engine_score_type == 1) {
             if (engine_score_val > 0) {
-                printf(" | \033[1;31mEval: +M%d\033[0m", engine_score_val);
+                printf(" | \033[1;36mEval:\033[0m \033[1;32m+M%d\033[0m", engine_score_val);
             } else if (engine_score_val < 0) {
-                printf(" | \033[1;31mEval: -M%d\033[0m", -engine_score_val);
+                printf(" | \033[1;36mEval:\033[0m \033[1;31m-M%d\033[0m", -engine_score_val);
             } else {
-                printf(" | \033[1;31mEval: M0\033[0m");
+                printf(" | \033[1;36mEval:\033[0m M0");
             }
         }
     }
@@ -825,9 +922,9 @@ void print_recent_moves(int row) {
 
     printf("   %2d. ", display);
     if (w_idx < history_count) {
-        char w_str[10];
-        move_to_uci(move_history[w_idx], w_str);
-        printf("%-6s", w_str);
+        char pgn_str[16];
+        move_to_pgn(&history[w_idx], move_history[w_idx], pgn_str);
+        printf("%-6s", pgn_str);
     } else {
         printf("------");
     }
@@ -835,9 +932,9 @@ void print_recent_moves(int row) {
     printf(" ");
 
     if (b_idx < history_count) {
-        char b_str[10];
-        move_to_uci(move_history[b_idx], b_str);
-        printf("%-6s", b_str);
+        char pgn_str[16];
+        move_to_pgn(&history[b_idx], move_history[b_idx], pgn_str);
+        printf("%-6s", pgn_str);
     } else {
         if (w_idx < history_count) printf("...");
         else printf("------");
