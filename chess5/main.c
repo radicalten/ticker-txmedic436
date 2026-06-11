@@ -86,6 +86,9 @@ long long engine_nps = 0;    // Tracks current/last search nodes per second
 int engine_score_type = -1;  // -1 = None, 0 = cp (centipawns), 1 = mate
 int engine_score_val = 0;    // Evaluation score from White's perspective
 
+char engine_pv[1024] = "";   // Holds the engine's current thinking/principal variation line
+int engine_depth = 0;        // Holds current search depth
+
 char engine_buffer[8192];
 int engine_buf_len = 0;
 struct termios orig_termios;
@@ -334,6 +337,8 @@ void trigger_engine_move() {
     engine_nps = 0; // Reset search metrics for the new calculation
     engine_score_type = -1; // Reset evaluation point values
     engine_score_val = 0;
+    engine_pv[0] = '\0';   // Clear previous thinking values
+    engine_depth = 0;
 
     static char cmd[32768]; // Allocate statically to prevent stack overflows
     cmd[0] = '\0';
@@ -403,6 +408,22 @@ void process_engine_output(char *line) {
                     engine_score_val = score_val * current_state.turn;
                 }
             }
+        }
+
+        // Capture current search depth details
+        char *depth_ptr = strstr(line, " depth ");
+        if (depth_ptr) {
+            int d = 0;
+            if (sscanf(depth_ptr, " depth %d", &d) == 1) {
+                engine_depth = d;
+            }
+        }
+
+        // Parse the Principal Variation (PV) string
+        char *pv_ptr = strstr(line, " pv ");
+        if (pv_ptr) {
+            strncpy(engine_pv, pv_ptr + 4, sizeof(engine_pv) - 1);
+            engine_pv[sizeof(engine_pv) - 1] = '\0';
         }
     }
 
@@ -894,7 +915,14 @@ void draw_ui() {
             }
         }
     }
-    printf("\033[K\r\n\033[J");
+    printf("\033[K");
+
+    // 5. Prints the dynamic PV thinking line from the engine right at the bottom
+    if (engine_pid > 0 && strlen(engine_pv) > 0) {
+        printf("\r\n \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K", engine_depth, engine_pv);
+    }
+    
+    printf("\r\n\033[J"); // Clears everything below the active boundaries to avoid visual trails
     fflush(stdout);
 }
 
@@ -992,10 +1020,12 @@ void handle_select() {
             current_state = next;
             selected_sq = -1;
             
-            // Clear engine metrics for new human position
+            // Clear engine metrics and thinking lines for new human position
             engine_nps = 0;
             engine_score_type = -1;
             engine_score_val = 0;
+            engine_pv[0] = '\0';
+            engine_depth = 0;
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -1015,6 +1045,8 @@ void handle_undo() {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
+    engine_pv[0] = '\0';
+    engine_depth = 0;
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1032,6 +1064,8 @@ void handle_reset_board() {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
+    engine_pv[0] = '\0';
+    engine_depth = 0;
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
