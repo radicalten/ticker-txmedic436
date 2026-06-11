@@ -972,8 +972,8 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // Unified single-line controls bar
-    printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n\r\n");
+    // Unified single-line controls bar (Removed trailing double-newlines)
+    printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n");
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
     printf(" \033[38;5;248mEngine Status:\033[0m ");
