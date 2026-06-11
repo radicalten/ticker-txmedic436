@@ -972,9 +972,9 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    printf(" \033[38;5;245m[Arrows] Navigate | [Enter/Space] Select | [U] Undo | [R] Reset Board\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[O] Flip Board | [S] Switch Sides | [T] Change Time Control\033[0m\033[K\r\n");
-    printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
+    // Highly compact instructions block
+    printf(" \033[38;5;245m[U] Undo | [R] Reset Board | [O] Flip Board | [S] Switch Sides\033[0m\033[K\r\n");
+    printf(" \033[38;5;245m[T] Time Control | [V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
     printf(" \033[38;5;248mEngine Status:\033[0m ");
