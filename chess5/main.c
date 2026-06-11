@@ -972,7 +972,7 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // Unified single-line controls bar (Removed trailing double-newlines)
+    // Unified single-line controls bar
     printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n");
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
@@ -1060,11 +1060,11 @@ void draw_ui() {
     }
     printf("\033[K\r\n");
 
-    // 6. Prints raw, clean console logs directly (Reserved space layout)
+    // 6. Prints raw, clean console logs directly (Reserved space layout, removed 3-space indentation)
     if (engine_pid > 0) {
         for (int i = 2; i >= 0; i--) {
             if (strlen(engine_console_log[i]) > 0) {
-                printf("   \033[38;5;244m%s\033[0m\033[K\r\n", engine_console_log[i]);
+                printf(" \033[38;5;244m%s\033[0m\033[K\r\n", engine_console_log[i]);
             } else {
                 printf("\033[K\r\n"); // Print space-holding empty line to prevent layout jitter
             }
