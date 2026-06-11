@@ -975,8 +975,8 @@ void draw_ui() {
     // Unified single-line controls bar
     printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n");
     
-    // 5. Unified Engine Status & performance Reports row
-    printf(" \033[38;5;248mEngine:\033[0m ");
+    // 5. Shortened Unified Engine Status & performance Reports row
+    printf(" ");
     if (engine_pid > 0) {
         if (engine_recvd_readyok) {
             printf("\033[1;32mReady\033[0m");
@@ -986,57 +986,80 @@ void draw_ui() {
             printf("\033[1;34mConnecting...\033[0m");
         }
 
-        // Eval Point Display (White's Perspective)
-        if (engine_score_type == 0) {
-            if (engine_score_val > 0) {
-                printf(" | \033[1;36mEval:\033[0m \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else if (engine_score_val < 0) {
-                printf(" | \033[1;36mEval:\033[0m \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else {
-                printf(" | \033[1;36mEval:\033[0m 0.00");
-            }
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                printf(" | \033[1;36mEval:\033[0m \033[1;32m+M%d\033[0m", engine_score_val);
-            } else if (engine_score_val < 0) {
-                printf(" | \033[1;36mEval:\033[0m \033[1;31m-M%d\033[0m", -engine_score_val);
-            } else {
-                printf(" | \033[1;36mEval:\033[0m M0");
-            }
-        }
-
         // Live calculation report metrics
         if (engine_thinking) {
+            // Nps
+            if (engine_nps > 0) {
+                if (engine_nps >= 1000000)      printf(" | Nps: %.2fM", (double)engine_nps / 1000000.0);
+                else if (engine_nps >= 1000)    printf(" | Nps: %.1fk", (double)engine_nps / 1000.0);
+                else                            printf(" | Nps: %lld", engine_nps);
+            }
+
+            // Eval Point Display (White's Perspective)
+            if (engine_score_type == 0) {
+                if (engine_score_val > 0) {
+                    printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
+                } else if (engine_score_val < 0) {
+                    printf(" | Eval: \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
+                } else {
+                    printf(" | Eval: 0.00");
+                }
+            } else if (engine_score_type == 1) {
+                if (engine_score_val > 0) {
+                    printf(" | Eval: \033[1;32m+M%d\033[0m", engine_score_val);
+                } else if (engine_score_val < 0) {
+                    printf(" | Eval: \033[1;31m-M%d\033[0m", -engine_score_val);
+                } else {
+                    printf(" | Eval: M0");
+                }
+            }
+
             // Depth
             if (engine_depth > 0) {
                 if (engine_seldepth > 0) printf(" | Depth: %d/%d", engine_depth, engine_seldepth);
                 else                     printf(" | Depth: %d", engine_depth);
             }
-            // NPS
-            if (engine_nps > 0) {
-                if (engine_nps >= 1000000)      printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
-                else if (engine_nps >= 1000)    printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
-                else                            printf(" | NPS: %lld", engine_nps);
-            }
+
             // Absolute Nodes count
             if (engine_nodes > 0) {
                 if (engine_nodes >= 1000000)    printf(" | Nodes: %.2fM", (double)engine_nodes / 1000000.0);
                 else if (engine_nodes >= 1000)  printf(" | Nodes: %.1fk", (double)engine_nodes / 1000.0);
                 else                            printf(" | Nodes: %lld", engine_nodes);
             }
-            // Time elapsed
+
+            // Time elapsed (T)
             if (engine_time_ms > 0) {
-                printf(" | Time: %.2fs", (double)engine_time_ms / 1000.0);
+                printf(" | T: %.2fs", (double)engine_time_ms / 1000.0);
             }
-            // Hash saturation permille metrics
+
+            // Hash saturation metrics (H)
             if (engine_hashfull > 0) {
-                printf(" | Hash: %.1f%%", (double)engine_hashfull / 10.0);
+                printf(" | H: %.1f%%", (double)engine_hashfull / 10.0);
             }
-            // Tablebase probe metrics
+
+            // Tablebase probe metrics (TB)
             if (engine_tbhits > 0) {
-                printf(" | TB Hits: %lld", engine_tbhits);
+                printf(" | TB: %lld", engine_tbhits);
             }
         } else {
+            // Render evaluation static value if available while idle
+            if (engine_score_type == 0) {
+                if (engine_score_val > 0) {
+                    printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
+                } else if (engine_score_val < 0) {
+                    printf(" | Eval: \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
+                } else {
+                    printf(" | Eval: 0.00");
+                }
+            } else if (engine_score_type == 1) {
+                if (engine_score_val > 0) {
+                    printf(" | Eval: \033[1;32m+M%d\033[0m", engine_score_val);
+                } else if (engine_score_val < 0) {
+                    printf(" | Eval: \033[1;31m-M%d\033[0m", -engine_score_val);
+                } else {
+                    printf(" | Eval: M0");
+                }
+            }
             printf(" | \033[38;5;243mIdle\033[0m");
         }
     } else {
@@ -1044,7 +1067,7 @@ void draw_ui() {
     }
     printf("\033[K\r\n");
 
-    // 6. Prints raw, clean console logs directly (Reserved space layout, removed 3-space indentation)
+    // 6. Prints raw, clean console logs directly (Reserved space layout)
     if (engine_pid > 0) {
         for (int i = 2; i >= 0; i--) {
             if (strlen(engine_console_log[i]) > 0) {
