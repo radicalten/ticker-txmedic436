@@ -81,6 +81,11 @@ int engine_out[2] = {-1, -1};
 pid_t engine_pid = -1;
 int engine_thinking = 0;
 
+// Handshake Tracking
+bool engine_recvd_uciok = false;
+bool engine_recvd_readyok = false;
+char engine_console_log[3][128] = { "", "", "" }; // Last 3 engine UCI signals (excluding verbose info lines)
+
 // Engine live performance metrics
 long long engine_nps = 0;      // Tracks current/last search nodes per second
 int engine_depth = 0;          // Search depth
@@ -114,6 +119,7 @@ int count_repetitions(const BoardState *state);
 int get_promo_choice();
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
 void reset_engine_metrics();
+void log_engine_line(const char *line);
 
 // Clean up termios and terminate engine processes
 void gui_cleanup() {
@@ -144,6 +150,10 @@ void enable_raw_mode() {
 
 // Spawns the integrated UCI Engine in a child process
 void start_engine() {
+    engine_recvd_uciok = false;
+    engine_recvd_readyok = false;
+    memset(engine_console_log, 0, sizeof(engine_console_log));
+
     if (pipe(engine_in) < 0 || pipe(engine_out) < 0) return;
     engine_pid = fork();
     if (engine_pid == 0) { // Child
@@ -186,15 +196,43 @@ void start_engine() {
         close(engine_in[0]);
         close(engine_out[1]);
         fcntl(engine_out[0], F_SETFL, O_NONBLOCK);
+        
+        // Begin handshakes
+        log_engine_line("GUI -> uci");
+        log_engine_line("GUI -> isready");
         write(engine_in[1], "uci\nisready\n", 12);
     }
 }
 
 void send_to_engine(const char *cmd) {
     if (engine_pid > 0) {
+        // Output sent commands to the live console view
+        char clean_cmd[128];
+        strncpy(clean_cmd, cmd, sizeof(clean_cmd) - 1);
+        clean_cmd[sizeof(clean_cmd) - 1] = '\0';
+        int len = strlen(clean_cmd);
+        while (len > 0 && (clean_cmd[len - 1] == '\n' || clean_cmd[len - 1] == '\r')) {
+            clean_cmd[--len] = '\0';
+        }
+        char log_buf[140];
+        snprintf(log_buf, sizeof(log_buf), "GUI -> %s", clean_cmd);
+        log_engine_line(log_buf);
+
         int ignored = write(engine_in[1], cmd, strlen(cmd));
         (void)ignored;
     }
+}
+
+// Push a line onto our console log shifting existing entries back
+void log_engine_line(const char *line) {
+    strncpy(engine_console_log[2], engine_console_log[1], sizeof(engine_console_log[2]) - 1);
+    engine_console_log[2][sizeof(engine_console_log[2]) - 1] = '\0';
+    
+    strncpy(engine_console_log[1], engine_console_log[0], sizeof(engine_console_log[1]) - 1);
+    engine_console_log[1][sizeof(engine_console_log[1]) - 1] = '\0';
+
+    strncpy(engine_console_log[0], line, sizeof(engine_console_log[0]) - 1);
+    engine_console_log[0][sizeof(engine_console_log[0]) - 1] = '\0';
 }
 
 // Maps board array index to GUI screen rows/cols based on orientation
@@ -399,6 +437,21 @@ void process_engine_output(char *line) {
     while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
         line[len - 1] = '\0';
         len--;
+    }
+
+    // Capture standard handshake states
+    if (strcmp(line, "uciok") == 0) {
+        engine_recvd_uciok = true;
+    }
+    if (strcmp(line, "readyok") == 0) {
+        engine_recvd_readyok = true;
+    }
+
+    // Exclude verbose search logs ("info ") from our readable Console log
+    if (strncmp(line, "info", 4) != 0 && strlen(line) > 0) {
+        char clean_line[140];
+        snprintf(clean_line, sizeof(clean_line), "ENG -> %s", line);
+        log_engine_line(clean_line);
     }
 
     // Capture nodes per second (nps) and scores from engine update lines
@@ -924,8 +977,16 @@ void draw_ui() {
     printf(" \033[38;5;245m[V] Adjust Value | [Q] Quit\033[0m\033[K\r\n\r\n");
     
     // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
-    printf(" \033[38;5;248mEngine Status:\033[0m (%s)", (engine_pid > 0) ? "\033[1;32mActive\033[0m" : "\033[1;31mUnavailable\033[0m");
+    printf(" \033[38;5;248mEngine Status:\033[0m ");
     if (engine_pid > 0) {
+        if (engine_recvd_readyok) {
+            printf("(\033[1;32mActive - Ready (readyok)\033[0m)");
+        } else if (engine_recvd_uciok) {
+            printf("(\033[1;33mActive - Connected (uciok)\033[0m)");
+        } else {
+            printf("(\033[1;34mActive - Handshaking...\033[0m)");
+        }
+
         if (engine_nps > 0) {
             if (engine_nps >= 1000000) {
                 printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
@@ -953,6 +1014,8 @@ void draw_ui() {
                 printf(" | \033[1;36mEval:\033[0m M0");
             }
         }
+    } else {
+        printf("(\033[1;31mUnavailable\033[0m)");
     }
     printf("\033[K\r\n");
 
@@ -996,14 +1059,26 @@ void draw_ui() {
     } else if (engine_pid > 0) {
         printf(" \033[38;5;248mEngine Reports:\033[0m \033[38;5;243mIdle\033[0m\033[K");
     }
-    printf("\033[K");
+    printf("\033[K\r\n");
 
-    // 6. Prints the dynamic PV thinking line from the engine right at the bottom
+    // 6. Prints live structural logs / engine console exchanges
+    if (engine_pid > 0) {
+        printf(" \033[38;5;248mEngine Console Log:\033[0m\033[K\r\n");
+        for (int i = 2; i >= 0; i--) {
+            if (strlen(engine_console_log[i]) > 0) {
+                printf("   \033[38;5;244m>> %s\033[0m\033[K\r\n", engine_console_log[i]);
+            } else {
+                printf("   \033[38;5;238m--\033[0m\033[K\r\n");
+            }
+        }
+    }
+
+    // 7. Prints the dynamic PV thinking line from the engine right at the bottom
     if (engine_pid > 0 && strlen(engine_pv) > 0) {
-        printf("\r\n \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K", engine_depth, engine_pv);
+        printf(" \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K\r\n", engine_depth, engine_pv);
     }
     
-    printf("\r\n\033[J"); // Clears everything below the active boundaries to avoid visual trails
+    printf("\033[J"); // Clears everything below the active boundaries to avoid visual trails
     fflush(stdout);
 }
 
