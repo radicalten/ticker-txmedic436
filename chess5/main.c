@@ -1014,17 +1014,17 @@ void draw_ui() {
                 }
             }
 
-            // Depth
+            // Depth (D)
             if (engine_depth > 0) {
-                if (engine_seldepth > 0) printf(" | Depth: %d/%d", engine_depth, engine_seldepth);
-                else                     printf(" | Depth: %d", engine_depth);
+                if (engine_seldepth > 0) printf(" | D: %d/%d", engine_depth, engine_seldepth);
+                else                     printf(" | D: %d", engine_depth);
             }
 
-            // Absolute Nodes count
+            // Absolute Nodes count (N)
             if (engine_nodes > 0) {
-                if (engine_nodes >= 1000000)    printf(" | Nodes: %.2fM", (double)engine_nodes / 1000000.0);
-                else if (engine_nodes >= 1000)  printf(" | Nodes: %.1fk", (double)engine_nodes / 1000.0);
-                else                            printf(" | Nodes: %lld", engine_nodes);
+                if (engine_nodes >= 1000000)    printf(" | N: %.2fM", (double)engine_nodes / 1000000.0);
+                else if (engine_nodes >= 1000)  printf(" | N: %.1fk", (double)engine_nodes / 1000.0);
+                else                            printf(" | N: %lld", engine_nodes);
             }
 
             // Time elapsed (T)
