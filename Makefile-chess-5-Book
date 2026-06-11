@@ -4,7 +4,7 @@ CFLAGS 	:= -O3 -flto \
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
-EXCLUDE := chess5/numa.c
+EXCLUDE := chess5/nnue.c chess5/numa.c
 SRCS    := $(filter-out $(EXCLUDE), $(wildcard chess5/*.c))
 #NNUE    := nn-62ef826d1a6d.nnue
 OBJS    := $(patsubst %.c,%.o,$(SRCS)) #network.o
