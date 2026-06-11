@@ -1061,14 +1061,13 @@ void draw_ui() {
     }
     printf("\033[K\r\n");
 
-    // 6. Prints live structural logs / engine console exchanges
+    // 6. Prints raw, clean console logs directly (Reserved space layout)
     if (engine_pid > 0) {
-        printf(" \033[38;5;248mEngine Console Log:\033[0m\033[K\r\n");
         for (int i = 2; i >= 0; i--) {
             if (strlen(engine_console_log[i]) > 0) {
-                printf("   \033[38;5;244m>> %s\033[0m\033[K\r\n", engine_console_log[i]);
+                printf("   \033[38;5;244m%s\033[0m\033[K\r\n", engine_console_log[i]);
             } else {
-                printf("   \033[38;5;238m--\033[0m\033[K\r\n");
+                printf("\033[K\r\n"); // Print space-holding empty line to prevent layout jitter
             }
         }
     }
