@@ -80,14 +80,21 @@ int engine_in[2] = {-1, -1};
 int engine_out[2] = {-1, -1};
 pid_t engine_pid = -1;
 int engine_thinking = 0;
-long long engine_nps = 0;    // Tracks current/last search nodes per second
+
+// Engine live performance metrics
+long long engine_nps = 0;      // Tracks current/last search nodes per second
+int engine_depth = 0;          // Search depth
+int engine_seldepth = 0;       // Selective depth
+int engine_time_ms = 0;        // Thinking time elapsed in ms
+long long engine_nodes = 0;    // Absolute total nodes searched
+int engine_hashfull = 0;       // Hash table saturation (permille from UCI)
+long long engine_tbhits = 0;   // Tablebase hits
 
 // Tracks evaluation point values from UCI engine
 int engine_score_type = -1;  // -1 = None, 0 = cp (centipawns), 1 = mate
 int engine_score_val = 0;    // Evaluation score from White's perspective
 
 char engine_pv[1024] = "";   // Holds the engine's current thinking/principal variation line
-int engine_depth = 0;        // Holds current search depth
 
 char engine_buffer[8192];
 int engine_buf_len = 0;
@@ -106,6 +113,7 @@ int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice();
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
+void reset_engine_metrics();
 
 // Clean up termios and terminate engine processes
 void gui_cleanup() {
@@ -332,13 +340,23 @@ void push_state(const BoardState *state, GuiMove m) {
     }
 }
 
+// Resets internal metric variables on new calculations
+void reset_engine_metrics() {
+    engine_nps = 0;
+    engine_score_type = -1;
+    engine_score_val = 0;
+    engine_pv[0] = '\0';
+    engine_depth = 0;
+    engine_seldepth = 0;
+    engine_time_ms = 0;
+    engine_nodes = 0;
+    engine_hashfull = 0;
+    engine_tbhits = 0;
+}
+
 // UCI Position Command Builder (With overflow prevention)
 void trigger_engine_move() {
-    engine_nps = 0; // Reset search metrics for the new calculation
-    engine_score_type = -1; // Reset evaluation point values
-    engine_score_val = 0;
-    engine_pv[0] = '\0';   // Clear previous thinking values
-    engine_depth = 0;
+    reset_engine_metrics();
 
     static char cmd[32768]; // Allocate statically to prevent stack overflows
     cmd[0] = '\0';
@@ -385,23 +403,21 @@ void process_engine_output(char *line) {
 
     // Capture nodes per second (nps) and scores from engine update lines
     if (strncmp(line, "info", 4) == 0) {
-        char *nps_ptr = strstr(line, " nps ");
-        if (nps_ptr) {
+        char *ptr;
+
+        // NPS
+        if ((ptr = strstr(line, " nps "))) {
             long long val;
-            if (sscanf(nps_ptr, " nps %lld", &val) == 1) {
-                engine_nps = val;
-            }
+            if (sscanf(ptr, " nps %lld", &val) == 1) engine_nps = val;
         }
 
-        // Parse search evaluations
-        char *score_ptr = strstr(line, " score ");
-        if (score_ptr) {
+        // Search evaluations
+        if ((ptr = strstr(line, " score "))) {
             int score_val = 0;
             char score_type[16];
-            if (sscanf(score_ptr, " score %15s %d", score_type, &score_val) == 2) {
+            if (sscanf(ptr, " score %15s %d", score_type, &score_val) == 2) {
                 if (strcmp(score_type, "cp") == 0) {
                     engine_score_type = 0;
-                    // Standardize evaluation value from White's perspective
                     engine_score_val = score_val * current_state.turn;
                 } else if (strcmp(score_type, "mate") == 0) {
                     engine_score_type = 1;
@@ -410,26 +426,51 @@ void process_engine_output(char *line) {
             }
         }
 
-        // Capture current search depth details
-        char *depth_ptr = strstr(line, " depth ");
-        if (depth_ptr) {
+        // Depth
+        if ((ptr = strstr(line, " depth "))) {
             int d = 0;
-            if (sscanf(depth_ptr, " depth %d", &d) == 1) {
-                engine_depth = d;
-            }
+            if (sscanf(ptr, " depth %d", &d) == 1) engine_depth = d;
+        }
+
+        // Seldepth
+        if ((ptr = strstr(line, " seldepth "))) {
+            int sd = 0;
+            if (sscanf(ptr, " seldepth %d", &sd) == 1) engine_seldepth = sd;
+        }
+
+        // Time
+        if ((ptr = strstr(line, " time "))) {
+            int t = 0;
+            if (sscanf(ptr, " time %d", &t) == 1) engine_time_ms = t;
+        }
+
+        // Nodes
+        if ((ptr = strstr(line, " nodes "))) {
+            long long n = 0;
+            if (sscanf(ptr, " nodes %lld", &n) == 1) engine_nodes = n;
+        }
+
+        // Hashfull
+        if ((ptr = strstr(line, " hashfull "))) {
+            int h = 0;
+            if (sscanf(ptr, " hashfull %d", &h) == 1) engine_hashfull = h;
+        }
+
+        // Tablebase Hits
+        if ((ptr = strstr(line, " tbhits "))) {
+            long long tb = 0;
+            if (sscanf(ptr, " tbhits %lld", &tb) == 1) engine_tbhits = tb;
         }
 
         // Parse the Principal Variation (PV) string
-        char *pv_ptr = strstr(line, " pv ");
-        if (pv_ptr) {
-            strncpy(engine_pv, pv_ptr + 4, sizeof(engine_pv) - 1);
+        if ((ptr = strstr(line, " pv "))) {
+            strncpy(engine_pv, ptr + 4, sizeof(engine_pv) - 1);
             engine_pv[sizeof(engine_pv) - 1] = '\0';
         }
     }
 
     if (strncmp(line, "bestmove", 8) == 0) {
         char move_str[16];
-        // Enforce safe width limits during string parse scans
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
@@ -697,7 +738,6 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m) {
     *dst = *src;
     int p = dst->board[m.from];
     
-    // Accurately pre-calculate captures before the board layout is updated
     int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
 
     dst->board[m.from] = 0;
@@ -735,7 +775,6 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m) {
 
     dst->turn = -dst->turn;
     
-    // Reset 50-move half-move rule metric strictly on pawn pushes or any captures
     if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
     else dst->halfmoves++;
     
@@ -915,9 +954,51 @@ void draw_ui() {
             }
         }
     }
+    printf("\033[K\r\n");
+
+    // 5. Prints the dynamic live Engine performance Reports Dashboard
+    if (engine_pid > 0 && engine_thinking) {
+        printf(" \033[38;5;248mEngine Reports:\033[0m ");
+        
+        // Depth
+        if (engine_seldepth > 0) {
+            printf("Depth: %d/%d", engine_depth, engine_seldepth);
+        } else {
+            printf("Depth: %d", engine_depth);
+        }
+
+        // Nodes
+        if (engine_nodes > 0) {
+            if (engine_nodes >= 1000000) {
+                printf(" | Nodes: %.2fM", (double)engine_nodes / 1000000.0);
+            } else if (engine_nodes >= 1000) {
+                printf(" | Nodes: %.1fk", (double)engine_nodes / 1000.0);
+            } else {
+                printf(" | Nodes: %lld", engine_nodes);
+            }
+        }
+
+        // Time elapsed
+        if (engine_time_ms > 0) {
+            printf(" | Time: %.2fs", (double)engine_time_ms / 1000.0);
+        }
+
+        // Hash Saturation Percentages
+        if (engine_hashfull > 0) {
+            printf(" | Hash: %.1f%%", (double)engine_hashfull / 10.0);
+        }
+
+        // Tablebase hit metrics
+        if (engine_tbhits > 0) {
+            printf(" | TB Hits: %lld", engine_tbhits);
+        }
+        printf("\033[K");
+    } else if (engine_pid > 0) {
+        printf(" \033[38;5;248mEngine Reports:\033[0m \033[38;5;243mIdle\033[0m\033[K");
+    }
     printf("\033[K");
 
-    // 5. Prints the dynamic PV thinking line from the engine right at the bottom
+    // 6. Prints the dynamic PV thinking line from the engine right at the bottom
     if (engine_pid > 0 && strlen(engine_pv) > 0) {
         printf("\r\n \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K", engine_depth, engine_pv);
     }
@@ -1021,11 +1102,7 @@ void handle_select() {
             selected_sq = -1;
             
             // Clear engine metrics and thinking lines for new human position
-            engine_nps = 0;
-            engine_score_type = -1;
-            engine_score_val = 0;
-            engine_pv[0] = '\0';
-            engine_depth = 0;
+            reset_engine_metrics();
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -1042,11 +1119,7 @@ void handle_undo() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
-    engine_nps = 0;
-    engine_score_type = -1;
-    engine_score_val = 0;
-    engine_pv[0] = '\0';
-    engine_depth = 0;
+    reset_engine_metrics();
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1061,11 +1134,7 @@ void handle_reset_board() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
-    engine_nps = 0;
-    engine_score_type = -1;
-    engine_score_val = 0;
-    engine_pv[0] = '\0';
-    engine_depth = 0;
+    reset_engine_metrics();
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
