@@ -975,27 +975,18 @@ void draw_ui() {
     // Unified single-line controls bar
     printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n");
     
-    // Prints dynamic, formatted nodes-per-second count (NPS) beside the Engine Status 
-    printf(" \033[38;5;248mEngine Status:\033[0m ");
+    // 5. Unified Engine Status & performance Reports row
+    printf(" \033[38;5;248mEngine:\033[0m ");
     if (engine_pid > 0) {
         if (engine_recvd_readyok) {
-            printf("(\033[1;32mActive - Ready (readyok)\033[0m)");
+            printf("\033[1;32mReady\033[0m");
         } else if (engine_recvd_uciok) {
-            printf("(\033[1;33mActive - Connected (uciok)\033[0m)");
+            printf("\033[1;33mConnected\033[0m");
         } else {
-            printf("(\033[1;34mActive - Handshaking...\033[0m)");
+            printf("\033[1;34mConnecting...\033[0m");
         }
 
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
-            } else if (engine_nps >= 1000) {
-                printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
-            } else {
-                printf(" | NPS: %lld", engine_nps);
-            }
-        }
-        // Format and print colorized engine point value evaluation normalized to White's perspective
+        // Eval Point Display (White's Perspective)
         if (engine_score_type == 0) {
             if (engine_score_val > 0) {
                 printf(" | \033[1;36mEval:\033[0m \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
@@ -1013,50 +1004,43 @@ void draw_ui() {
                 printf(" | \033[1;36mEval:\033[0m M0");
             }
         }
-    } else {
-        printf("(\033[1;31mUnavailable\033[0m)");
-    }
-    printf("\033[K\r\n");
 
-    // 5. Prints the dynamic live Engine performance Reports Dashboard
-    if (engine_pid > 0 && engine_thinking) {
-        printf(" \033[38;5;248mEngine Reports:\033[0m ");
-        
-        // Depth
-        if (engine_seldepth > 0) {
-            printf("Depth: %d/%d", engine_depth, engine_seldepth);
-        } else {
-            printf("Depth: %d", engine_depth);
-        }
-
-        // Nodes
-        if (engine_nodes > 0) {
-            if (engine_nodes >= 1000000) {
-                printf(" | Nodes: %.2fM", (double)engine_nodes / 1000000.0);
-            } else if (engine_nodes >= 1000) {
-                printf(" | Nodes: %.1fk", (double)engine_nodes / 1000.0);
-            } else {
-                printf(" | Nodes: %lld", engine_nodes);
+        // Live calculation report metrics
+        if (engine_thinking) {
+            // Depth
+            if (engine_depth > 0) {
+                if (engine_seldepth > 0) printf(" | Depth: %d/%d", engine_depth, engine_seldepth);
+                else                     printf(" | Depth: %d", engine_depth);
             }
+            // NPS
+            if (engine_nps > 0) {
+                if (engine_nps >= 1000000)      printf(" | NPS: %.2fM", (double)engine_nps / 1000000.0);
+                else if (engine_nps >= 1000)    printf(" | NPS: %.1fk", (double)engine_nps / 1000.0);
+                else                            printf(" | NPS: %lld", engine_nps);
+            }
+            // Absolute Nodes count
+            if (engine_nodes > 0) {
+                if (engine_nodes >= 1000000)    printf(" | Nodes: %.2fM", (double)engine_nodes / 1000000.0);
+                else if (engine_nodes >= 1000)  printf(" | Nodes: %.1fk", (double)engine_nodes / 1000.0);
+                else                            printf(" | Nodes: %lld", engine_nodes);
+            }
+            // Time elapsed
+            if (engine_time_ms > 0) {
+                printf(" | Time: %.2fs", (double)engine_time_ms / 1000.0);
+            }
+            // Hash saturation permille metrics
+            if (engine_hashfull > 0) {
+                printf(" | Hash: %.1f%%", (double)engine_hashfull / 10.0);
+            }
+            // Tablebase probe metrics
+            if (engine_tbhits > 0) {
+                printf(" | TB Hits: %lld", engine_tbhits);
+            }
+        } else {
+            printf(" | \033[38;5;243mIdle\033[0m");
         }
-
-        // Time elapsed
-        if (engine_time_ms > 0) {
-            printf(" | Time: %.2fs", (double)engine_time_ms / 1000.0);
-        }
-
-        // Hash Saturation Percentages
-        if (engine_hashfull > 0) {
-            printf(" | Hash: %.1f%%", (double)engine_hashfull / 10.0);
-        }
-
-        // Tablebase hit metrics
-        if (engine_tbhits > 0) {
-            printf(" | TB Hits: %lld", engine_tbhits);
-        }
-        printf("\033[K");
-    } else if (engine_pid > 0) {
-        printf(" \033[38;5;248mEngine Reports:\033[0m \033[38;5;243mIdle\033[0m\033[K");
+    } else {
+        printf("\033[1;31mOffline\033[0m");
     }
     printf("\033[K\r\n");
 
