@@ -1,20 +1,18 @@
 CC		:= cc
 CFLAGS 	:= -O3 -flto \
--DNNUE -DNNUE_EMBEDDED -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
+-DNO_NNUE -D__APPLE__ -march=native -DUSE_PREFETCH -DUSE_POPCNT -DUSE_NEON
 LDFLAGS := $(CFLAGS) \
 -lcurl -lm
 TARGET  := myapp
 EXCLUDE := chess5/numa.c
-SRCS    := $(filter-out $(EXCLUDE), $(wildcard chess3/*.c))
-NNUE    := nn-62ef826d1a6d.nnue
-OBJS    := $(patsubst %.c,%.o,$(SRCS)) network.o
+SRCS    := $(filter-out $(EXCLUDE), $(wildcard chess5/*.c))
+#NNUE    := nn-62ef826d1a6d.nnue
+OBJS    := $(patsubst %.c,%.o,$(SRCS)) #network.o
 all: $(OBJS)
 	$(CC) $(OBJS) $(CFLAGS) $(LDFLAGS) -o $(TARGET) 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-network.o: $(NNUE)
-	$(CC) -x c -c /dev/null -o dummy.o
-	ld -r -arch arm64 -o network.o dummy.o -sectcreate binary network_nnue $<
-	rm dummy.o
-clean:
-	rm -f $(OBJS) $(TARGET) dummy.o
+#network.o: $(NNUE)
+#	$(CC) -x c -c /dev/null -o dummy.o
+#	ld -r -arch arm64 -o network.o dummy.o -sectcreate binary network_nnue $<
+#	rm dummy.o
