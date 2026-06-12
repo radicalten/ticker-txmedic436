@@ -5,7 +5,7 @@
 #include "incbin.h"
 
 /* Embeds book.bin into raw machine code */
-INCBIN(book, "SCCT.bin");
+INCBIN(book, "CEDR25.bin");
 
 #else
 // Prevent compiler warnings for empty translation unit when disabled
