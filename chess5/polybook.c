@@ -313,8 +313,16 @@ static bool initialised = false;
 static void pb_release(PolyBook *pb)
 {
   if (pb->polyhash) {
-    unmap_file(pb->polyhash, pb->mapping);
-    pb->polyhash = NULL;
+#ifdef USE_EMBEDDED_BOOK
+    if (pb->is_embedded) {
+      pb->polyhash = NULL;
+      pb->is_embedded = false;
+    } else
+#endif
+    {
+      unmap_file(pb->polyhash, pb->mapping);
+      pb->polyhash = NULL;
+    }
   }
 }
 
@@ -340,12 +348,26 @@ void pb_init(PolyBook *pb, const char *bookfile)
 
   pb_release(pb);
 
-  FD fd = open_file(bookfile);
-  if (fd != FD_ERR) {
-    pb->keycount = file_size(fd) / 16;
-    pb->polyhash = map_file(fd, &pb->mapping);
-    close_file(fd);
+#ifdef USE_EMBEDDED_BOOK
+  if (strcmp(bookfile, "<embedded>") == 0) {
+    pb->polyhash = (const struct PolyHash *)embedded_book_data;
+    pb->keycount = (ssize_t)(embedded_book_size / 16);
+    pb->is_embedded = true;
+    printf("info string Embedded book loaded (%d moves)\n", (int)pb->keycount);
+  } else {
+    pb->is_embedded = false;
+#endif
+
+    FD fd = open_file(bookfile);
+    if (fd != FD_ERR) {
+      pb->keycount = file_size(fd) / 16;
+      pb->polyhash = map_file(fd, &pb->mapping);
+      close_file(fd);
+    }
+
+#ifdef USE_EMBEDDED_BOOK
   }
+#endif
 
   if (!pb->polyhash) {
     printf("info string Could not open %s\n", bookfile);
@@ -353,7 +375,10 @@ void pb_init(PolyBook *pb, const char *bookfile)
     return;
   }
 
-  printf("info string Book loaded: %s\n", bookfile);
+#ifdef USE_EMBEDDED_BOOK
+  if (!pb->is_embedded)
+#endif
+    printf("info string Book loaded: %s\n", bookfile);
 
   pb->enabled = true;
   pb->do_search = true;
