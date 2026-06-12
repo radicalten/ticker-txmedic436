@@ -38,6 +38,12 @@
 #include "tt.h"
 #include "uci.h"
 
+#ifdef USE_EMBEDDED_BOOK
+#define DEFAULT_BOOK_FILE "<embedded>"
+#else
+#define DEFAULT_BOOK_FILE "<empty>"
+#endif
+
 // 'On change' actions, triggered by an option's value change
 static void on_clear_hash(Option *opt)
 {
@@ -122,7 +128,7 @@ static Option optionsMap[] = {
   { "Syzygy50MoveRule", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
   { "SyzygyProbeLimit", OPT_TYPE_SPIN, 7, 0, 7, NULL, NULL, 0, NULL },
   { "SyzygyUseDTM", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
-  { "BookFile", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file, 0, NULL },
+  { "BookFile", OPT_TYPE_STRING, 0, 0, 0, DEFAULT_BOOK_FILE, on_book_file, 0, NULL },
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
   { "BestBookMove", OPT_TYPE_CHECK, 1, 0, 0, NULL, on_best_book_move, 0, NULL },
   { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL },
