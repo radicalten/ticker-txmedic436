@@ -18,7 +18,7 @@ LDFLAGS := $(CFLAGS) \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
 EXCLUDE := chess-3ds-5/nnue.c chess-3ds-5/numa.c
-SRCDIR 	:= chess-3ds-3
+SRCDIR 	:= chess-3ds-5
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
 #NNUE    := nn-62ef826d1a6d.nnue
