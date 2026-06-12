@@ -305,7 +305,7 @@ static const union {
 PolyBook polybook, polybook2;
 
 static bool useBestBookMove = false;
-static int maxBookDepth = 40;
+static int maxBookDepth = 255;
 PRNG sr;
 
 static bool initialised = false;
