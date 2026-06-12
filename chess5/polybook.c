@@ -8,7 +8,10 @@
 #include "thread.h"
 #include "types.h"
 #include "uci.h"
+
+#ifdef USE_EMBEDDED_BOOK
 #include "embedded_book.h"
+#endif
 
 struct PolyHash {
   uint64_t key;
