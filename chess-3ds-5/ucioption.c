@@ -135,7 +135,7 @@ static Option optionsMap[] = {
   { "BookFile", OPT_TYPE_STRING, 0, 0, 0, DEFAULT_BOOK_FILE, on_book_file, 0, NULL },
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
   { "BestBookMove", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_best_book_move, 0, NULL }, //balsa3750.bin bestbookmove = false, 0
-  { "BookDepth", OPT_TYPE_SPIN, 40, 1, 255, NULL, on_book_depth, 0, NULL }, //balsa3750.bin optimal depth = 40
+  { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL }, //balsa3750.bin optimal depth = 40
 #ifdef NNUE
   { "EvalFile", OPT_TYPE_STRING, 0, 0, 0, DefaultEvalFile, NULL, 0, NULL },
 #ifndef NNUE_PURE
