@@ -5,7 +5,7 @@
 #include "incbin.h"
 
 /* Embeds book.bin into raw machine code */
-INCBIN(book, "PerfectX.bin");
+INCBIN(book, "SCCT.bin");
 
 #else
 // Prevent compiler warnings for empty translation unit when disabled
