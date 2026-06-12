@@ -9,6 +9,9 @@
 #include "types.h"
 #include "uci.h"
 #include "3ds_bridge.h"
+#ifdef USE_EMBEDDED_BOOK
+#include "embedded_book.h"
+#endif
 
 struct PolyHash {
   uint64_t key;
