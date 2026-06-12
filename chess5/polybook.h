@@ -32,6 +32,7 @@ struct PolyBook {
   int search_counter;
 
   bool enabled, do_search;
+  bool is_embedded; // <-- Added to track compile-time data state
 };
 
 typedef struct PolyBook PolyBook;
