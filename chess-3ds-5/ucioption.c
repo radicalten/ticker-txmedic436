@@ -36,6 +36,12 @@
 #include "tt.h"
 #include "uci.h"
 
+#ifdef USE_EMBEDDED_BOOK
+#define DEFAULT_BOOK_FILE "<embedded>"
+#else
+#define DEFAULT_BOOK_FILE "<empty>"
+#endif
+
 static void on_clear_hash(Option *opt)
 {
   (void)opt;
@@ -126,10 +132,10 @@ static Option optionsMap[] = {
   { "Syzygy50MoveRule", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
   { "SyzygyProbeLimit", OPT_TYPE_SPIN, 7, 0, 7, NULL, NULL, 0, NULL },
   { "SyzygyUseDTM", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
-  { "BookFile", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file, 0, NULL },
+  { "BookFile", OPT_TYPE_STRING, 0, 0, 0, DEFAULT_BOOK_FILE, on_book_file, 0, NULL },
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
-  { "BestBookMove", OPT_TYPE_CHECK, 1, 0, 0, NULL, on_best_book_move, 0, NULL },
-  { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL },
+  { "BestBookMove", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_best_book_move, 0, NULL }, //balsa3750.bin bestbookmove = false, 0
+  { "BookDepth", OPT_TYPE_SPIN, 40, 1, 255, NULL, on_book_depth, 0, NULL }, //balsa3750.bin optimal depth = 40
 #ifdef NNUE
   { "EvalFile", OPT_TYPE_STRING, 0, 0, 0, DefaultEvalFile, NULL, 0, NULL },
 #ifndef NNUE_PURE
