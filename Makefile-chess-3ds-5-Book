@@ -7,7 +7,7 @@ MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mwo
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
 CFLAGS 	:= -O3 -flto \
 $(INCLUDES) $(MACHDEP) \
--DIS_32BIT -DNNUE -DNNUE_EMBEDDED
+-DIS_32BIT -DNO_NUE -DUSE_EMBEDDED_BOOK
 LDFLAGS := $(CFLAGS) \
 -specs=3dsx.specs \
 -Wl,-Map,$(TARGET).map \
@@ -17,12 +17,12 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
-EXCLUDE := chess-3ds-3/numa.c
+EXCLUDE := chess-3ds-5/nnue.c chess-3ds-5/numa.c
 SRCDIR 	:= chess-3ds-3
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
-NNUE    := nn-62ef826d1a6d.nnue
-OBJECTS = $(SOURCES:.c=.o) network.o
+#NNUE    := nn-62ef826d1a6d.nnue
+OBJECTS = $(SOURCES:.c=.o) #network.o
 
 all: $(TARGET).3dsx
 
@@ -37,12 +37,12 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-network.o: $(NNUE)
-	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
-		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
-		$< $@
+#network.o: $(NNUE)
+#	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
+#		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+#		$< $@
 
-clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
+#clean:
+#	rm -f $(TARGET).elf $(TARGET).3dsx $(TARGET).smdh $(TARGET).map $(OBJECTS)
 
-.PHONY: all clean
+#.PHONY: all clean
