@@ -13,6 +13,24 @@
 // --- ADDED FOR EMBEDDED BOOK ---
 #ifdef USE_EMBEDDED_BOOK
 #include <stdint.h>
+
+// Embed Best.bin directly into the read-only data section of polybook.o
+// "a" flag marks it allocatable (maps it to physical memory to prevent Translation Faults)
+// %progbits marks it as containing raw binary data
+__asm__(
+  ".section .rodata, \"a\", %progbits\n"
+  ".balign 8\n"
+  ".global _binary_Best_bin_start\n"
+  "_binary_Best_bin_start:\n"
+  ".incbin \"Best.bin\"\n"
+  "_binary_Best_bin_end:\n"
+  ".balign 4\n"
+  ".global _binary_Best_bin_size\n"
+  "_binary_Best_bin_size:\n"
+  ".int _binary_Best_bin_end - _binary_Best_bin_start\n"
+  ".previous\n" // Safely returns compiler to previous section (.text)
+);
+
 extern const uint8_t _binary_Best_bin_start[] __attribute__((aligned(8)));
 extern const uint32_t _binary_Best_bin_size;
 #endif
