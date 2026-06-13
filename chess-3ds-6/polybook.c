@@ -370,9 +370,14 @@ void pb_init(PolyBook *pb, const char *bookfile)
 #ifdef USE_EMBEDDED_BOOK
   // Check if we want to use the embedded Best.bin file
   if (strcmp(bookfile, "<embedded>") == 0) {
-    // Read the explicit size variable (100% LTO safe!)
     size_t book_size = (size_t)_binary_Best_bin_size;
-    if (book_size == 0) {
+    
+    // PRINT DIAGNOSTICS TO SCREEN
+    printf("info string [BOOK DEBUG] Address: %p | Size: %u bytes\n", 
+           (void*)_binary_Best_bin_start, (unsigned int)book_size);
+
+    if (book_size == 0 || _binary_Best_bin_start == NULL) {
+      printf("info string [BOOK ERROR] Book is empty or unmapped!\n");
       pb->enabled = false;
       return;
     }
