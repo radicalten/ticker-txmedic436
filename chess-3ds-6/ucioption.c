@@ -78,14 +78,14 @@ static void on_large_pages(Option *opt)
 
 static void on_book_file(Option *opt)
 {
-  if (opt->valString && strcmp(opt->valString, "<empty>") != 0 && strlen(opt->valString) > 0) {
+  if (opt->valString) {
     pb_init(&polybook, opt->valString);
   }
 }
 
 static void on_book_file2(Option *opt)
 {
-  if (opt->valString && strcmp(opt->valString, "<empty>") != 0 && strlen(opt->valString) > 0) {
+  if (opt->valString) {
     pb_init(&polybook2, opt->valString);
   }
 }
@@ -126,8 +126,14 @@ static Option optionsMap[] = {
   { "Syzygy50MoveRule", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
   { "SyzygyProbeLimit", OPT_TYPE_SPIN, 7, 0, 7, NULL, NULL, 0, NULL },
   { "SyzygyUseDTM", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
+// --- UPDATED FOR EMBEDDED BOOK DEFAULT ---
+#ifdef USE_EMBEDDED_BOOK
+  { "BookFile", OPT_TYPE_STRING, 0, 0, 0, "<embedded>", on_book_file, 0, NULL },
+#else
   { "BookFile", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file, 0, NULL },
+#endif
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
+// ----------------------------------------
   { "BestBookMove", OPT_TYPE_CHECK, 1, 0, 0, NULL, on_best_book_move, 0, NULL },
   { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL },
 #ifdef NNUE
@@ -137,7 +143,7 @@ static Option optionsMap[] = {
     "Hybrid var Hybrid var Pure var Classical", NULL, 0, NULL },
 #endif
 #endif
-  { "LargePages", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_large_pages, 0, NULL }, // Patched default LargePages to 0 (Disabled)
+  { "LargePages", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_large_pages, 0, NULL },
   { "NUMA", OPT_TYPE_STRING, 0, 0, 0, "all", on_numa, 0, NULL },
   { 0 }
 };
