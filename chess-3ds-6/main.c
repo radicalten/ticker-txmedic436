@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE 0x8000 // 32KB = 3DS page size
+#define ENGINE_STACK_SIZE (4 * 1024) // size from DKP 3ds-examples threads 
 
 // Handshake state machine definitions
 typedef enum {
