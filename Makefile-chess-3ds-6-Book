@@ -3,7 +3,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-BIN2O 				:= bin2o
+OBJCOPY				:= $(DEVKITARM)/bin/arm-none-eabi-objcopy
 
 MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
@@ -41,4 +41,5 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 %.bin.o: %.bin
-	$(BIN2O) $<
+	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
+	--rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
