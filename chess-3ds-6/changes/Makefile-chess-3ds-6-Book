@@ -1,0 +1,45 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/3ds_rules
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+OBJCOPY				:= $(DEVKITARM)/bin/arm-none-eabi-objcopy
+
+MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
+INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
+CFLAGS 	:= -O3 -flto \
+$(INCLUDES) $(MACHDEP) \
+-DIS_32BIT -DNO_NNUE -DUSE_EMBEDDED_BOOK
+LDFLAGS := $(CFLAGS) \
+-specs=3dsx.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/3ds/lib \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libctru/lib \
+-L/opt/devkitpro/libctru/lib/3ds \
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+TARGET  := myapp
+EXCLUDE := chess-3ds-6/nnue.c chess-3ds-6/numa.c 
+SRCDIR 	:= chess-3ds-6
+C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
+SOURCES = $(C_SOURCES) 
+BOOK	 := Best.bin
+BOOK_OBJ := $(BOOK).o
+OBJECTS = $(SOURCES:.c=.o) $(BOOK_OBJ)
+
+all: $(TARGET).3dsx
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into 3DSX (requires devkitPro tools)
+$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
+	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+%.bin.o: %.bin
+	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
+	--rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
