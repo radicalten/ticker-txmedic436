@@ -1,0 +1,57 @@
+.SUFFIXES:
+export DEVKITPRO 	:= /opt/devkitpro
+export DEVKITARM	:= $(DEVKITPRO)/devkitARM
+include $(DEVKITARM)/3ds_rules
+CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+OBJCOPY				:= $(DEVKITARM)/bin/arm-none-eabi-objcopy
+
+MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
+INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
+CFLAGS 	:= -O3 \
+$(INCLUDES) $(MACHDEP) \
+-DIS_32BIT -DNO_NNUE -DUSE_EMBEDDED_BOOK
+LDFLAGS := $(CFLAGS) \
+-specs=3dsx.specs \
+-Wl,-Map,$(TARGET).map \
+-L/opt/devkitpro/portlibs/3ds/lib \
+-L/opt/devkitpro/portlibs/arm-none-eabi/lib \
+-L/opt/devkitpro/libctru/lib \
+-L/opt/devkitpro/libctru/lib/3ds \
+-lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
+TARGET  := myapp
+EXCLUDE := chess-3ds-6/nnue.c chess-3ds-6/numa.c 
+SRCDIR 	:= chess-3ds-6
+C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
+SOURCES = $(C_SOURCES) 
+BOOK	 := Best.bin
+BOOK_OBJ := $(BOOK).o
+OBJECTS = $(SOURCES:.c=.o) $(BOOK_OBJ)
+
+all: $(TARGET).3dsx
+
+# Build ELF
+$(TARGET).elf: $(OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+# Package ELF into 3DSX (requires devkitPro tools)
+$(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
+	3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=$(TARGET).smdh
+
+%.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+# Hard-coded rules for compiling .bin.o with forced 8-byte alignment & LTO-safe size variable
+%.bin.o: %.bin
+	@echo "Embedding $< with hardware-safe 8-byte alignment..."
+	@echo ".section .rodata" > $*.s
+	@echo ".balign 8" >> $*.s
+	@echo ".global _binary_$*_bin_start" >> $*.s
+	@echo "_binary_$*_bin_start:" >> $*.s
+	@echo ".incbin \"$<\"" >> $*.s
+	@echo "_binary_$*_bin_end:" >> $*.s
+	@echo ".global _binary_$*_bin_size" >> $*.s
+	@echo ".balign 4" >> $*.s
+	@echo "_binary_$*_bin_size:" >> $*.s
+	@echo ".int _binary_$*_bin_end - _binary_$*_bin_start" >> $*.s
+	$(CC) -c $*.s -o $@
+	@rm $*.s
