@@ -40,6 +40,16 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# Hard-coded rules for compiling .bin.o with forced 8-byte alignment
+# This dynamically generates an assembly wrapper to prevent ARMv6 alignment crashes.
 %.bin.o: %.bin
-	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
-	--rename-section .data=.rodata,alloc,load,readonly,data,contents $< $@
+	@echo "Embedding $< with hardware-safe 8-byte alignment..."
+	@echo ".section .rodata" > $*.s
+	@echo ".balign 8" >> $*.s
+	@echo ".global _binary_$*_bin_start" >> $*.s
+	@echo ".global _binary_$*_bin_end" >> $*.s
+	@echo "_binary_$*_bin_start:" >> $*.s
+	@echo ".incbin \"$<\"" >> $*.s
+	@echo "_binary_$*_bin_end:" >> $*.s
+	$(CC) -c $*.s -o $@
+	@rm $*.s
