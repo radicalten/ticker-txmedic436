@@ -7,6 +7,14 @@
 #include "misc.h"
 #include "position.h"
 
+// --- ADDED FOR EMBEDDED BOOK ---
+#ifdef USE_EMBEDDED_BOOK
+#include <stdint.h>
+extern const uint8_t _binary_Best_bin_start[];
+extern const uint8_t _binary_Best_bin_end[];
+#endif
+// -------------------------------
+
 struct PolyBook {
   ssize_t keycount;
   const struct PolyHash *polyhash;
