@@ -4,8 +4,10 @@
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE
 #include "incbin.h"
 
+#ifndef __3DS__
 /* Embeds book.bin into raw machine code */
 INCBIN(book, "Best.bin");
+#endif
 
 #else
 // Prevent compiler warnings for empty translation unit when disabled
