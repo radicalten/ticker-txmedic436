@@ -9,7 +9,11 @@
 #ifndef INCBIN_HDR
 #define INCBIN_HDR
 #include <limits.h>
-#if   defined(__AVX512BW__) || \
+
+#if defined(__3DS__)
+/* FORCE 16-BYTE ALIGNMENT ON 3DS TO PREVENT ARM UNALIGNED MEMORY ACCESS FAULTS */
+# define INCBIN_ALIGNMENT_INDEX 4
+#elif defined(__AVX512BW__) || \
       defined(__AVX512CD__) || \
       defined(__AVX512DQ__) || \
       defined(__AVX512ER__) || \
@@ -25,7 +29,7 @@
       defined(__SSE3__)     || \
       defined(__SSSE3__)    || \
       defined(__SSE4_1__)   || \
-      defined(__SSE4_2__)   || \
+      defined(__SSE4_2__)     || \
       defined(__neon__)
 # define INCBIN_ALIGNMENT_INDEX 4
 #elif ULONG_MAX != 0xffffffffu
@@ -217,7 +221,7 @@
                 INCBIN_STYLE_IDENT, \
                 TYPE)))
 
-/* Fixed END pointer bug: changed pointer variable declaration to raw array */
+/* Fixed END pointer bug: changed pointer variable declaration to raw label array [] */
 #define INCBIN_EXTERN(NAME) \
     INCBIN_EXTERNAL const INCBIN_ALIGN unsigned char \
         INCBIN_CONCATENATE( \
