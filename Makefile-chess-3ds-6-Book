@@ -3,6 +3,8 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
+BIN2O				:= $(DEVKITPRO)/tools/bin/bin2o
+
 MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
 CFLAGS 	:= -O3 -flto \
@@ -22,7 +24,8 @@ SRCDIR 	:= chess-3ds-6
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
 BOOK	 := Best.bin
-OBJECTS = $(SOURCES:.c=.o) 
+BOOK_OBJ := $(BOOK).o
+OBJECTS = $(SOURCES:.c=.o) $(BOOK_OBJ)
 
 all: $(TARGET).3dsx
 
@@ -36,3 +39,6 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
+
+%.bin.o: %.bin
+	$(BIN2O) $<
