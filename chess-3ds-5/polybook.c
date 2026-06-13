@@ -1,6 +1,8 @@
 /* polybook.c from BrainFish, Copyright (C) 2016-2017 Thomas Zipproth */
 
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 
 #include "misc.h"
 #include "movegen.h"
@@ -351,10 +353,24 @@ void pb_init(PolyBook *pb, const char *bookfile)
 
 #ifdef USE_EMBEDDED_BOOK
   if (strcmp(bookfile, "<embedded>") == 0) {
+#ifdef __3DS__
+    /* 3DS-Specific Safety Boundary Checks */
+    if (embedded_book_data == NULL || embedded_book_size == 0 || (embedded_book_size % 16) != 0) {
+      printf("info string ERROR: Embedded book is missing, empty, or corrupt! (Size: %u bytes)\n", embedded_book_size);
+      pb->enabled = false;
+      return;
+    }
+#endif
+
     pb->polyhash = (const struct PolyHash *)embedded_book_data;
     pb->keycount = (ssize_t)(embedded_book_size / 16);
     pb->is_embedded = true;
+
+#ifdef __3DS__
+    printf("info string Embedded book loaded safely at %p (%d moves)\n", (void*)embedded_book_data, (int)pb->keycount);
+#else
     printf("info string Embedded book loaded (%d moves)\n", (int)pb->keycount);
+#endif
   } else {
     pb->is_embedded = false;
 #endif
@@ -510,6 +526,13 @@ static Move pg_move_to_sf_move(const Position *pos, uint16_t pg_move)
 
 static int find_first_key(PolyBook *pb, uint64_t key)
 {
+#ifdef __3DS__
+  /* 3DS-Specific Crash Prevention: Safely exit binary search if pointer bounds are unmapped */
+  if (!pb->polyhash || pb->keycount <= 0) {
+    return -1;
+  }
+#endif
+
   pb->index_first = -1;
   pb->index_count = 0;
   pb->index_weight_count = 0;
@@ -521,6 +544,13 @@ static int find_first_key(PolyBook *pb, uint64_t key)
 
   do {
     ssize_t mid = (end + start) / 2;
+
+#ifdef __3DS__
+    /* 3DS-Specific Array-Bound Verification */
+    if (mid >= pb->keycount || mid < 0) {
+      break;
+    }
+#endif
 
     if (from_be_u64(pb->polyhash[mid].key) < key)
       start = mid;
@@ -534,7 +564,11 @@ static int find_first_key(PolyBook *pb, uint64_t key)
     }
   } while (end - start > 8);
 
-  for (ssize_t i = start; i < end; i++)
+  for (ssize_t i = start; i < end; i++) {
+#ifdef __3DS__
+    if (i >= pb->keycount || i < 0) break;
+#endif
+
     if (key == from_be_u64(pb->polyhash[i].key)) {
       pb->index_first = i;
       while (   pb->index_first > 0
@@ -542,12 +576,20 @@ static int find_first_key(PolyBook *pb, uint64_t key)
         pb->index_first--;
       return get_key_data(pb);
     }
+  }
 
   return -1;
 }
 
 static int get_key_data(PolyBook *pb)
 {
+#ifdef __3DS__
+  /* 3DS-Specific Crash Prevention: Validate initial data indexes before reading */
+  if (pb->index_first < 0 || pb->index_first >= pb->keycount) {
+    return -1;
+  }
+#endif
+
   int best_weight = from_be_u16(pb->polyhash[pb->index_first].weight);
   pb->index_weight_count = best_weight;
   uint64_t key = pb->polyhash[pb->index_first].key;
@@ -572,6 +614,10 @@ static int get_key_data(PolyBook *pb)
   pb->index_rand = pb->index_best;
 
   for (ssize_t i = pb->index_first; i < pb->index_first + pb->index_count; i++) {
+#ifdef __3DS__
+    if (i >= pb->keycount) break;
+#endif
+
     if (   rand_pos >= weight_count
         && rand_pos < weight_count + from_be_u16(pb->polyhash[i].weight))
     {
@@ -598,7 +644,7 @@ static bool check_do_search(PolyBook *pb, const Position *pos)
                     || pb->akt_anz_pieces < pb->last_anz_pieces - 2
                     || raw_key() == 0xB4D30CD15A43432D;
 
-  // Reset do_search and book depth counter if postion changed more
+  // Reset do_search and book depth counter if position changed more
   // than one move can do or in initial position
   if (pos_changed) {
     pb->book_depth_count = 0;
