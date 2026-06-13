@@ -32,31 +32,9 @@
 #include "uci.h"
 #include "tbprobe.h"
 
-#ifdef USE_EMBEDDED_BOOK
-#include "embedded_book.h"
-#endif
-
-/* 
- * FIX: Explicitly declare pb_free to resolve the "implicit declaration" 
- * compiler error, bypassing any duplicate or missing header issues.
- */
-extern void pb_free(void);
-
 int main_stockfish(int argc, char **argv)
 {
   print_engine_info(false);
-
-#if defined(__3DS__) && defined(USE_EMBEDDED_BOOK)
-  /* Diagnostic Boot Message for the 3DS console screen */
-  printf("info string 3DS Compiled with USE_EMBEDDED_BOOK\n");
-  if (embedded_book_data != NULL && embedded_book_size > 0) {
-      printf("info string Embedded book linked successfully! Size: %u KB (%d moves)\n", 
-             embedded_book_size / 1024, 
-             (int)(embedded_book_size / 16));
-  } else {
-      printf("info string WARNING: USE_EMBEDDED_BOOK is set, but book data is empty/null!\n");
-  }
-#endif
 
   psqt_init();
   bitboards_init();
@@ -75,7 +53,7 @@ int main_stockfish(int argc, char **argv)
   TB_free();
   options_free();
   tt_free();
-  pb_free(); // compiler will now safely find the prototype we declared above
+  pb_free();
   #ifdef NNUE
   nnue_free();
   #endif
