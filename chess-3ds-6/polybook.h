@@ -10,8 +10,8 @@
 // --- ADDED FOR EMBEDDED BOOK ---
 #ifdef USE_EMBEDDED_BOOK
 #include <stdint.h>
-extern const uint8_t _binary_Best_bin_start[] __attribute__((aligned(8)));
-extern const uint32_t _binary_Best_bin_size;
+extern const uint8_t _binary_Best_bin_start[] __attribute__((aligned(8), used));
+extern const uint32_t _binary_Best_bin_size __attribute__((used));
 #endif
 // -------------------------------
 
