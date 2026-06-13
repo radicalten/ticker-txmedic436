@@ -1,50 +1,26 @@
-/* polybook.h from BrainFish, Copyright (C) 2016-2017 Thomas Zipproth */
+#ifndef EMBEDDED_BOOK_H
+#define EMBEDDED_BOOK_H
 
-#ifndef POLYBOOK_H_INCLUDED
-#define POLYBOOK_H_INCLUDED
-
-#include "bitboard.h"
-#include "misc.h"
-#include "position.h"
-
-struct PolyBook {
-  ssize_t keycount;
-  const struct PolyHash *polyhash;
-
-  map_t mapping;
-
-//  int use_best_book_move;
-//  int max_book_depth;
-  int book_depth_count;
-
-  ssize_t index_first;
-  int index_count;
-  ssize_t index_best;
-  ssize_t index_rand;
-  int index_weight_count;
-
-//  PRNG sr;
-
-  Bitboard last_position;
-  Bitboard akt_position;
-  int last_anz_pieces;
-  int akt_anz_pieces;
-  int search_counter;
-
-  bool enabled, do_search;
 #ifdef USE_EMBEDDED_BOOK
-  bool is_embedded; // Only tracked when embedding feature is active
+
+#ifdef __cplusplus
+extern "C" {
 #endif
-};
 
-typedef struct PolyBook PolyBook;
+extern const unsigned char embedded_book_data[];
 
-extern PolyBook polybook, polybook2;
-
-void pb_init(PolyBook *pb, const char *bookfile);
-void pb_free(void);
-void pb_set_best_book_move(bool best_book_move);
-void pb_set_book_depth(int book_depth);
-Move pb_probe(PolyBook *pb, Position *pos);
-
+#if defined(__3DS__)
+/* 3DS Specific: Use linker symbol subtraction to prevent size evaluation crashes */
+extern const unsigned char embedded_book_end[];
+#define embedded_book_size ((unsigned int)(embedded_book_end - embedded_book_data))
+#else
+/* Non-3DS standard fallback */
+extern const unsigned int embedded_book_size;
 #endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // USE_EMBEDDED_BOOK
+#endif // EMBEDDED_BOOK_H
