@@ -23,7 +23,7 @@ C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)
 SOURCES = $(C_SOURCES) 
 BOOK	 := Best.bin
 #NNUE    := nn-62ef826d1a6d.nnue
-OBJECTS = $(SOURCES:.c=.o) book.o #network.o
+OBJECTS = $(SOURCES:.c=.o) embedded_book.o #network.o
 
 all: $(TARGET).3dsx
 
@@ -38,7 +38,7 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-book.o: $(BOOK)
+embedded_book.o: $(BOOK)
 	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
 		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
 		$< $@
