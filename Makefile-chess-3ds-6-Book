@@ -3,11 +3,9 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-OBJCOPY				:= $(DEVKITARM)/bin/arm-none-eabi-objcopy
-
 MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
-CFLAGS 	:= -O3 -flto \
+CFLAGS 	:= -O2 \
 $(INCLUDES) $(MACHDEP) \
 -DIS_32BIT -DNO_NNUE -DUSE_EMBEDDED_BOOK
 LDFLAGS := $(CFLAGS) \
