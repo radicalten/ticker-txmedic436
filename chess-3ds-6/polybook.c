@@ -10,6 +10,14 @@
 #include "uci.h"
 #include "3ds_bridge.h"
 
+// --- ADDED FOR EMBEDDED BOOK ---
+#ifdef USE_EMBEDDED_BOOK
+#include <stdint.h>
+extern const uint8_t _binary_Best_bin_start[];
+extern const uint8_t _binary_Best_bin_end[];
+#endif
+// -------------------------------
+
 struct PolyHash {
   uint64_t key;
   uint16_t move;
@@ -310,7 +318,9 @@ static bool initialised = false;
 static void pb_release(PolyBook *pb)
 {
   if (pb->polyhash) {
+#ifndef USE_EMBEDDED_BOOK
     unmap_file(pb->polyhash, pb->mapping);
+#endif
     pb->polyhash = NULL;
   }
 }
@@ -330,6 +340,26 @@ void pb_init(PolyBook *pb, const char *bookfile)
     initialised = true;
   }
 
+#ifdef USE_EMBEDDED_BOOK
+  (void)bookfile; // Ignore parameter since we use embedded data
+  pb_release(pb);
+
+  // Compute size dynamically
+  size_t book_size = (size_t)(_binary_Best_bin_end - _binary_Best_bin_start);
+  if (book_size == 0) {
+    pb->enabled = false;
+    return;
+  }
+
+  pb->keycount = book_size / sizeof(struct PolyHash);
+  pb->polyhash = (const struct PolyHash *)_binary_Best_bin_start;
+
+  printf("info string Embedded book loaded (%d entries)\n", (int)pb->keycount);
+
+  pb->enabled = true;
+  pb->do_search = true;
+
+#else
   if (!bookfile || strlen(bookfile) == 0 || strcmp(bookfile, "<empty>") == 0) {
     pb->enabled = false;
     return;
@@ -354,6 +384,7 @@ void pb_init(PolyBook *pb, const char *bookfile)
 
   pb->enabled = true;
   pb->do_search = true;
+#endif
 }
 
 void pb_set_best_book_move(bool best_book_move)
@@ -569,7 +600,7 @@ static bool check_do_search(PolyBook *pb, const Position *pos)
                     || pb->akt_anz_pieces < pb->last_anz_pieces - 2
                     || raw_key() == 0xB4D30CD15A43432D;
 
-  // Reset do_search and book depth counter if postion changed more
+  // Reset do_search and book depth counter if position changed more
   // than one move can do or in initial position
   if (pos_changed) {
     pb->book_depth_count = 0;
