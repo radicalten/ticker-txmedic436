@@ -36,6 +36,12 @@
 #include "embedded_book.h"
 #endif
 
+/* 
+ * FIX: Explicitly declare pb_free to resolve the "implicit declaration" 
+ * compiler error, bypassing any duplicate or missing header issues.
+ */
+extern void pb_free(void);
+
 int main_stockfish(int argc, char **argv)
 {
   print_engine_info(false);
@@ -69,7 +75,7 @@ int main_stockfish(int argc, char **argv)
   TB_free();
   options_free();
   tt_free();
-  pb_free();
+  pb_free(); // compiler will now safely find the prototype we declared above
   #ifdef NNUE
   nnue_free();
   #endif
