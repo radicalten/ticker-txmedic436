@@ -12,7 +12,6 @@ jobs:
       uses: actions/checkout@v6
     - name: Compile
       run: |
-        sudo dkp-pacman -Ql
         make -f Makefile-chess-3ds-6-Book
     - name: Upload
       uses: actions/upload-artifact@v6
