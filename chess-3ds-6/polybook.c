@@ -340,33 +340,35 @@ void pb_init(PolyBook *pb, const char *bookfile)
     initialised = true;
   }
 
-#ifdef USE_EMBEDDED_BOOK
-  (void)bookfile; // Ignore parameter since we use embedded data
-  pb_release(pb);
-
-  // Compute size dynamically
-  size_t book_size = (size_t)(_binary_Best_bin_end - _binary_Best_bin_start);
-  if (book_size == 0) {
-    pb->enabled = false;
-    return;
-  }
-
-  pb->keycount = book_size / sizeof(struct PolyHash);
-  pb->polyhash = (const struct PolyHash *)_binary_Best_bin_start;
-
-  printf("info string Embedded book loaded (%d entries)\n", (int)pb->keycount);
-
-  pb->enabled = true;
-  pb->do_search = true;
-
-#else
+  // If set to empty, disable and release memory
   if (!bookfile || strlen(bookfile) == 0 || strcmp(bookfile, "<empty>") == 0) {
+    pb_release(pb);
     pb->enabled = false;
     return;
   }
 
   pb_release(pb);
 
+#ifdef USE_EMBEDDED_BOOK
+  // Check if we want to use the embedded Best.bin file
+  if (strcmp(bookfile, "<embedded>") == 0) {
+    size_t book_size = (size_t)(_binary_Best_bin_end - _binary_Best_bin_start);
+    if (book_size == 0) {
+      pb->enabled = false;
+      return;
+    }
+
+    pb->keycount = book_size / sizeof(struct PolyHash);
+    pb->polyhash = (const struct PolyHash *)_binary_Best_bin_start;
+
+    printf("info string Embedded book loaded (%d entries)\n", (int)pb->keycount);
+    pb->enabled = true;
+    pb->do_search = true;
+    return;
+  }
+#endif
+
+  // Fallback / Standard: Load external file from SD card
   FD fd = open_file(bookfile);
   if (fd != FD_ERR) {
     pb->keycount = file_size(fd) / 16;
@@ -381,10 +383,8 @@ void pb_init(PolyBook *pb, const char *bookfile)
   }
 
   printf("info string Book loaded: %s\n", bookfile);
-
   pb->enabled = true;
   pb->do_search = true;
-#endif
 }
 
 void pb_set_best_book_move(bool best_book_move)
