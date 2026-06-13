@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE (256 * 1024) // size used in 3ds_bridge.c
+#define ENGINE_STACK_SIZE (256 * 1024) // formerly 0x8000 or 32768b size used in 3ds_bridge.c is = 256x1024 = 262144b = 256kb 
 
 // Handshake state machine definitions
 typedef enum {
