@@ -313,6 +313,13 @@
             INCBIN_CONCATENATE(INCBIN_PREFIX, NAME), \
             INCBIN_STYLE_IDENT(SIZE))
 
+/* Prevent compiler state/section corruption on 3DS (devkitARM) */
+#if defined(__3DS__)
+#  define INCBIN_RESTORE_SECTION ".previous\n"
+#else
+#  define INCBIN_RESTORE_SECTION ".text\n"
+#endif
+
 /**
  * @brief Include a binary file into the current translation unit.
  *
@@ -360,7 +367,7 @@
                 INCBIN_INT INCBIN_MANGLE INCBIN_STRINGIZE(INCBIN_PREFIX) #NAME INCBIN_STYLE_STRING(END) " - " \
                            INCBIN_MANGLE INCBIN_STRINGIZE(INCBIN_PREFIX) #NAME INCBIN_STYLE_STRING(DATA) "\n" \
             INCBIN_ALIGN_HOST \
-            ".text\n" \
+            INCBIN_RESTORE_SECTION \
     ); \
     INCBIN_EXTERN(NAME)
 
