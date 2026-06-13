@@ -117,7 +117,7 @@ static Option optionsMap[] = {
   { "Analysis Contempt", OPT_TYPE_COMBO, 0, 0, 0,
     "Off var Off var White var Black", NULL, 0, NULL },
   { "Threads", OPT_TYPE_SPIN, 1, 1, MAX_THREADS, NULL, on_threads, 0, NULL },
-  { "Hash", OPT_TYPE_SPIN, 8, 1, MAXHASHMB, NULL, on_hash_size, 0, NULL }, //Reduced from 16 to 8MB because 16MB + book = crash on 3DS hardware
+  { "Hash", OPT_TYPE_SPIN, 16, 1, MAXHASHMB, NULL, on_hash_size, 0, NULL }, 
   { "Clear Hash", OPT_TYPE_BUTTON, 0, 0, 0, NULL, on_clear_hash, 0, NULL },
   { "Ponder", OPT_TYPE_CHECK, 0, 0, 0, NULL, NULL, 0, NULL },
   { "MultiPV", OPT_TYPE_SPIN, 1, 1, 500, NULL, NULL, 0, NULL },
@@ -134,8 +134,8 @@ static Option optionsMap[] = {
   { "SyzygyUseDTM", OPT_TYPE_CHECK, 1, 0, 0, NULL, NULL, 0, NULL },
   { "BookFile", OPT_TYPE_STRING, 0, 0, 0, DEFAULT_BOOK_FILE, on_book_file, 0, NULL },
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
-  { "BestBookMove", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_best_book_move, 0, NULL }, //balsa3750.bin bestbookmove = false, 0
-  { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL }, //balsa3750.bin optimal depth = 40
+  { "BestBookMove", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_best_book_move, 0, NULL }, //bestbookmove = false, 0
+  { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL }, //optimal depth = 1-255
 #ifdef NNUE
   { "EvalFile", OPT_TYPE_STRING, 0, 0, 0, DefaultEvalFile, NULL, 0, NULL },
 #ifndef NNUE_PURE
