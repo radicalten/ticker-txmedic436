@@ -3,7 +3,7 @@ export DEVKITPRO 	:= /opt/devkitpro
 export DEVKITARM	:= $(DEVKITPRO)/devkitARM
 include $(DEVKITARM)/3ds_rules
 CC 					:= $(DEVKITARM)/bin/arm-none-eabi-gcc
-BIN2O				:= $(DEVKITPRO)/tools/bin/bin2o
+BIN2O 				:= bin2o
 
 MACHDEP := -D__3DS__ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations -ffunction-sections
 INCLUDES += -I/opt/devkitpro/portlibs/3ds/include -I/opt/devkitpro/portlibs/arm-none-eabi/include -I/opt/devkitpro/libctru/include
