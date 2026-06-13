@@ -17,12 +17,13 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libctru/lib/3ds \
 -lcurl -lz -lmbedtls -lmbedcrypto -lmbedx509 -lctru -lm
 TARGET  := myapp
-EXCLUDE := chess-3ds-5/nnue.c chess-3ds-5/numa.c
+EXCLUDE := chess-3ds-5/nnue.c chess-3ds-5/numa.c chess-3ds-5/embedded_book.c
 SRCDIR 	:= chess-3ds-5
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
+BOOK	 := Best.bin
 #NNUE    := nn-62ef826d1a6d.nnue
-OBJECTS = $(SOURCES:.c=.o) #network.o
+OBJECTS = $(SOURCES:.c=.o) book.o #network.o
 
 all: $(TARGET).3dsx
 
@@ -36,6 +37,11 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
+
+book.o: $(BOOK)
+	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$< $@
 
 #network.o: $(NNUE)
 #	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
