@@ -21,7 +21,7 @@ EXCLUDE := chess-3ds-5/nnue.c chess-3ds-5/numa.c
 SRCDIR 	:= chess-3ds-5
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
-#BOOK	 := Best.bin
+BOOK	 := Best.bin
 #NNUE    := nn-62ef826d1a6d.nnue
 OBJECTS = $(SOURCES:.c=.o) #embedded_book.o #network.o
 
@@ -38,10 +38,10 @@ $(TARGET).3dsx: $(TARGET).elf $(TARGET).smdh
 %.o: %.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-#embedded_book.o: $(BOOK)
-#	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
-#		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
-#		$< $@
+embedded_book.o: $(BOOK)
+	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$< $@
 
 #network.o: $(NNUE)
 #	$(OBJCOPY) -I binary -O elf32-littlearm -B arm \
