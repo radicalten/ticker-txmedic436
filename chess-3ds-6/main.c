@@ -265,7 +265,7 @@ void process_engine_output(char *line) {
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
             // Memory Optimization: Higher Hash = Higher elo. 1HV = 1MB, 128MB 3DS, 64MB crashes, 32MB crashes, 16MB works
-            sf_send_command("setoption name Hash value 16"); 
+            sf_send_command("setoption name Hash value 8"); 
             // Explicitly disable pondering to optimize battery and CPU usage
             sf_send_command("setoption name Ponder value false");
             
