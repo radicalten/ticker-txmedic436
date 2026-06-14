@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE (8 * 1024 * 1024) //  testing 8MB thread size due to linux using 8MB size | formerly 0x8000 or 32768b size used in 3ds_bridge.c is = 256x1024 = 262144b = 256kb 
+#define ENGINE_STACK_SIZE (4 * 1024) // DevkitPro 3DS Examples thread uses 4kb 4*1024 size
 
 // Handshake state machine definitions
 typedef enum {
