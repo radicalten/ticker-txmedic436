@@ -30,8 +30,8 @@ __asm__(
 );
 
 // __attribute__((used)) guarantees LTO does not optimize away these symbols
-extern const uint8_t _binary_Best_bin_start[] __attribute__((aligned(8), used));
-extern const uint32_t _binary_Best_bin_size __attribute__((used));
+extern const uint8_t _binary_Best_bin_start[] __attribute__((aligned(8)));
+extern const uint32_t _binary_Best_bin_size;
 #endif
 // ----------------------------------------------
 
