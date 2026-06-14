@@ -172,7 +172,7 @@ static void thread_create(int idx)
   __sync_synchronize();
 
   pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 256 * 1024);
+  pthread_attr_setstacksize(&attr, 4 * 1024); //changed from 256*1024 to 4*1024
   
   if (pthread_create(&thread, &attr, thread_init, (void *)(intptr_t)idx) != 0) {
     printf("\x1b[1;31m[ERROR] Failed to spawn pthread for Thread %d!\x1b[0m\n", idx);
