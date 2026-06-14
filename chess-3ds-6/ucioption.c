@@ -134,7 +134,7 @@ static Option optionsMap[] = {
 #endif
   { "BookFile2", OPT_TYPE_STRING, 0, 0, 0, "<empty>", on_book_file2, 0, NULL },
 // ----------------------------------------
-  { "BestBookMove", OPT_TYPE_CHECK, 1, 0, 0, NULL, on_best_book_move, 0, NULL },
+  { "BestBookMove", OPT_TYPE_CHECK, 0, 0, 0, NULL, on_best_book_move, 0, NULL },
   { "BookDepth", OPT_TYPE_SPIN, 255, 1, 255, NULL, on_book_depth, 0, NULL },
 #ifdef NNUE
   { "EvalFile", OPT_TYPE_STRING, 0, 0, 0, DefaultEvalFile, NULL, 0, NULL },
