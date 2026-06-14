@@ -63,7 +63,9 @@ struct ThreadPool {
   int numThreads;
   LightLock mutex;
   volatile bool initializing;
-  bool searching, sleeping, stopOnPonderhit;
+  volatile bool searching;
+  volatile bool sleeping;
+  volatile bool stopOnPonderhit;
   atomic_bool ponder, stop, increaseDepth;
   LOCK_T lock;
 };
