@@ -7,7 +7,7 @@
 #include "3ds_bridge.h"
 
 #define MAX_HISTORY 2048
-#define ENGINE_STACK_SIZE 0x8000 // 32KB = 3DS page size
+#define ENGINE_STACK_SIZE (8 * 1024) // 8*1024 =8kb, 32*1024 = 32KB = 3DS page size
 
 // Handshake state machine definitions
 typedef enum {
@@ -265,7 +265,7 @@ void process_engine_output(char *line) {
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
             // Memory Optimization: Higher Hash = Higher elo. 1HV = 1MB, 128MB 3DS, 64MB crashes, 32MB crashes, 16MB works
-            sf_send_command("setoption name Hash value 4"); 
+            sf_send_command("setoption name Hash value 1"); 
             // Explicitly disable pondering to optimize battery and CPU usage
             sf_send_command("setoption name Ponder value false");
             
