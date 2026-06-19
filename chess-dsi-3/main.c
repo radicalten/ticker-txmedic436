@@ -584,17 +584,14 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Uses robust, standard 16-color ANSI sequence colors in 2x2 spacing)
+// Draw the Top Screen Board (Centered vertically and horizontally on 32x24 grid)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
-    printf("\n\n\n"); // Vertical padding
+    printf("\n\n\n"); // Vertical Centering Padding (3 empty lines)
 
-    if (board_orientation == 1) {
-        printf("    a b c d e f g h\n");
-    } else {
-        printf("    h g f e d c b a\n");
-    }
+    // Indent exactly 5 spaces on coordinate lines to achieve horizontal centering
+    printf("         a b c d e f g h\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -609,6 +606,9 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
+            // Indent exactly 5 spaces on every board line for perfect horizontal alignment
+            printf("     "); 
+
             if (sub_r == 0) {
                 printf("  %d ", rank_lbl); // Margin of exactly 4 characters
             } else {
@@ -675,7 +675,6 @@ void draw_top_board(void) {
                             case 6: piece_str = "K"; break;
                         }
                     }
-                    // Adjusted block layout down to 2 characters wide total
                     printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
                 } else {
                     printf("%s  \x1b[0m", bg_color);
@@ -690,11 +689,8 @@ void draw_top_board(void) {
         }
     }
 
-    if (board_orientation == 1) {
-        printf("    a b c d e f g h\n");
-    } else {
-        printf("    h g f e d c b a\n");
-    }
+    // Indent exactly 5 spaces on bottom coordinate line
+    printf("         a b c d e f g h\n");
     fflush(stdout);
 }
 
