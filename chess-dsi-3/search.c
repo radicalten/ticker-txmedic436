@@ -123,7 +123,22 @@ static void update_quiet_stats(const Position *pos, Stack *ss, Move move,
     int bonus, Depth depth);
 static void update_capture_stats(const Position *pos, Move move, Move *captures,
     int captureCnt, int bonus);
-static void check_time(void);
+static void check_time(void)
+{
+  // --- YIELD BACK TO GUI SO THE ENTIRE CONSOLE SYSTEM DOES NOT STALL ---
+  ds_yield(); 
+
+  TimePoint elapsed = time_elapsed();
+
+  // An engine may not stop pondering until told so by the GUI
+  if (Threads.ponder)
+    return;
+
+  if (   (use_time_management() && elapsed > time_maximum() - 10)
+      || (Limits.movetime && elapsed >= Limits.movetime)
+      || (Limits.nodes && threads_nodes_searched() >= Limits.nodes))
+        Threads.stop = 1;
+}
 static void stable_sort(RootMove *rm, int num);
 static void uci_print_pv(Position *pos, Depth depth, Value alpha, Value beta);
 static int extract_ponder_from_tt(RootMove *rm, Position *pos);
