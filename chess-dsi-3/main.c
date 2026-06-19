@@ -53,10 +53,12 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
-// Thinking Traces
+// Thinking Traces & Connection Status
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
+char engine_status_msg[48] = "Booting...";
+char last_raw_output[48] = "Initializing Stockfish...";
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
 int redraw_needed = 1;
@@ -214,6 +216,7 @@ void trigger_engine_move(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    strcpy(engine_status_msg, "Searching...");
 
     static char cmd[8192];
     
@@ -255,10 +258,17 @@ void process_engine_output(char *line) {
         len--;
     }
 
+    // Save non-info raw traffic lines to simulate the live engine log feed
+    if (strncmp(line, "info", 4) != 0 && strlen(line) > 0) {
+        strncpy(last_raw_output, line, sizeof(last_raw_output) - 1);
+        last_raw_output[sizeof(last_raw_output) - 1] = '\0';
+    }
+
     if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
+            strcpy(engine_status_msg, "Sending isready...");
             redraw_needed = 1;
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
@@ -267,6 +277,7 @@ void process_engine_output(char *line) {
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
+            strcpy(engine_status_msg, "Ready & Connected");
             redraw_needed = 1;
         }
     }
@@ -328,6 +339,7 @@ void process_engine_output(char *line) {
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
+                strcpy(engine_status_msg, "Ready & Connected");
                 redraw_needed = 1;
                 return;
             }
@@ -340,6 +352,7 @@ void process_engine_output(char *line) {
                 current_state = next;
             }
             engine_thinking = 0;
+            strcpy(engine_status_msg, "Ready & Connected");
             redraw_needed = 1;
         }
     }
@@ -737,7 +750,7 @@ void draw_top_board(void) {
 // Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H"); // FIXED: Reset printing cursor to top-left of screen
+    printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -746,7 +759,7 @@ void draw_bottom_stats(void) {
 
     // --- LINE 1: Title & Turn Status Combined (Added \x1b[K to clear line tail) ---
     if (engine_state != ENGINE_STATE_READY) {
-        //printf("\x1b[1;33mB...\x1b[K\n");
+        printf("\x1b[1;33mConnecting to Engine...\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
@@ -877,29 +890,33 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
 
-    // --- LIVE THINKING TRACES / STATUS (Displayed at the absolute bottom of the screen) ---
+    // --- LIVE THINKING TRACES & CONNECTION STATUS (Screen Lines 20-23) ---
     printf("\x1b[20;1H\x1b[1;30m--------------------------------\x1b[0m\x1b[K\n"); // Line 20 Divider
-    printf("\x1b[21;1H"); // Line 21
+    
+    // Line 21: Connection Status Display
+    printf("\x1b[21;1H\x1b[1;33mStatus: %s\x1b[0m\x1b[K\n", engine_status_msg);
+
+    // Line 22: Live calculation trace (or last raw console command)
+    printf("\x1b[22;1H");
     if (engine_thinking) {
         printf("\x1b[1;36mTrace: D:%d | Nodes:%lld\x1b[0m\x1b[K\n", engine_depth, engine_nodes);
     } else {
-        printf("\x1b[1;30mTrace: Engine Idle\x1b[0m\x1b[K\n");
+        // Display a 23-char window of the last raw output to fit 32-col layout
+        char trunc_raw[24];
+        strncpy(trunc_raw, last_raw_output, 23);
+        trunc_raw[23] = '\0';
+        printf("\x1b[1;30mConsole: %s\x1b[0m\x1b[K\n", trunc_raw);
     }
 
-    // Split PV/Calculated line across Lines 22 & 23 to fit the 32-character wide screen cleanly
-    printf("\x1b[22;1H"); // Line 22
-    if (strlen(engine_pv) > 0) {
-        char line1[31] = {0};
-        char line2[31] = {0};
-        strncpy(line1, engine_pv, 30);
-        if (strlen(engine_pv) > 30) {
-            strncpy(line2, engine_pv + 30, 30);
-        }
-        printf("\x1b[1;32mPV: %s\x1b[0m\x1b[K\n", line1);
-        printf("\x1b[23;1H\x1b[1;32m    %s\x1b[0m\x1b[K\n", line2); // Line 23 Continuation
+    // Line 23: Dynamic PV/Trace Display or Standby State
+    printf("\x1b[23;1H");
+    if (engine_thinking && strlen(engine_pv) > 0) {
+        char trunc_pv[28];
+        strncpy(trunc_pv, engine_pv, 27);
+        trunc_pv[27] = '\0';
+        printf("\x1b[1;32mPV: %s\x1b[0m\x1b[K\n", trunc_pv);
     } else {
-        printf("\x1b[K\n");
-        printf("\x1b[23;1H\x1b[K\n");
+        printf("\x1b[1;30mWaiting for next turn...\x1b[0m\x1b[K\n");
     }
 
     fflush(stdout);
@@ -1003,6 +1020,7 @@ void handle_undo(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    strcpy(engine_status_msg, "Ready & Connected");
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1023,6 +1041,7 @@ void handle_reset_board(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    strcpy(engine_status_msg, "Ready & Connected");
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
@@ -1040,6 +1059,7 @@ void handle_switch_sides(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    strcpy(engine_status_msg, "Ready & Connected");
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
@@ -1153,6 +1173,7 @@ int main(int argc, char **argv) {
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
+    strcpy(engine_status_msg, "Waiting for uciok...");
 
     redraw_needed = 1;
     int frame_counter = 0;
