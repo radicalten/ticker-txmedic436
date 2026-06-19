@@ -26,7 +26,7 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
-#elif defined(__3DS__)
+#elif defined(__3DS__) || defined(__NDS__)
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
@@ -363,7 +363,7 @@ size_t file_size(FD fd)
 
 const void *map_file(FD fd, map_t *map)
 {
-#if defined(__3DS__)
+#if defined(__3DS__) || defined(__NDS__)
   // 3DS Fallback: Allocate standard heap memory and read the file into it
   size_t size = file_size(fd);
   *map = (map_t)size;
@@ -399,7 +399,7 @@ void unmap_file(const void *data, map_t map)
 {
   if (!data) return;
 
-#if defined(__3DS__)
+#if defined(__3DS__) || defined(__NDS__)
   free((void *)data);
 
 #elif !defined(_WIN32)
@@ -427,7 +427,7 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   alloc->ptr = ptr;
   return ptr;
 
-#elif defined(__3DS__)
+#elif defined(__3DS__) || defined(__NDS__)
   // 3DS doesn't support Virtual/Large pages. 
   // We use memalign with 64-byte alignment (optimal for ARM cache-lines).
   ptr = memalign(64, size);
@@ -469,7 +469,7 @@ void free_memory(alloc_t *alloc)
 {
 #ifdef _WIN32
   VirtualFree(alloc->ptr, 0, MEM_RELEASE);
-#elif defined(__3DS__)
+#elif defined(__3DS__) || defined(__NDS__)
   if (alloc->ptr) {
     free(alloc->ptr);
   }
@@ -482,7 +482,7 @@ void free_memory(alloc_t *alloc)
 // This guarantees that search timeouts, time-controls, and iterative deep plies
 // function properly in Stockfish/Cfish under CTRU.
 int64_t now(void) {
-#if defined(__3DS__)
+#if defined(__3DS__) || defined(__NDS__)
   return (int64_t)osGetTime();
 #elif !defined(_WIN32)
   struct timeval tv;
