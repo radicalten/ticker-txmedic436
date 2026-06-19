@@ -646,7 +646,7 @@ void draw_top_board(void) {
 
                 // Clean standard 16-color ANSI theme mappings
                 if (is_cursor) {
-                    bg_color = "\x1b[43m"; // Yellow Cursor Background
+                    bg_color = "\x1b[47m"; // White Cursor Background (contrasts on yellow/black)
                 } else if (is_selected) {
                     bg_color = "\x1b[42m"; // Green Selection Background
                 } else if (sq == king_in_check) {
@@ -656,7 +656,7 @@ void draw_top_board(void) {
                 } else if (is_legal_dest) {
                     bg_color = "\x1b[46m"; // Cyan Target-Destinations Background
                 } else {
-                    bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; // White / Black board squares
+                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow / Black board squares
                 }
 
                 if (sub_r == 0) {
