@@ -53,6 +53,11 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
+// Thinking Traces
+int engine_depth = 0;
+long long engine_nodes = 0;
+char engine_pv[128] = "";
+
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
 int redraw_needed = 1;
 int spinner_frame = 0;
@@ -206,6 +211,9 @@ void trigger_engine_move(void) {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
 
     static char cmd[8192];
     
@@ -271,6 +279,31 @@ void process_engine_output(char *line) {
                 engine_nps = val;
                 redraw_needed = 1;
             }
+        }
+
+        char *depth_ptr = strstr(line, " depth ");
+        if (depth_ptr) {
+            int d_val;
+            if (sscanf(depth_ptr, " depth %d", &d_val) == 1) {
+                engine_depth = d_val;
+                redraw_needed = 1;
+            }
+        }
+
+        char *nodes_ptr = strstr(line, " nodes ");
+        if (nodes_ptr) {
+            long long n_val;
+            if (sscanf(nodes_ptr, " nodes %lld", &n_val) == 1) {
+                engine_nodes = n_val;
+                redraw_needed = 1;
+            }
+        }
+
+        char *pv_ptr = strstr(line, " pv ");
+        if (pv_ptr) {
+            strncpy(engine_pv, pv_ptr + 4, sizeof(engine_pv) - 1);
+            engine_pv[sizeof(engine_pv) - 1] = '\0';
+            redraw_needed = 1;
         }
 
         char *score_ptr = strstr(line, " score ");
@@ -843,6 +876,32 @@ void draw_bottom_stats(void) {
         // Print combined line with a dark gray divider
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
+
+    // --- LIVE THINKING TRACES / STATUS (Displayed at the absolute bottom of the screen) ---
+    printf("\x1b[20;1H\x1b[1;30m--------------------------------\x1b[0m\x1b[K\n"); // Line 20 Divider
+    printf("\x1b[21;1H"); // Line 21
+    if (engine_thinking) {
+        printf("\x1b[1;36mTrace: D:%d | Nodes:%lld\x1b[0m\x1b[K\n", engine_depth, engine_nodes);
+    } else {
+        printf("\x1b[1;30mTrace: Engine Idle\x1b[0m\x1b[K\n");
+    }
+
+    // Split PV/Calculated line across Lines 22 & 23 to fit the 32-character wide screen cleanly
+    printf("\x1b[22;1H"); // Line 22
+    if (strlen(engine_pv) > 0) {
+        char line1[31] = {0};
+        char line2[31] = {0};
+        strncpy(line1, engine_pv, 30);
+        if (strlen(engine_pv) > 30) {
+            strncpy(line2, engine_pv + 30, 30);
+        }
+        printf("\x1b[1;32mPV: %s\x1b[0m\x1b[K\n", line1);
+        printf("\x1b[23;1H\x1b[1;32m    %s\x1b[0m\x1b[K\n", line2); // Line 23 Continuation
+    } else {
+        printf("\x1b[K\n");
+        printf("\x1b[23;1H\x1b[K\n");
+    }
+
     fflush(stdout);
 }
 
@@ -919,6 +978,9 @@ void handle_select(void) {
             engine_nps = 0;
             engine_score_type = -1;
             engine_score_val = 0;
+            engine_depth = 0;
+            engine_nodes = 0;
+            engine_pv[0] = '\0';
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -938,6 +1000,9 @@ void handle_undo(void) {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -955,6 +1020,9 @@ void handle_reset_board(void) {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
@@ -969,6 +1037,9 @@ void handle_switch_sides(void) {
         sf_send_command("stop");
         engine_thinking = 0;
     }
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
