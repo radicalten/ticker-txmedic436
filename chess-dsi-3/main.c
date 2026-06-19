@@ -584,14 +584,14 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically, shifted 2 units left, coordinate line pulled 1 up)
+// Draw the Top Screen Board (Centered vertically, shifted 1 unit right horizontally relative to previous 2-left shift)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
-    printf("\n\n"); // Moved entire screen rendering 1 line up (Reduced padding from 3 to 2 lines)
+    printf("\n\n"); // Vertical Centering Padding (2 empty lines)
 
-    // Adjusted horizontal offset coordinate matching: leading spaces reduced from 9 to 7
-    printf("       a b c d e f g h\n");
+    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
+    printf("        a b c d e f g h\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -606,8 +606,8 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
-            // Horizontal row offset shifted 2 units left: Reduced leading spaces from 5 to 3
-            printf("   "); 
+            // Horizontal row offset shifted 1 to the right: Increased leading spaces from 3 to 4
+            printf("    "); 
 
             if (sub_r == 0) {
                 printf("  %d ", rank_lbl); // Margin of exactly 4 characters
@@ -682,15 +682,15 @@ void draw_top_board(void) {
             }
 
             if (sub_r == 0) {
-                printf("%d\n", rank_lbl); // Shitted right rank label 1 column left: Reduced spacing from " %d\n" to "%d\n"
+                printf("%d\n", rank_lbl); // Kept 1-column left shifts for rank labels
             } else {
                 printf("\n");
             }
         }
     }
 
-    // Adjusted horizontal offset coordinate matching: leading spaces reduced from 9 to 7
-    printf("       a b c d e f g h\n");
+    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
+    printf("        a b c d e f g h\n");
     fflush(stdout);
 }
 
