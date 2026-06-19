@@ -598,7 +598,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 // Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[0;0H");
+    printf("\x1b[1;1H");
     printf("\n\n"); // Vertical Centering Padding
 
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
@@ -704,7 +704,7 @@ void draw_top_board(void) {
 // Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H"); // FIXED: Reset printing cursor to top-left of screen
+    printf("\x1b[H"); // FIXED: Home cursor directly to top-left corner, removing single space indent issues
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -713,7 +713,7 @@ void draw_bottom_stats(void) {
 
     // --- LINE 1: Title & Turn Status Combined ---
     if (engine_state != ENGINE_STATE_READY) {
-        //printf("\x1b[1;33mB...\x1b[0m\n");
+        printf("\x1b[1;33mEngine booting...\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[0m\n");
     } else if (repetitions >= 3) {
@@ -841,7 +841,7 @@ void draw_bottom_stats(void) {
         }
 
         // Print combined line with a dark gray divider
-        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); 
     }
     fflush(stdout);
 }
