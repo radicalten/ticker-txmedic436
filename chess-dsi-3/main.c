@@ -598,7 +598,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 // Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H");
+    printf("\x1b[0;0H");
     printf("\n\n"); // Vertical Centering Padding
 
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
