@@ -249,7 +249,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 1"); // 4MB cache fits safe for Nintendo DS RAM limits
+            sf_send_command("setoption name Hash value 4"); // 4MB cache fits safe for Nintendo DS RAM limits
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
@@ -712,7 +712,10 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    if (current_state.halfmoves >= 100) {
+    // Show Booting status if the handshake is not complete
+    if (engine_state != ENGINE_STATE_READY) {
+        printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
+    } else if (current_state.halfmoves >= 100) {
         printf("  Status: \x1b[1;31m[DRAW (50m-rule)]\x1b[0m\n");
     } else if (repetitions >= 3) {
         printf("  Status: \x1b[1;31m[DRAW (3-fold)]\x1b[0m\n");
@@ -770,7 +773,7 @@ void draw_bottom_stats(void) {
             printf("| Eval: ----\n");
         }
     } else {
-        printf("| Eval: Config\n");
+        printf("| Eval: Init...\n");
     }
 
     printf("--------------------------------\n");
@@ -1003,21 +1006,8 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // Render loading splash screen immediately
-    consoleSelect(&topConsole);
-    printf("\x1b[2J");
-    printf("\x1b[5;5H\x1b[33m-- Chess DS --\x1b[0m\n\n");
-    printf("   Initializing Stockfish Engine...\n");
-    printf("   Please wait, setting up tables...\n");
-    printf("   (This takes ~10 seconds on DS ARM9)\n");
-    fflush(stdout);
-    
-    consoleSelect(&bottomConsole);
-    printf("\x1b[2J");
-    printf("Setting up cooperative fibers...\n");
-    fflush(stdout);
-    
-    // Force a screen refresh so the user sees the loading screen!
+    // Draw the chessboard and stats immediately so the user sees them instantly
+    draw_ui();
     swiWaitForVBlank();
 
     // Spawn Stockfish using our customized Cooperative fiber launcher
@@ -1026,23 +1016,15 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        printf("\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
+        printf("\x1b[16;1H\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
         fflush(stdout);
-        while(1) swiWaitForVBlank(); // Halt
-    } else {
-        consoleSelect(&bottomConsole);
-        printf("Engine Thread initialized successfully.\n\n");
-        fflush(stdout);
+        while(1) swiWaitForVBlank(); // Halt if thread creation fails
     }
 
-    // Force another draw cycle so the loading screen stays visible
-    swiWaitForVBlank();
-
-    // Handshake Sequence Start
+    // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
-    // Run the main loop
     while (pmMainLoop()) {
         scanKeys();
         u32 kDown = keysDown();
@@ -1081,8 +1063,6 @@ int main(int argc, char **argv) {
         }
 
         read_from_engine();
-        
-        // Draw the chessboard!
         draw_ui();
 
         swiWaitForVBlank();
