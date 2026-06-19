@@ -18,7 +18,7 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/portlibs/arm-none-eabi/lib \
 -L/opt/devkitpro/calico/lib \
 -L/opt/devkitpro/libnds/lib \
--lcalico_ds9 -lnds9 -lm
+-lnds9 -lcalico_ds9 -lm
 TARGET  := myapp
 EXCLUDE := chess-dsi-3/nnue.c chess-dsi-3/numa.c
 SRCDIR 	:= chess-dsi-3
