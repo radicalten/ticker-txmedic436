@@ -10,16 +10,6 @@
 #ifdef __NDS__
 #include <sys/time.h> // Required for gettimeofday
 
-// --- BEGIN KEYBOARD COLLISION RESOLUTION ---
-// Temporarily intercept 'Lower' and 'Upper' to rename them inside the keyboard enum,
-// then force-include <nds.h> to lock this change in.
-#define Lower DS_KBD_Lower
-#define Upper DS_KBD_Upper
-#include <nds.h>
-#undef Lower
-#undef Upper
-// --- END KEYBOARD COLLISION RESOLUTION ---
-
 typedef struct {
     int placeholder;
 } LightLock;
@@ -35,6 +25,27 @@ static inline unsigned long long osGetTime(void) {
     gettimeofday(&tv, NULL);
     return ((unsigned long long)tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL);
 }
+
+// Cooperative yield function for DS GUI integration
+void ds_yield(void);
+
+// 3DS Kernel SVC Compatibility Stubs for Nintendo DS
+#define CUR_THREAD_HANDLE 0
+
+static inline void svcSetThreadPriority(int handle, int priority) {
+    (void)handle;
+    (void)priority;
+    // DS is single-core and uses cooperative fibers, priority is a no-op
+}
+
+static inline void svcSleepThread(unsigned long long ns) {
+    (void)ns;
+    ds_yield(); // Yield CPU time to let other fiber run (essential for cooperative thread syncing)
+}
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 void sf_bridge_init(void);
@@ -54,9 +65,6 @@ int sf_putc(int character, FILE *stream);
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 int sf_get_output(char *buf, size_t max_len);
-
-// Cooperative yield function for DS GUI integration
-void ds_yield(void);
 
 // Custom thread override to set stack sizes and cores
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
