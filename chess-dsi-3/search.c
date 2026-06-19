@@ -1885,6 +1885,9 @@ static void update_quiet_stats(const Position *pos, Stack *ss, Move move,
 
 static void check_time(void)
 {
+  // Yield back to the GUI so the system does not freeze
+  ds_yield(); 
+
   TimePoint elapsed = time_elapsed();
 
   // An engine may not stop pondering until told so by the GUI
