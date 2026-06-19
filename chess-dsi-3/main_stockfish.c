@@ -15,7 +15,12 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  along with this program.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  See the
+  GNU General Public License for more details.
 */
 
 #include "3ds_bridge.h"
@@ -36,18 +41,35 @@
 int main_stockfish(int argc, char **argv)
 {
   print_engine_info(false);
+  ds_yield(); // Let GUI draw initial console booting messages
 
   psqt_init();
+  ds_yield(); // Hand off CPU to GUI so screens don't freeze
+
   bitboards_init();
+  ds_yield(); // Hand off CPU to GUI
+
   zob_init();
+  ds_yield(); // Hand off CPU to GUI
+
   bitbases_init();
+  ds_yield(); // Hand off CPU to GUI
+
 #ifndef NNUE_PURE
   endgames_init();
+  ds_yield(); // Hand off CPU to GUI
 #endif
-  threads_init();
-  options_init();
-  search_clear();
 
+  threads_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  options_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  search_clear();
+  ds_yield(); // Hand off CPU to GUI
+
+  // Start the engine command interface loop
   uci_loop(argc, argv);
 
   threads_exit();
