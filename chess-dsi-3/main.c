@@ -584,16 +584,16 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Uses robust, standard 16-color ANSI sequence colors)
+// Draw the Top Screen Board (Uses robust, standard 16-color ANSI sequence colors in 2x2 spacing)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
     printf("\n\n\n"); // Vertical padding
 
     if (board_orientation == 1) {
-        printf("      a  b  c  d  e  f  g  h\n");
+        printf("    a b c d e f g h\n");
     } else {
-        printf("      h  g  f  e  d  c  b  a\n");
+        printf("    h g f e d c b a\n");
     }
 
     int king_in_check = -1;
@@ -610,7 +610,7 @@ void draw_top_board(void) {
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
             if (sub_r == 0) {
-                printf("  %d ", rank_lbl); 
+                printf("  %d ", rank_lbl); // Margin of exactly 4 characters
             } else {
                 printf("    "); 
             }
@@ -646,7 +646,7 @@ void draw_top_board(void) {
 
                 // Clean standard 16-color ANSI theme mappings
                 if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White Cursor Background (contrasts on yellow/black)
+                    bg_color = "\x1b[47m"; // White/Gray Cursor (high-contrast over yellow/black)
                 } else if (is_selected) {
                     bg_color = "\x1b[42m"; // Green Selection Background
                 } else if (sq == king_in_check) {
@@ -675,9 +675,10 @@ void draw_top_board(void) {
                             case 6: piece_str = "K"; break;
                         }
                     }
-                    printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
+                    // Adjusted block layout down to 2 characters wide total
+                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
                 } else {
-                    printf("%s   \x1b[0m", bg_color);
+                    printf("%s  \x1b[0m", bg_color);
                 }
             }
 
@@ -690,9 +691,9 @@ void draw_top_board(void) {
     }
 
     if (board_orientation == 1) {
-        printf("      a  b  c  d  e  f  g  h\n");
+        printf("    a b c d e f g h\n");
     } else {
-        printf("      h  g  f  e  d  c  b  a\n");
+        printf("    h g f e d c b a\n");
     }
     fflush(stdout);
 }
