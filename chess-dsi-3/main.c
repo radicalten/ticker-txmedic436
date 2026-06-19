@@ -1003,12 +1003,13 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // Render loading splash screen
+    // Render loading splash screen immediately
     consoleSelect(&topConsole);
     printf("\x1b[2J");
     printf("\x1b[5;5H\x1b[33m-- Chess DS --\x1b[0m\n\n");
     printf("   Initializing Stockfish Engine...\n");
     printf("   Please wait, setting up tables...\n");
+    printf("   (This takes ~10 seconds on DS ARM9)\n");
     fflush(stdout);
     
     consoleSelect(&bottomConsole);
@@ -1016,6 +1017,7 @@ int main(int argc, char **argv) {
     printf("Setting up cooperative fibers...\n");
     fflush(stdout);
     
+    // Force a screen refresh so the user sees the loading screen!
     swiWaitForVBlank();
 
     // Spawn Stockfish using our customized Cooperative fiber launcher
@@ -1026,16 +1028,21 @@ int main(int argc, char **argv) {
         consoleSelect(&bottomConsole);
         printf("\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
         fflush(stdout);
+        while(1) swiWaitForVBlank(); // Halt
     } else {
         consoleSelect(&bottomConsole);
         printf("Engine Thread initialized successfully.\n\n");
         fflush(stdout);
     }
 
+    // Force another draw cycle so the loading screen stays visible
+    swiWaitForVBlank();
+
     // Handshake Sequence Start
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
+    // Run the main loop
     while (pmMainLoop()) {
         scanKeys();
         u32 kDown = keysDown();
@@ -1074,6 +1081,8 @@ int main(int argc, char **argv) {
         }
 
         read_from_engine();
+        
+        // Draw the chessboard!
         draw_ui();
 
         swiWaitForVBlank();
