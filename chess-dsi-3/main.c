@@ -711,47 +711,47 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Title & Turn Status Combined ---
+    // --- LINE 1: Title & Turn Status Combined (Added \x1b[K to clear line tail) ---
     if (engine_state != ENGINE_STATE_READY) {
-        //printf("\x1b[1;33mB...\x1b[0m\n");
+        //printf("\x1b[1;33mB...\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;31mDraw (50m-rule)\x1b[0m\n");
+        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;31mDraw (3-fold)\x1b[0m\n");
+        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[1;31mCHECKMATE!\x1b[0m\n");
+            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[1;36mSTALEMATE!\x1b[0m\n");
+            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[1;31mWhite in CHECK!\x1b[0m\n");
+            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[1;31mBlack in CHECK!\x1b[0m\n");
+            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[1;32mWhite's turn\x1b[0m\n");
+            printf("\x1b[1;32mWhite's turn\x1b[K\n");
         } else {
-            printf("\x1b[1;35mBlack's turn\x1b[0m\n");
+            printf("\x1b[1;35mBlack's turn\x1b[K\n");
         }
     }
 
-    // --- LINE 2: Modes & Limits Combined ---
+    // --- LINE 2: Modes & Limits Combined (Added \x1b[K to clear "node" trail) ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     printf("W:%s B:%s | ", w_play, b_play);
 
     if (time_control_type == 0) {
-        printf("Lim: %dms\n", time_control_val);
+        printf("Lim: %dms\x1b[K\n", time_control_val);
     } else if (time_control_type == 1) {
-        printf("Lim: depth %d\n", time_control_val);
+        printf("Lim: depth %d\x1b[K\n", time_control_val);
     } else {
-        printf("Lim: %d node\n", time_control_val);
+        printf("Lim: %d node\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed Combined ---
+    // --- LINE 3: Engine Status, Eval, and Speed Combined (Added \x1b[K to clear line tail) ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
@@ -769,12 +769,12 @@ void draw_bottom_stats(void) {
 
         if (engine_nps > 0) {
             if (engine_nps >= 1000) {
-                printf("%lld knps\n", engine_nps / 1000);
+                printf("%lld knps\x1b[K\n", engine_nps / 1000);
             } else {
-                printf("%lld nps\n", engine_nps);
+                printf("%lld nps\x1b[K\n", engine_nps);
             }
         } else {
-            printf("---- nps\n");
+            printf("---- nps\x1b[K\n");
         }
     } else {
         printf("Eng: Idle | ");
@@ -784,7 +784,7 @@ void draw_bottom_stats(void) {
         } else {
             printf("Ev: ---- | ");
         }
-        printf("Offline\n");
+        printf("Offline\x1b[K\n");
     }
 
     // --- EXPANDED DUAL-COLUMN MOVE LIST (Shows last 28 full moves) ---
