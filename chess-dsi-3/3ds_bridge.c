@@ -8,15 +8,6 @@
 
 #define MSG_QUEUE_SIZE 65536
 
-// Stub LightLock out, as cooperative threading on single-core does not require locking
-typedef struct {
-    int placeholder;
-} LightLock;
-
-static inline void LightLock_Init(LightLock* lock) { (void)lock; }
-static inline void LightLock_Lock(LightLock* lock) { (void)lock; }
-static inline void LightLock_Unlock(LightLock* lock) { (void)lock; }
-
 typedef struct {
     char data[MSG_QUEUE_SIZE];
     int head;
@@ -318,6 +309,7 @@ int sf_get_output(char *buf, size_t max_len) {
 // Emulated Thread Spawn Routine for Nintendo DS (ARM9)
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
+    (void)attr;
     size_t stacksize = 256 * 1024; // 256 KB
 
     // Allocate memory from the heap for the engine's stack
@@ -343,7 +335,11 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     *(--sp) = (uint32_t)start_routine;   // r4 (Passed to thread_launcher)
 
     search_thread.sp = (uint32_t)sp;
-    *thread = 1; // Dummy thread identifier
+    
+    // Set thread variable to a dummy valid pointer to satisfy the caller
+    if (thread != NULL) {
+        *thread = (pthread_t)1;
+    }
 
     return 0;
 }
