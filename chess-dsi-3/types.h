@@ -384,7 +384,7 @@ CLAMP(size_t)
 CLAMP(long)
 #undef CLAMP
 
-#if defined(__arm__) || defined(__3DS__)
+#if defined(__arm__) || defined(__3DS__) || defined(__NDS__)
 #define TEMPLATE(F,a,...) _Generic((a), \
     int: F##_int,              \
     uint64_t: F##_uint64_t,    \
