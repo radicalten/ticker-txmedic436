@@ -584,7 +584,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Uses high-fidelity 256-color Maple/Walnut patterns)
+// Draw the Top Screen Board (Uses robust, standard 16-color ANSI sequence colors)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
@@ -644,27 +644,27 @@ void draw_top_board(void) {
                     }
                 }
 
-                // 256-color matching themes from the original 3DS project
+                // Clean standard 16-color ANSI theme mappings
                 if (is_cursor) {
-                    bg_color = "\x1b[48;5;208m"; // Bright orange cursor
+                    bg_color = "\x1b[43m"; // Yellow Cursor Background
                 } else if (is_selected) {
-                    bg_color = "\x1b[48;5;34m";  // Forest Green selection
+                    bg_color = "\x1b[42m"; // Green Selection Background
                 } else if (sq == king_in_check) {
-                    bg_color = "\x1b[48;5;196m"; // Danger warnings red
+                    bg_color = "\x1b[41m"; // Red King-in-Check Warning Background
                 } else if (is_prev_move) {
-                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // History path
+                    bg_color = "\x1b[45m"; // Magenta History-Path Background
                 } else if (is_legal_dest) {
-                    bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
+                    bg_color = "\x1b[46m"; // Cyan Target-Destinations Background
                 } else {
-                    bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Wood patterns (Maple / Walnut)
+                    bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; // White / Black board squares
                 }
 
                 if (sub_r == 0) {
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[38;5;232m"; // Black pieces (standard dark ANSI)
+                    const char *fg_color = "\x1b[34;1m"; // Default Black pieces: Blue Text
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[38;5;255m\x1b[1m"; // White pieces (Bold light ANSI)
+                            fg_color = "\x1b[31;1m"; // White pieces: Bold Red Text
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
