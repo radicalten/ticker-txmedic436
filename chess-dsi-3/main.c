@@ -1024,7 +1024,7 @@ int main(int argc, char **argv) {
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
-    while (pmMainLoop()) {
+        while (pmMainLoop()) {
         scanKeys();
         u32 kDown = keysDown();
 
@@ -1063,6 +1063,9 @@ int main(int argc, char **argv) {
 
         read_from_engine();
         draw_ui();
+
+        // --- YIELD CPU SO COOPERATIVE MULTITASKER EXECUTS ENGINE STEPS ---
+        ds_yield();
 
         swiWaitForVBlank();
     }
