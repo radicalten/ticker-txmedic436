@@ -698,7 +698,6 @@ void draw_top_board(void) {
     }
 
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
-    printf("\x1b[J"); // Clears everything from here to the bottom of the screen (eliminates "engine up trans" boot residues)
     fflush(stdout);
 }
 
@@ -778,7 +777,7 @@ void draw_bottom_stats(void) {
             printf("---- nps\n");
         }
     } else {
-        printf("Eng: Idle          | ");
+        printf("Eng: Idle | ");
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
             printf("Ev: %+.2f | ", eval);
@@ -1037,12 +1036,12 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
+        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
         while(1) swiWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
-        printf("Background Engine Thread spawned successfully.\n\n");
+        //printf("Background Engine Thread spawned successfully.\n\n");
         fflush(stdout);
     }
 
