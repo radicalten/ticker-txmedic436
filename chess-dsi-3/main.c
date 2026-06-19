@@ -53,7 +53,7 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
-// Optimization Flag: Only redraw screens when something changes
+// Optimization Flag: Only redraw when the board state changes or cursor moves
 int redraw_needed = 1;
 
 PrintConsole topConsole, bottomConsole;
@@ -112,10 +112,12 @@ Move gui_uci_to_move(const char *str) {
     return m;
 }
 
+// Converts a raw move to Standard Algebraic Notation (SAN / PGN)
 void move_to_san(const BoardState *state, Move m, char *buf) {
     int p = abs(state->board[m.from]);
     int turn = state->turn;
     
+    // Castling Checks
     if (p == 6) {
         if (m.from == 60 && m.to == 62 && turn == 1) { strcpy(buf, "O-O"); goto append_suffixes; }
         if (m.from == 60 && m.to == 58 && turn == 1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
@@ -127,14 +129,17 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
     int is_cap = (state->board[m.to] != 0) || (p == 1 && m.to == state->ep);
 
     if (p == 1) {
+        // Pawn Moves
         if (is_cap) {
             *ptr++ = 'a' + (m.from % 8);
             *ptr++ = 'x';
         }
     } else {
+        // Piece Moves
         char p_chars[] = "?PNBRQK";
         *ptr++ = p_chars[p];
 
+        // Disambiguation
         int another_can_move = 0;
         int same_file = 0;
         int same_rank = 0;
@@ -165,9 +170,11 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
         }
     }
 
+    // Destination square
     *ptr++ = 'a' + (m.to % 8);
     *ptr++ = '8' - (m.to / 8);
 
+    // Promotion Suffix
     if (m.promo != 0) {
         *ptr++ = '=';
         char p_chars[] = "?PNBRQK";
@@ -176,6 +183,7 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
     *ptr = '\0';
 
 append_suffixes:;
+    // Check and Checkmate Suffixes
     BoardState next;
     make_move(state, &next, m);
     int op_king = find_king(&next, next.turn);
@@ -185,9 +193,9 @@ append_suffixes:;
     ptr = buf + strlen(buf);
     if (is_check) {
         if (!has_moves) {
-            *ptr++ = '#';
+            *ptr++ = '#'; // Checkmate
         } else {
-            *ptr++ = '+';
+            *ptr++ = '+'; // Check
         }
     }
     *ptr = '\0';
@@ -246,6 +254,10 @@ void process_engine_output(char *line) {
         len--;
     }
 
+    consoleSelect(&bottomConsole);
+    printf("%s\n", line);
+    fflush(stdout);
+
     if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
@@ -254,6 +266,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
+            // Memory Optimization: Hardcoded to 1MB Hash to comfortably fit DSi system limits
             sf_send_command("setoption name Hash value 1"); 
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
@@ -312,13 +325,13 @@ void process_engine_output(char *line) {
 }
 
 void read_from_engine(void) {
-    char tmp[256];
-    static char line_buf[512];
+    char tmp[512];
+    static char line_buf[1024];
     static int line_len = 0;
     int bytes_read;
     int chunks_processed = 0;
 
-    while (chunks_processed < 8 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
+    while (chunks_processed < 32 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
         tmp[bytes_read] = '\0';
         chunks_processed++;
         
@@ -594,13 +607,129 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically)
-void draw_top_board(void) {
+// 3DS Side-By-Side Visual Theme Layout (Adapted exactly for DSi Screen Dimensions)
+void draw_ui(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H");
-    printf("\n\n"); // Vertical Centering Padding
+    printf("\x1b[1;1H"); // Flick-free frame reset
+    printf("\x1b[K\n");   // Blank spacer row
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    // Pre-calculate side panel state strings to match the 26 vertical print scanlines
+    char rp[26][64];
+    for (int i = 0; i < 26; i++) {
+        sprintf(rp[i], "                  "); // Default clear padding space
+    }
+
+    // Set up Side Panel Status Parameters
+    int king = find_king(&current_state, current_state.turn);
+    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
+    int has_mov = has_legal_moves(&current_state);
+    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
+    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
+    int repetitions = count_repetitions(&current_state);
+
+    if (current_state.halfmoves >= 100) {
+        strcpy(rp[0], "  [DRAW (50m-rule)]");
+    } else if (repetitions >= 3) {
+        strcpy(rp[0], "  [DRAW (3-fold)]");
+    } else if (!has_mov) {
+        if (is_ch) {
+            strcpy(rp[0], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
+        } else {
+            strcpy(rp[0], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
+        }
+    } else if (is_ch) {
+        if (current_state.turn == 1) {
+            sprintf(rp[0], "  \x1b[1;32mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+        } else {
+            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+        }
+    } else {
+        if (current_state.turn == 1) {
+            sprintf(rp[0], "  \x1b[1;32mWhite\x1b[0m to play");
+        } else {
+            sprintf(rp[0], "  \x1b[1;35mBlack\x1b[0m to play");
+        }
+    }
+
+    sprintf(rp[1], "  W: %s | B: %s", w_play, b_play);
+    if (time_control_type == 0) {
+        sprintf(rp[2], "  Lim: %d ms", time_control_val);
+    } else if (time_control_type == 1) {
+        sprintf(rp[2], "  Lim: depth %d", time_control_val);
+    } else {
+        sprintf(rp[2], "  Lim: %d nodes", time_control_val);
+    }
+
+    if (engine_state == ENGINE_STATE_READY) {
+        if (engine_score_type == 0) {
+            double eval = (double)engine_score_val / 100.0;
+            if (eval > 0.0) {
+                sprintf(rp[3], "  Eval: \x1b[1;32m%+.2f\x1b[0m", eval); 
+            } else if (eval < 0.0) {
+                sprintf(rp[3], "  Eval: \x1b[1;31m%+.2f\x1b[0m", eval); 
+            } else {
+                sprintf(rp[3], "  Eval: 0.00");                          
+            }
+        } else if (engine_score_type == 1) {
+            if (engine_score_val > 0) {
+                sprintf(rp[3], "  Eval: \x1b[1;32m+M%d\x1b[0m", engine_score_val);
+            } else if (engine_score_val < 0) {
+                sprintf(rp[3], "  Eval: \x1b[1;31m-M%d\x1b[0m", -engine_score_val);
+            } else {
+                sprintf(rp[3], "  Eval: M0");
+            }
+        } else {
+            strcpy(rp[3], "  Eval: ----");
+        }
+
+        if (engine_nps > 0) {
+            if (engine_nps >= 1000000) {
+                sprintf(rp[4], "  NPS:  %.2fM", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 1000) {
+                sprintf(rp[4], "  NPS:  %.1fk", (double)engine_nps / 1000.0);
+            } else {
+                sprintf(rp[4], "  NPS:  %lld", engine_nps);
+            }
+        } else {
+            strcpy(rp[4], "  NPS:  ----");
+        }
+    } else {
+        strcpy(rp[3], "  Eval: Config");
+        strcpy(rp[4], "  NPS:  Config");
+    }
+
+    strcpy(rp[5], "\x1b[1;33m  RECENT MOVES:\x1b[0m");
+
+    // Print Single-spaced Move History matching the 3DS layout
+    int total_full_moves = (history_count + 1) / 2;
+    int start_move = (total_full_moves > 20) ? (total_full_moves - 19) : 1;
+    for (int idx = 0; idx < 20; idx++) {
+        int display = start_move + idx;
+        if (total_full_moves > 0 && display <= total_full_moves) {
+            int w_idx = (display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) {
+                move_to_san(&history[w_idx], move_history[w_idx], w_str);
+            }
+            if (b_idx < history_count) {
+                move_to_san(&history[b_idx], move_history[b_idx], b_str);
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(rp[6 + idx], "  %2d. %-5s %-5s", display, w_str, b_str);
+        } else {
+            sprintf(rp[6 + idx], "  %2d.  ---   --- ", display);
+        }
+    }
+
+    if (board_orientation == 1) {
+        printf("     a  b  c  d  e  f  g  h   ");
+    } else {
+        printf("     h  g  f  e  d  c  b  a   ");
+    }
+    printf("%s\x1b[K\n", rp[0]);
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -611,14 +740,13 @@ void draw_top_board(void) {
         king_in_check = b_king;
     }
 
+    // Render Board Ranks matching the 3DS colors
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
-        for (int sub_r = 0; sub_r < 2; sub_r++) {
-            printf("    "); 
-
-            if (sub_r == 0) {
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
+        for (int sub_r = 0; sub_r < 3; sub_r++) {
+            if (sub_r == 1) {
+                printf("  %d ", rank_lbl); 
             } else {
                 printf("    "); 
             }
@@ -653,25 +781,25 @@ void draw_top_board(void) {
                 }
 
                 if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White/Gray Cursor (High contrast)
+                    bg_color = "\x1b[48;5;208m"; // Bright orange cursor
                 } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Green Selection
+                    bg_color = "\x1b[48;5;34m";  // Forest Green selection
                 } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Red King-in-Check
+                    bg_color = "\x1b[48;5;196m"; // Danger warnings red
                 } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Magenta History Path
+                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; 
                 } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Cyan Targets
+                    bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; 
                 } else {
-                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow/Black Board
+                    bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Maple / Walnut patterns
                 }
 
-                if (sub_r == 0) {
+                if (sub_r == 1) {
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Blue Text for Black Pieces
+                    const char *fg_color = "\x1b[38;5;232m"; 
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces
+                            fg_color = "\x1b[38;5;255m\x1b[1m"; 
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
@@ -682,138 +810,37 @@ void draw_top_board(void) {
                             case 6: piece_str = "K"; break;
                         }
                     }
-                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
+                    printf("%s%s %s \x1b[0m", bg_color, fg_color, piece_str);
                 } else {
-                    printf("%s  \x1b[0m", bg_color);
+                    printf("%s   \x1b[0m", bg_color);
                 }
             }
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
+            if (sub_r == 1) {
+                printf(" %d", rank_lbl); 
+                printf("%s", rp[1 + (r * 3) + sub_r]); 
             } else {
-                printf("\n");
+                printf("  "); 
+                printf("%s", rp[1 + (r * 3) + sub_r]);
             }
+            printf("\x1b[K\n");
         }
     }
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
-    fflush(stdout);
-}
+    if (board_orientation == 1) {
+        printf("     a  b  c  d  e  f  g  h   ");
+    } else {
+        printf("     h  g  f  e  d  c  b  a   ");
+    }
+    printf("%s\x1b[K\n\n", rp[25]);
 
-// Draw the Bottom Screen stats/evaluation details
-void draw_bottom_stats(void) {
+    fflush(stdout); 
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H");
-
-    printf("\x1b[1;33m       -- Chess DSi --\x1b[0m\n");
-    printf("--------------------------------\n");
-
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
-    int repetitions = count_repetitions(&current_state);
-
-    if (engine_state != ENGINE_STATE_READY) {
-        printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
-    } else if (current_state.halfmoves >= 100) {
-        printf("  Status: \x1b[1;31m[DRAW (50m-rule)]\x1b[0m\n");
-    } else if (repetitions >= 3) {
-        printf("  Status: \x1b[1;31m[DRAW (3-fold)]\x1b[0m\n");
-    } else if (!has_mov) {
-        if (is_ch) {
-            printf("  Status: \x1b[1;31m[CHECKMATE!]\x1b[0m\n");
-        } else {
-            printf("  Status: \x1b[1;36m[STALEMATE!]\x1b[0m\n");
-        }
-    } else if (is_ch) {
-        if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite in CHECK!\x1b[0m\n");
-        } else {
-            printf("  Status: \x1b[1;35mBlack in CHECK!\x1b[0m\n");
-        }
-    } else {
-        if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite to play\x1b[0m\n");
-        } else {
-            printf("  Status: \x1b[1;35mBlack to play\x1b[0m\n");
-        }
-    }
-
-    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
-    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("  Modes: W:%-3s | B:%-3s\n", w_play, b_play);
-
-    if (time_control_type == 0) {
-        printf("  Limit: %-4d ms  ", time_control_val);
-    } else if (time_control_type == 1) {
-        printf("  Limit: depth %-2d ", time_control_val);
-    } else {
-        printf("  Limit: %-7d nodes ", time_control_val);
-    }
-
-    if (engine_state == ENGINE_STATE_READY) {
-        if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            if (eval > 0.0) {
-                printf("| Eval: \x1b[1;32m%+.2f\x1b[0m\n", eval);
-            } else if (eval < 0.0) {
-                printf("| Eval: \x1b[1;31m%+.2f\x1b[0m\n", eval);
-            } else {
-                printf("| Eval: 0.00\n");
-            }
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                printf("| Eval: \x1b[1;32m+M%d\x1b[0m\n", engine_score_val);
-            } else if (engine_score_val < 0) {
-                printf("| Eval: \x1b[1;31m-M%d\x1b[0m\n", -engine_score_val);
-            } else {
-                printf("| Eval: M0\n");
-            }
-        } else {
-            printf("| Eval: ----\n");
-        }
-    } else {
-        printf("| Eval: Init...\n");
-    }
-
-    printf("--------------------------------\n");
-    printf("\x1b[1;33m  RECENT MOVES:\x1b[0m\n");
-
-    int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 11) ? (total_full_moves - 10) : 1;
-    for (int idx = 0; idx < 11; idx++) {
-        int display = start_move + idx;
-        if (total_full_moves > 0 && display <= total_full_moves) {
-            int w_idx = (display - 1) * 2;
-            int b_idx = w_idx + 1;
-            char w_str[10] = "-----";
-            char b_str[10] = "-----";
-            if (w_idx < history_count) {
-                move_to_san(&history[w_idx], move_history[w_idx], w_str);
-            }
-            if (b_idx < history_count) {
-                move_to_san(&history[b_idx], move_history[b_idx], b_str);
-            } else if (w_idx < history_count) {
-                strcpy(b_str, "...");
-            }
-            printf("  %2d. %-5s %-5s\n", display, w_str, b_str);
-        } else {
-            printf("  %2d.  ---   --- \n", display);
-        }
-    }
-    printf("--------------------------------\n");
-    fflush(stdout);
-}
-
-void draw_ui(void) {
-    draw_top_board();
-    draw_bottom_stats();
 }
 
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[7;1H\x1b[J"); 
-    printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
+    printf("\n\x1b[1;33mPROMOTION! Press button selection:\n");
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
     
@@ -991,39 +1018,62 @@ void stockfish_thread_func(void* arg) {
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     
-    // Enable DS Interrupt Engine
+    // Enable DS Interrupt System
     irqEnable(IRQ_VBLANK);
 
-    // Set 2D Text Modes on both displays
+    // Set 2D Text Modes on both displays (standard DSi homebrew console configuration)
     videoSetMode(MODE_0_2D);
     videoSetModeSub(MODE_0_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankC(VRAM_C_SUB_BG);
 
-    // Initialize the console engines
+    // Initialize the console subsystems
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
     sf_bridge_init();
     init_board(&current_state);
 
-    // Render immediately on boot
-    redraw_needed = 1;
+    // Initial Loading screen on Top Screen
+    consoleSelect(&topConsole);
+    printf("\x1b[2J");
+    printf("\x1b[5;5H\x1b[33m-- Chess DSi --\x1b[0m\n\n");
+    printf("   Initializing Stockfish Engine...\n");
+    printf("   Please wait, setting up transposition tables...\n");
+    fflush(stdout);
+    
+    consoleSelect(&bottomConsole);
+    printf("\x1b[2J");
+    printf("Setting up console registers...\n");
+    fflush(stdout);
+    
+    swiWaitForVBlank();
 
     pthread_t stockfish_thread;
     int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        printf("\x1b[16;1H\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
+        printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
-        while(1) swiWaitForVBlank(); 
+        while(1) swiWaitForVBlank();
+    } else {
+        consoleSelect(&bottomConsole);
+        printf("Background Engine Thread spawned successfully.\n\n");
+        fflush(stdout);
+    }
+
+    // Yield control for 50ms to let Stockfish perform basic initialization
+    for (int i = 0; i < 3; i++) {
+        ds_yield();
+        swiWaitForVBlank();
     }
 
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
+    redraw_needed = 1;
     int frame_counter = 0;
 
     while (pmMainLoop()) {
@@ -1073,13 +1123,13 @@ int main(int argc, char **argv) {
 
         read_from_engine();
 
-        // Periodically refresh the statistics while the engine is calculating
+        // Refresh stats periodically while the engine is calculating
         frame_counter++;
         if (engine_thinking && (frame_counter % 15 == 0)) {
             redraw_needed = 1;
         }
 
-        // Only redraw the text screens when something actually updates
+        // Only redraw the text screen if an action happened
         if (redraw_needed) {
             draw_ui();
             redraw_needed = 0;
