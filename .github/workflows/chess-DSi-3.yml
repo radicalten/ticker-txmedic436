@@ -2,7 +2,7 @@ name: DSi-curl-v3
 on:
   push:
     branches:
-    - master
+    - main
 jobs:
   build-nds:
     runs-on: ubuntu-latest
