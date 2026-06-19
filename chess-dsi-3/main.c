@@ -584,15 +584,14 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically, shifted 1 unit right horizontally relative to previous 2-left shift)
+// Draw the Top Screen Board (Centered vertically, shifted 1 unit right horizontally)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
     printf("\n\n"); // Vertical Centering Padding (2 empty lines)
 
-    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    // Coords colored bold white (\x1b[1;37m) and then immediately reset (\x1b[0m)
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    // Force White text (\x1b[37m) and Black background (\x1b[40m) on coordinates
+    printf("\x1b[37m\x1b[40m        a b c d e f g h\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -607,14 +606,14 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
-            // Horizontal row offset shifted 1 to the right: Increased leading spaces from 3 to 4
-            printf("    "); 
+            // Horizontal row offset margin on black background
+            printf("\x1b[40m    "); 
 
             if (sub_r == 0) {
-                // Rank label colored bold white (\x1b[1;37m) and reset (\x1b[0m)
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); // Margin of exactly 4 characters
+                // Left margin label - always white text, black background
+                printf("\x1b[37m\x1b[40m  %d ", rank_lbl); 
             } else {
-                printf("    "); 
+                printf("\x1b[40m    "); 
             }
 
             for (int c = 0; c < 8; c++) {
@@ -663,10 +662,10 @@ void draw_top_board(void) {
 
                 if (sub_r == 0) {
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Default Black pieces: Blue Text
+                    const char *fg_color = "\x1b[34m\x1b[1m"; // Default Black pieces: Blue Text, Bold
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // White pieces: Bold Red Text
+                            fg_color = "\x1b[31m\x1b[1m"; // White pieces: Bold Red Text
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
@@ -684,17 +683,16 @@ void draw_top_board(void) {
             }
 
             if (sub_r == 0) {
-                // Right rank label colored bold white (\x1b[1;37m) and reset (\x1b[0m)
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); // Kept 1-column left shifts for rank labels
+                // Right margin rank label - always white text, black background
+                printf("\x1b[37m\x1b[40m%d\n", rank_lbl); 
             } else {
-                printf("\n");
+                printf("\x1b[40m\n");
             }
         }
     }
 
-    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    // Coords colored bold white (\x1b[1;37m) and reset (\x1b[0m)
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    // Bottom file coordinates - always white text, black background
+    printf("\x1b[37m\x1b[40m        a b c d e f g h\n");
     fflush(stdout);
 }
 
@@ -703,7 +701,7 @@ void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H");
 
-    printf("\x1b[1;33m       -- Chess DSi --\x1b[0m\n");
+    printf("\x1b[1m\x1b[33m       -- Chess DSi --\x1b[0m\n");
     printf("--------------------------------\n");
 
     int king = find_king(&current_state, current_state.turn);
@@ -713,28 +711,28 @@ void draw_bottom_stats(void) {
 
     // Show Booting status if the handshake is not complete
     if (engine_state != ENGINE_STATE_READY) {
-        printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
+        printf("  Status: \x1b[1m\x1b[33m[Engine Booting...]\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("  Status: \x1b[1;31m[DRAW (50m-rule)]\x1b[0m\n");
+        printf("  Status: \x1b[1m\x1b[31m[DRAW (50m-rule)]\x1b[0m\n");
     } else if (repetitions >= 3) {
-        printf("  Status: \x1b[1;31m[DRAW (3-fold)]\x1b[0m\n");
+        printf("  Status: \x1b[1m\x1b[31m[DRAW (3-fold)]\x1b[0m\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("  Status: \x1b[1;31m[CHECKMATE!]\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[31m[CHECKMATE!]\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;36m[STALEMATE!]\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[36m[STALEMATE!]\x1b[0m\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite in CHECK!\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[32mWhite in CHECK!\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;35mBlack in CHECK!\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[35mBlack in CHECK!\x1b[0m\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite to play\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[32mWhite to play\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;35mBlack to play\x1b[0m\n");
+            printf("  Status: \x1b[1m\x1b[35mBlack to play\x1b[0m\n");
         }
     }
 
@@ -754,17 +752,17 @@ void draw_bottom_stats(void) {
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
             if (eval > 0.0) {
-                printf("| Eval: \x1b[1;32m%+.2f\x1b[0m\n", eval);
+                printf("| Eval: \x1b[1m\x1b[32m%+.2f\x1b[0m\n", eval);
             } else if (eval < 0.0) {
-                printf("| Eval: \x1b[1;31m%+.2f\x1b[0m\n", eval);
+                printf("| Eval: \x1b[1m\x1b[31m%+.2f\x1b[0m\n", eval);
             } else {
                 printf("| Eval: 0.00\n");
             }
         } else if (engine_score_type == 1) {
             if (engine_score_val > 0) {
-                printf("| Eval: \x1b[1;32m+M%d\x1b[0m\n", engine_score_val);
+                printf("| Eval: \x1b[1m\x1b[32m+M%d\x1b[0m\n", engine_score_val);
             } else if (engine_score_val < 0) {
-                printf("| Eval: \x1b[1;31m-M%d\x1b[0m\n", -engine_score_val);
+                printf("| Eval: \x1b[1m\x1b[31m-M%d\x1b[0m\n", -engine_score_val);
             } else {
                 printf("| Eval: M0\n");
             }
@@ -776,7 +774,7 @@ void draw_bottom_stats(void) {
     }
 
     printf("--------------------------------\n");
-    printf("\x1b[1;33m  RECENT MOVES:\x1b[0m\n");
+    printf("\x1b[1m\x1b[33m  RECENT MOVES:\x1b[0m\n");
 
     int total_full_moves = (history_count + 1) / 2;
     int start_move = (total_full_moves > 11) ? (total_full_moves - 10) : 1;
@@ -812,7 +810,7 @@ void draw_ui(void) {
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[7;1H\x1b[J"); // Jump to move history start and clear to bottom
-    printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
+    printf("\n\x1b[1m\x1b[33mPROMOTION! Tap Key selection:\n");
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
     
@@ -1015,7 +1013,7 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        printf("\x1b[16;1H\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
+        printf("\x1b[16;1H\x1b[1m\x1b[31m[ERROR] Thread creation failed!\x1b[0m\n");
         fflush(stdout);
         while(1) swiWaitForVBlank(); // Halt if thread creation fails
     }
