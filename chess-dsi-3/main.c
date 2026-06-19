@@ -988,7 +988,6 @@ int main(int argc, char **argv) {
     (void)argc; (void)argv;
     
     // Enable DS Interrupt Engine
-    irqInit();
     irqEnable(IRQ_VBLANK);
 
     // Set 2D Text Modes on both displays
