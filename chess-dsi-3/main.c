@@ -704,6 +704,7 @@ void draw_top_board(void) {
 // Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
+    printf("\x1b[1;1H"); // FIXED: Reset printing cursor to top-left of screen
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -840,7 +841,7 @@ void draw_bottom_stats(void) {
         }
 
         // Print combined line with a dark gray divider
-        printf(" %s\x1b[1;30m|\x1b[0m%s\n", left_str, right_str);
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
     fflush(stdout);
 }
