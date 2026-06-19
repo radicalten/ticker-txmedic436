@@ -29,19 +29,20 @@ static DS_Thread main_thread;
 static DS_Thread search_thread;
 static DS_Thread* current_thread = &main_thread;
 
-// Forward declare with attributes to prevent LTO from stripping and ensure compatibility
+// Forward declare to prevent LTO issues and keep compiler optimizations happy
 __attribute__((used)) __attribute__((noinline)) void thread_exit(void);
 void thread_launcher(void);
 void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
 
 // Naked assembly context switcher (ARM Mode)
+// Fixed: Restores 10 registers (r3-r11, lr/pc) to keep stack 8-byte aligned at all times
 __attribute__((naked)) __attribute__((target("arm")))
 void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
     __asm__ volatile (
-        "push {r4-r11, lr}\n\t"  // Save callee-saved registers and Link Register
+        "push {r3-r11, lr}\n\t"  // Save callee-saved registers (10 registers total)
         "str sp, [r0]\n\t"       // Save old SP into *current_sp (r0)
         "mov sp, r1\n\t"         // Load new SP (r1) into SP register
-        "pop {r4-r11, pc}\n\t"   // Restore callee-saved registers and jump to new context PC
+        "pop {r3-r11, pc}\n\t"   // Restore callee-saved registers and jump to new context PC
     );
 }
 
@@ -51,13 +52,13 @@ void thread_launcher(void) {
     __asm__ volatile (
         "mov r0, r5\n\t"           // Setup arg (r5) as first argument in r0
         "blx r4\n\t"               // Branch to start_routine (r4)
-        "ldr r1, =thread_exit\n\t" // Safely load pointer to thread_exit (keeps LTO happy)
+        "ldr r1, =thread_exit\n\t" // Safely load pointer to thread_exit
         "bx r1\n\t"                // Safe ARM-to-Thumb Branch and Exchange
         ".ltorg\n\t"               // Dump literal pool for LDR instruction
     );
 }
 
-// Instruct the compiler to preserve this function under LTO
+// Thread destruction routine
 __attribute__((used)) __attribute__((noinline))
 void thread_exit(void) {
     search_thread.active = 0;
@@ -166,7 +167,7 @@ void sf_recv_command(char *buf, size_t max_len) {
         }
         
         LightLock_Unlock(&q_gui_to_engine.lock);
-        ds_yield(); // Instead of sleeping, yield CPU back to the GUI
+        ds_yield(); // Yield CPU back to the GUI thread
     }
 }
 
@@ -183,7 +184,7 @@ int sf_printf(const char *format, ...) {
     }
     LightLock_Unlock(&q_engine_to_gui.lock);
     
-    ds_yield(); // Yield so the GUI can parse this output block immediately
+    ds_yield(); // Let GUI thread parse this immediately
     return written;
 }
 
@@ -289,8 +290,7 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int sf_get_output(char *buf, size_t max_len) {
-    // Before checking outputs, switch to the search engine to let it run a cycle.
-    ds_yield(); 
+    ds_yield(); // Give engine thread a turn to run and populate output
 
     LightLock_Lock(&q_engine_to_gui.lock);
     if (q_engine_to_gui.head == q_engine_to_gui.tail) {
@@ -310,13 +310,22 @@ int sf_get_output(char *buf, size_t max_len) {
     return (int)i;
 }
 
-// Emulated Thread Spawn Routine for Nintendo DS (ARM9)
+// Cooperative Thread Spawner for DSi
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
-    size_t stacksize = 32 * 1024; // 32 KB - Safe and optimized for DS RAM
 
-    // Allocate memory from the heap for the engine's stack
+    // --- FIX FOR BUG 1: Recursive thread guard ---
+    // If the engine main thread is already running, satisfy internal thread spawns safely
+    if (search_thread.active) {
+        if (thread != NULL) {
+            *thread = (pthread_t)999;
+        }
+        return 0; // Return dummy success code
+    }
+
+    size_t stacksize = 32 * 1024; // 32 KB Stack (optimized allocation size)
+
     void* stack_alloc = malloc(stacksize);
     if (!stack_alloc) {
         return -1; // Out of memory
@@ -325,22 +334,23 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     search_thread.stack_alloc = stack_alloc;
     search_thread.active = 1;
 
-    // Pre-populate the stack frame for cooperative switching
+    // Align the top stack limit
     uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
     
-    *(--sp) = (uint32_t)thread_launcher; // Land here when context shifts the first time
+    // --- FIX FOR BUG 2: Setup 10-register alignment frame mapping ---
+    *(--sp) = (uint32_t)thread_launcher; // pc
     *(--sp) = 0;                         // r11
     *(--sp) = 0;                         // r10
     *(--sp) = 0;                         // r9
     *(--sp) = 0;                         // r8
     *(--sp) = 0;                         // r7
     *(--sp) = 0;                         // r6
-    *(--sp) = (uint32_t)arg;             // r5 (Passed to thread_launcher)
-    *(--sp) = (uint32_t)start_routine;   // r4 (Passed to thread_launcher)
+    *(--sp) = (uint32_t)arg;             // r5 (arg passed to launcher)
+    *(--sp) = (uint32_t)start_routine;   // r4 (start_routine passed to launcher)
+    *(--sp) = 0;                         // r3 (dummy padding register to keep 8-byte stack alignment)
 
     search_thread.sp = (uint32_t)sp;
     
-    // Set thread variable to a dummy valid pointer to satisfy the caller
     if (thread != NULL) {
         *thread = (pthread_t)1;
     }
