@@ -748,7 +748,7 @@ void draw_bottom_stats(void) {
     } else if (time_control_type == 1) {
         printf("Lim: depth %d\n", time_control_val);
     } else {
-        printf("Lim: %d nodes\n", time_control_val);
+        printf("Lim: %d node\n", time_control_val);
     }
 
     // --- LINE 3: Engine Status, Eval, and Speed Combined ---
