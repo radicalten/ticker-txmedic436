@@ -584,7 +584,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered to standard 32x24 limits)
+// Draw the Top Screen Board (Uses high-fidelity 256-color Maple/Walnut patterns)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
@@ -644,29 +644,27 @@ void draw_top_board(void) {
                     }
                 }
 
-                // Portable High-Contrast standard 16-color ANSI definitions
+                // 256-color matching themes from the original 3DS project
                 if (is_cursor) {
-                    bg_color = "\x1b[43m"; // Yellow Cursor
+                    bg_color = "\x1b[48;5;208m"; // Bright orange cursor
                 } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Green Select
+                    bg_color = "\x1b[48;5;34m";  // Forest Green selection
                 } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Red Warning check
+                    bg_color = "\x1b[48;5;196m"; // Danger warnings red
                 } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Magenta History path
+                    bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // History path
                 } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Cyan target spaces
+                    bg_color = is_light ? "\x1b[48;5;151m" : "\x1b[48;5;108m"; // Light green targets
                 } else {
-                    bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; // White / Black board squares
+                    bg_color = is_light ? "\x1b[48;5;180m" : "\x1b[48;5;94m"; // Wood patterns (Maple / Walnut)
                 }
 
                 if (sub_r == 0) {
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[30;1m"; // Dark Gray
+                    const char *fg_color = "\x1b[38;5;232m"; // Black pieces (standard dark ANSI)
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // Red for White pieces
-                        } else {
-                            fg_color = "\x1b[34;1m"; // Blue for Black pieces
+                            fg_color = "\x1b[38;5;255m\x1b[1m"; // White pieces (Bold light ANSI)
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
