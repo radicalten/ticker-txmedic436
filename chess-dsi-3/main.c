@@ -53,6 +53,9 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
+// Optimization Flag: Only redraw screens when something changes
+int redraw_needed = 1;
+
 PrintConsole topConsole, bottomConsole;
 
 void init_board(BoardState *state);
@@ -233,6 +236,7 @@ void trigger_engine_move(void) {
         sprintf(go_cmd, "go nodes %d", time_control_val);
     }
     sf_send_command(go_cmd);
+    redraw_needed = 1;
 }
 
 void process_engine_output(char *line) {
@@ -246,13 +250,15 @@ void process_engine_output(char *line) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
+            redraw_needed = 1;
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 1"); // 4MB cache fits safe for Nintendo DS RAM limits
+            sf_send_command("setoption name Hash value 1"); 
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
+            redraw_needed = 1;
         }
     }
 
@@ -262,6 +268,7 @@ void process_engine_output(char *line) {
             long long val;
             if (sscanf(nps_ptr, " nps %lld", &val) == 1) {
                 engine_nps = val;
+                redraw_needed = 1;
             }
         }
 
@@ -277,6 +284,7 @@ void process_engine_output(char *line) {
                     engine_score_type = 1;
                     engine_score_val = score_val * current_state.turn;
                 }
+                redraw_needed = 1;
             }
         }
     }
@@ -286,6 +294,7 @@ void process_engine_output(char *line) {
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
+                redraw_needed = 1;
                 return;
             }
             
@@ -297,6 +306,7 @@ void process_engine_output(char *line) {
                 current_state = next;
             }
             engine_thinking = 0;
+            redraw_needed = 1;
         }
     }
 }
@@ -584,14 +594,12 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically, shifted 1 unit right horizontally relative to previous 2-left shift)
+// Draw the Top Screen Board (Centered vertically)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
-    printf("\n\n"); // Vertical Centering Padding (2 empty lines)
+    printf("\n\n"); // Vertical Centering Padding
 
-    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    // Coords are colored bold white (\x1b[1;37m) and then immediately reset (\x1b[0m)
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
 
     int king_in_check = -1;
@@ -607,12 +615,10 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
-            // Horizontal row offset shifted 1 to the right: Increased leading spaces from 3 to 4
             printf("    "); 
 
             if (sub_r == 0) {
-                // Left Rank labels are colored bold white (\x1b[1;37m) and then reset (\x1b[0m)
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); // Margin of exactly 4 characters
+                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
             } else {
                 printf("    "); 
             }
@@ -646,27 +652,26 @@ void draw_top_board(void) {
                     }
                 }
 
-                // Clean standard 16-color ANSI theme mappings
                 if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White/Gray Cursor (high-contrast over yellow/black)
+                    bg_color = "\x1b[47m"; // White/Gray Cursor (High contrast)
                 } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Green Selection Background
+                    bg_color = "\x1b[42m"; // Green Selection
                 } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Red King-in-Check Warning Background
+                    bg_color = "\x1b[41m"; // Red King-in-Check
                 } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Magenta History-Path Background
+                    bg_color = "\x1b[45m"; // Magenta History Path
                 } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Cyan Target-Destinations Background
+                    bg_color = "\x1b[46m"; // Cyan Targets
                 } else {
-                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow / Black board squares
+                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow/Black Board
                 }
 
                 if (sub_r == 0) {
                     const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Default Black pieces: Blue Text
+                    const char *fg_color = "\x1b[34;1m"; // Blue Text for Black Pieces
                     if (p != 0) {
                         if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // White pieces: Bold Red Text
+                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
@@ -684,16 +689,13 @@ void draw_top_board(void) {
             }
 
             if (sub_r == 0) {
-                // Right Rank labels are colored bold white (\x1b[1;37m) and reset (\x1b[0m)
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); // Kept 1-column left shifts for rank labels
+                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
             } else {
                 printf("\n");
             }
         }
     }
 
-    // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    // Coords are colored bold white (\x1b[1;37m) and reset (\x1b[0m)
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
     fflush(stdout);
 }
@@ -711,7 +713,6 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // Show Booting status if the handshake is not complete
     if (engine_state != ENGINE_STATE_READY) {
         printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
@@ -811,7 +812,7 @@ void draw_ui(void) {
 
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[7;1H\x1b[J"); // Jump to move history start and clear to bottom
+    printf("\x1b[7;1H\x1b[J"); 
     printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
@@ -826,6 +827,7 @@ int get_promo_choice(void) {
         if (kDown & KEY_A) { choice = 2; break; }
         swiWaitForVBlank();
     }
+    redraw_needed = 1;
     return choice;
 }
 
@@ -1005,11 +1007,9 @@ int main(int argc, char **argv) {
     sf_bridge_init();
     init_board(&current_state);
 
-    // Draw the chessboard and stats immediately so the user sees them instantly
-    draw_ui();
-    swiWaitForVBlank();
+    // Render immediately on boot
+    redraw_needed = 1;
 
-    // Spawn Stockfish using our customized Cooperative fiber launcher
     pthread_t stockfish_thread;
     int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
 
@@ -1017,36 +1017,46 @@ int main(int argc, char **argv) {
         consoleSelect(&bottomConsole);
         printf("\x1b[16;1H\x1b[1;31m[ERROR] Thread creation failed!\x1b[0m\n");
         fflush(stdout);
-        while(1) swiWaitForVBlank(); // Halt if thread creation fails
+        while(1) swiWaitForVBlank(); 
     }
 
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
-        while (pmMainLoop()) {
+    int frame_counter = 0;
+
+    while (pmMainLoop()) {
         scanKeys();
         u32 kDown = keysDown();
 
         if (kDown & KEY_START) break; 
 
-        if (kDown & KEY_UP)    { if (cursor_r > 0) cursor_r--; }
-        if (kDown & KEY_DOWN)  { if (cursor_r < 7) cursor_r++; }
-        if (kDown & KEY_RIGHT) { if (cursor_c < 7) cursor_c++; }
-        if (kDown & KEY_LEFT)  { if (cursor_c > 0) cursor_c--; }
+        int input_detected = 0;
 
-        if (kDown & KEY_A)      handle_select();
-        if (kDown & KEY_B)      handle_undo();
-        if (kDown & KEY_SELECT) handle_reset_board();
-        if (kDown & KEY_X)      board_orientation = -board_orientation;
-        if (kDown & KEY_Y)      handle_switch_sides();
+        if (kDown & KEY_UP)    { if (cursor_r > 0) { cursor_r--; input_detected = 1; } }
+        if (kDown & KEY_DOWN)  { if (cursor_r < 7) { cursor_r++; input_detected = 1; } }
+        if (kDown & KEY_RIGHT) { if (cursor_c < 7) { cursor_c++; input_detected = 1; } }
+        if (kDown & KEY_LEFT)  { if (cursor_c > 0) { cursor_c--; input_detected = 1; } }
+
+        if (kDown & KEY_A)      { handle_select(); input_detected = 1; }
+        if (kDown & KEY_B)      { handle_undo(); input_detected = 1; }
+        if (kDown & KEY_SELECT) { handle_reset_board(); input_detected = 1; }
+        if (kDown & KEY_X)      { board_orientation = -board_orientation; input_detected = 1; }
+        if (kDown & KEY_Y)      { handle_switch_sides(); input_detected = 1; }
 
         if (kDown & KEY_L) {
             time_control_type = (time_control_type + 1) % 3;
             time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+            input_detected = 1;
         }
         if (kDown & KEY_R) {
             adjust_time_control();
+            input_detected = 1;
+        }
+
+        if (input_detected) {
+            redraw_needed = 1;
         }
 
         int engine_active = 0;
@@ -1062,11 +1072,20 @@ int main(int argc, char **argv) {
         }
 
         read_from_engine();
-        draw_ui();
 
-        // --- YIELD CPU SO COOPERATIVE MULTITASKER EXECUTS ENGINE STEPS ---
+        // Periodically refresh the statistics while the engine is calculating
+        frame_counter++;
+        if (engine_thinking && (frame_counter % 15 == 0)) {
+            redraw_needed = 1;
+        }
+
+        // Only redraw the text screens when something actually updates
+        if (redraw_needed) {
+            draw_ui();
+            redraw_needed = 0;
+        }
+
         ds_yield();
-
         swiWaitForVBlank();
     }
 
