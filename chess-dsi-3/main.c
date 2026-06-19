@@ -595,7 +595,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically, double-height format)
+// Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
@@ -701,7 +701,7 @@ void draw_top_board(void) {
     fflush(stdout);
 }
 
-// Draw the Bottom Screen stats/evaluation details with Live Thinking Dashboard
+// Draw the Bottom Screen stats/evaluation details (Optimized & Condensed)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H");
@@ -714,6 +714,7 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
+    // Condensed Game Status Line
     if (engine_state != ENGINE_STATE_READY) {
         printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
@@ -740,65 +741,62 @@ void draw_bottom_stats(void) {
         }
     }
 
+    // Condensed Modes & Limits Line
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("  Modes:  W:%-3s | B:%-3s\n", w_play, b_play);
+    printf("  Modes:  W:%s|B:%s ", w_play, b_play);
 
     if (time_control_type == 0) {
-        printf("  Limit:  %-4d ms\n", time_control_val);
+        printf("| Lim: %d ms\n", time_control_val);
     } else if (time_control_type == 1) {
-        printf("  Limit:  depth %-2d\n", time_control_val);
+        printf("| Lim: depth %d\n", time_control_val);
     } else {
-        printf("  Limit:  %-7d nodes\n", time_control_val);
+        printf("| Lim: %d nodes\n", time_control_val);
     }
 
-    printf("--------------------------------\n");
-
-    // --- ENGINE THINKING DASHBOARD ---
-    printf("\x1b[1;33m  ENGINE STATUS:\x1b[0m\n");
+    // Condensed Engine Thinking Dashboard
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
-        
-        printf("  Thinking... [%c]  ", current_spin);
+        printf("  Engine: Active [%c] ", current_spin);
 
-        // Score display
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            if (eval > 0.0) printf("Eval: \x1b[1;32m%+.2f\x1b[0m\n", eval);
-            else if (eval < 0.0) printf("Eval: \x1b[1;31m%+.2f\x1b[0m\n", eval);
-            else printf("Eval: 0.00\n");
+            if (eval > 0.0) printf("| Eval: \x1b[1;32m%+.2f\x1b[0m\n", eval);
+            else if (eval < 0.0) printf("| Eval: \x1b[1;31m%+.2f\x1b[0m\n", eval);
+            else printf("| Eval: 0.00\n");
         } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) printf("Eval: \x1b[1;32m+M%d\x1b[0m\n", engine_score_val);
-            else printf("Eval: \x1b[1;31m-M%d\x1b[0m\n", -engine_score_val);
+            if (engine_score_val > 0) printf("| Eval: \x1b[1;32m+M%d\x1b[0m\n", engine_score_val);
+            else printf("| Eval: \x1b[1;31m-M%d\x1b[0m\n", -engine_score_val);
         } else {
-            printf("Eval: ----\n");
+            printf("| Eval: ----\n");
         }
-
-        // NPS output speed
+        
+        // NPS speed display
         if (engine_nps > 0) {
             printf("  Speed:  %lld nps\n", engine_nps);
         } else {
             printf("  Speed:  ---- nps\n");
         }
     } else {
-        printf("  Status: Idle\n");
+        printf("  Engine: Idle       ");
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            printf("  Last Eval: %+.2f\n", eval);
+            printf("| Eval: %+.2f\n", eval);
         } else {
-            printf("  Last Eval: ----\n");
+            printf("| Eval: ----\n");
         }
+        printf("  Speed:  Idle\n");
     }
 
     printf("--------------------------------\n");
 
-    // --- CONDENSED MOVE LIST (Shows last 5 full moves) ---
+    // --- EXPANDED MOVE LIST (Shows last 11 full moves) ---
     printf("\x1b[1;33m  RECENT MOVES:\x1b[0m\n");
 
     int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 5) ? (total_full_moves - 4) : 1;
-    for (int idx = 0; idx < 5; idx++) {
+    int start_move = (total_full_moves > 11) ? (total_full_moves - 10) : 1;
+    for (int idx = 0; idx < 11; idx++) {
         int display = start_move + idx;
         if (total_full_moves > 0 && display <= total_full_moves) {
             int w_idx = (display - 1) * 2;
