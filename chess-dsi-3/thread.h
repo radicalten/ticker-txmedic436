@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <calico/types.h>
 #include <nds.h>
+#include "3ds_bridge.h"
 
 #include "types.h"
 
