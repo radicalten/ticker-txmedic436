@@ -19,6 +19,7 @@
 */
 
 #include "3ds_bridge.h"
+#include <nds.h>
 #include <stdio.h>
 
 #include "bitboard.h"
