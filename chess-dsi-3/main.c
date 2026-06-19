@@ -698,6 +698,7 @@ void draw_top_board(void) {
     }
 
     printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    printf("\x1b[J"); // Clears everything from here to the bottom of the screen (eliminates "engine up trans" boot residues)
     fflush(stdout);
 }
 
