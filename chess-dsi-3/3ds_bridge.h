@@ -4,14 +4,18 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <pthread.h> // Always use the compiler's official pthread definitions
 
-// On Nintendo DS/DSi (__NDS__), pthread.h is not available. 
-// We define compatibility stubs instead.
+// On Nintendo DS/DSi, define a dummy LightLock so engine files (like thread.h) compile
 #ifdef __NDS__
-typedef int pthread_t;
-typedef int pthread_attr_t;
-#else
-#include <pthread.h>
+typedef struct {
+    int placeholder;
+} LightLock;
+
+static inline void LightLock_Init(LightLock* lock) { (void)lock; }
+static inline void LightLock_Lock(LightLock* lock) { (void)lock; }
+static inline void LightLock_Unlock(LightLock* lock) { (void)lock; }
+static inline int LightLock_TryLock(LightLock* lock) { (void)lock; return 0; }
 #endif
 
 #ifdef __cplusplus
