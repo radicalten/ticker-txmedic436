@@ -22,7 +22,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>  // Enforced inclusion for explicit attribute handling
-#include <3ds.h>
+#include <calico/types.h>
+#include <nds.h>
 
 #include "material.h"
 #include "movegen.h"
