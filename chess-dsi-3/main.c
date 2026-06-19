@@ -704,7 +704,6 @@ void draw_top_board(void) {
 // Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
-    //printf("\x1b[1;1H");
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -787,15 +786,24 @@ void draw_bottom_stats(void) {
         printf("Offline\n");
     }
 
-    // --- EXPANDED MOVE LIST (Shows last 11 full moves) ---
+    // --- EXPANDED DUAL-COLUMN MOVE LIST (Shows last 28 full moves) ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\n");
 
     int total_full_moves = (history_count + 1) / 2;
-    int start_move = (total_full_moves > 11) ? (total_full_moves - 10) : 1;
-    for (int idx = 0; idx < 11; idx++) {
-        int display = start_move + idx;
-        if (total_full_moves > 0 && display <= total_full_moves) {
-            int w_idx = (display - 1) * 2;
+    int max_visible_moves = 28;
+    int half_visible = max_visible_moves / 2; // 14 rows total
+    int start_move = (total_full_moves > max_visible_moves) ? (total_full_moves - (max_visible_moves - 1)) : 1;
+
+    for (int r = 0; r < half_visible; r++) {
+        int left_display = start_move + r;
+        int right_display = start_move + half_visible + r;
+
+        char left_str[32] = "";
+        char right_str[32] = "";
+
+        // Render Left Column Move Data
+        if (total_full_moves > 0 && left_display <= total_full_moves) {
+            int w_idx = (left_display - 1) * 2;
             int b_idx = w_idx + 1;
             char w_str[10] = "-----";
             char b_str[10] = "-----";
@@ -807,10 +815,32 @@ void draw_bottom_stats(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            printf("  %2d. %-5s %-5s\n", display, w_str, b_str);
+            sprintf(left_str, "%2d.%-5s%-5s", left_display, w_str, b_str);
         } else {
-            printf("  %2d.  ---   --- \n", display);
+            sprintf(left_str, "%2d. ---  --- ", left_display);
         }
+
+        // Render Right Column Move Data
+        if (total_full_moves > 0 && right_display <= total_full_moves) {
+            int w_idx = (right_display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) {
+                move_to_san(&history[w_idx], move_history[w_idx], w_str);
+            }
+            if (b_idx < history_count) {
+                move_to_san(&history[b_idx], move_history[b_idx], b_str);
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(right_str, "%2d.%-5s%-5s", right_display, w_str, b_str);
+        } else {
+            sprintf(right_str, "%2d. ---  --- ", right_display);
+        }
+
+        // Print combined line with a dark gray divider
+        printf(" %s\x1b[1;30m|\x1b[0m%s\n", left_str, right_str);
     }
     fflush(stdout);
 }
