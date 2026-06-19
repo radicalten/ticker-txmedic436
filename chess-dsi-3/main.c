@@ -713,7 +713,7 @@ void draw_bottom_stats(void) {
 
     // --- LINE 1: Title & Turn Status Combined ---
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[1;33mB...\x1b[0m\n");
+        //printf("\x1b[1;33mB...\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[0m\n");
     } else if (repetitions >= 3) {
