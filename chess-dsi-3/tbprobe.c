@@ -522,7 +522,7 @@ static const uint8_t FlipDiag[] = {
    7, 15, 23, 31, 39, 47, 55, 63
 };
 
-static const uint8_t Lower[] = {
+static const uint8_t TbLower[] = {
   28,  0,  1,  2,  3,  4,  5,  6,
    0, 29,  7,  8,  9, 10, 11, 12,
    1,  7, 30, 13, 14, 15, 16, 17,
@@ -753,9 +753,9 @@ INLINE size_t encode(int *p, struct EncInfo *ei, struct BaseEntry *be,
       if (OffDiag[p[0]])
         idx = Triangle[p[0]] * 63*62 + (p[1] - s1) * 62 + (p[2] - s2);
       else if (OffDiag[p[1]])
-        idx = 6*63*62 + Diag[p[0]] * 28*62 + Lower[p[1]] * 62 + p[2] - s2;
+        idx = 6*63*62 + Diag[p[0]] * 28*62 + TbLower[p[1]] * 62 + p[2] - s2;
       else if (OffDiag[p[2]])
-        idx = 6*63*62 + 4*28*62 + Diag[p[0]] * 7*28 + (Diag[p[1]] - s1) * 28 + Lower[p[2]];
+        idx = 6*63*62 + 4*28*62 + Diag[p[0]] * 7*28 + (Diag[p[1]] - s1) * 28 + TbLower[p[2]];
       else
         idx = 6*63*62 + 4*28*62 + 4*7*28 + Diag[p[0]] * 7*6 + (Diag[p[1]] - s1) * 6 + (Diag[p[2]] - s2);
       k = 3;
