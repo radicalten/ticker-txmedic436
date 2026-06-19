@@ -653,9 +653,8 @@ void draw_top_board(void) {
                     }
                 }
 
-                // Standard ANSI Board Mapping (Ensuring compatibility)
                 if (is_cursor) {
-                    bg_color = "\x1b[46m"; // Cyan Cursor (Contrasts on Black, White, Red)
+                    bg_color = "\x1b[47m"; // White/Gray Cursor
                 } else if (is_selected) {
                     bg_color = "\x1b[42m"; // Green Selection
                 } else if (sq == king_in_check) {
@@ -663,9 +662,9 @@ void draw_top_board(void) {
                 } else if (is_prev_move) {
                     bg_color = "\x1b[45m"; // Magenta History Path
                 } else if (is_legal_dest) {
-                    bg_color = "\x1b[42m"; // Green targets (Clean professional look)
+                    bg_color = "\x1b[46m"; // Cyan Targets
                 } else {
-                    bg_color = is_light ? "\x1b[47m" : "\x1b[40m"; // White / Black Board
+                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow/Black Board
                 }
 
                 if (sub_r == 0) {
@@ -674,10 +673,6 @@ void draw_top_board(void) {
                     if (p != 0) {
                         if (p > 0) {
                             fg_color = "\x1b[31;1m"; // Bold Red for White Pieces
-                        }
-                        // Safety: Checked King renders in white on red background for readability
-                        if (sq == king_in_check) {
-                            fg_color = "\x1b[37;1m"; 
                         }
                         switch (abs(p)) {
                             case 1: piece_str = "P"; break;
@@ -709,56 +704,54 @@ void draw_top_board(void) {
 // Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
+    printf("\x1b[1;1H"); // FIXED: Reset printing cursor to top-left of screen
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Title & Turn Status Combined (Aligned strictly to Column 1) ---
-    printf("\x1b[1;1H"); 
+    // --- LINE 1: Title & Turn Status Combined (Added \x1b[K to clear line tail) ---
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[33mBooting...\x1b[K");
+        //printf("\x1b[1;33mB...\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[31mDraw (50m-rule)\x1b[K");
+        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[31mDraw (3-fold)\x1b[K");
+        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[31mCHECKMATE!\x1b[K");
+            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[36mSTALEMATE!\x1b[K");
+            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[31mWhite in CHECK!\x1b[K");
+            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[31mBlack in CHECK!\x1b[K");
+            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[32mWhite's turn\x1b[K");
+            printf("\x1b[1;32mWhite's turn\x1b[K\n");
         } else {
-            printf("\x1b[35mBlack's turn\x1b[K");
+            printf("\x1b[1;35mBlack's turn\x1b[K\n");
         }
     }
 
-    // --- LINE 2: Modes & Limits Combined (Aligned strictly to Column 1) ---
-    printf("\x1b[2;1H"); 
+    // --- LINE 2: Modes & Limits Combined (Added \x1b[K to clear "node" trail) ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     printf("W:%s B:%s | ", w_play, b_play);
 
     if (time_control_type == 0) {
-        printf("Lim: %dms\x1b[K", time_control_val);
+        printf("Lim: %dms\x1b[K\n", time_control_val);
     } else if (time_control_type == 1) {
-        printf("Lim: depth %d\x1b[K", time_control_val);
+        printf("Lim: depth %d\x1b[K\n", time_control_val);
     } else {
-        printf("Lim: %d node\x1b[K", time_control_val);
+        printf("Lim: %d node\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed Combined (Aligned strictly to Column 1) ---
-    printf("\x1b[3;1H"); 
+    // --- LINE 3: Engine Status, Eval, and Speed Combined (Added \x1b[K to clear line tail) ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
@@ -776,12 +769,12 @@ void draw_bottom_stats(void) {
 
         if (engine_nps > 0) {
             if (engine_nps >= 1000) {
-                printf("%lld knps\x1b[K", engine_nps / 1000);
+                printf("%lld knps\x1b[K\n", engine_nps / 1000);
             } else {
-                printf("%lld nps\x1b[K", engine_nps);
+                printf("%lld nps\x1b[K\n", engine_nps);
             }
         } else {
-            printf("---- nps\x1b[K");
+            printf("---- nps\x1b[K\n");
         }
     } else {
         printf("Eng: Idle | ");
@@ -791,22 +784,18 @@ void draw_bottom_stats(void) {
         } else {
             printf("Ev: ---- | ");
         }
-        printf("Offline\x1b[K");
+        printf("Offline\x1b[K\n");
     }
 
-    // --- LINE 4: Move List Header ---
-    printf("\x1b[4;1H\x1b[33mRECENT MOVES:\x1b[0m\x1b[K");
-
     // --- EXPANDED DUAL-COLUMN MOVE LIST (Shows last 28 full moves) ---
+    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\n");
+
     int total_full_moves = (history_count + 1) / 2;
     int max_visible_moves = 28;
     int half_visible = max_visible_moves / 2; // 14 rows total
     int start_move = (total_full_moves > max_visible_moves) ? (total_full_moves - (max_visible_moves - 1)) : 1;
 
     for (int r = 0; r < half_visible; r++) {
-        // Absolute line coordinate positioning for move columns
-        printf("\x1b[%d;1H", 5 + r);
-
         int left_display = start_move + r;
         int right_display = start_move + half_visible + r;
 
@@ -852,7 +841,7 @@ void draw_bottom_stats(void) {
         }
 
         // Print combined line with a dark gray divider
-        printf(" %s\x1b[30m|\x1b[0m%s\x1b[K", left_str, right_str); 
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
     fflush(stdout);
 }
