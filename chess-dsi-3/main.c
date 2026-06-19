@@ -702,98 +702,97 @@ void draw_top_board(void) {
     fflush(stdout);
 }
 
-// Draw the Bottom Screen stats/evaluation details (Optimized & Condensed)
+// Draw the Bottom Screen (Hyper-Condensed Layout)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H");
-
-    printf("\x1b[1;33m       -- Chess DSi --\x1b[0m\n");
-    printf("--------------------------------\n");
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // Condensed Game Status Line
+    // --- LINE 1: Title & Turn Status Combined ---
+    printf("\x1b[1;33mChess DSi\x1b[0m | ");
     if (engine_state != ENGINE_STATE_READY) {
-        printf("  Status: \x1b[1;33m[Engine Booting...]\x1b[0m\n");
+        printf("\x1b[1;33mBooting...\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("  Status: \x1b[1;31m[DRAW (50m-rule)]\x1b[0m\n");
+        printf("\x1b[1;31mDraw (50m-rule)\x1b[0m\n");
     } else if (repetitions >= 3) {
-        printf("  Status: \x1b[1;31m[DRAW (3-fold)]\x1b[0m\n");
+        printf("\x1b[1;31mDraw (3-fold)\x1b[0m\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("  Status: \x1b[1;31m[CHECKMATE!]\x1b[0m\n");
+            printf("\x1b[1;31mCHECKMATE!\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;36m[STALEMATE!]\x1b[0m\n");
+            printf("\x1b[1;36mSTALEMATE!\x1b[0m\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite in CHECK!\x1b[0m\n");
+            printf("\x1b[1;31mWhite in CHECK!\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;35mBlack in CHECK!\x1b[0m\n");
+            printf("\x1b[1;31mBlack in CHECK!\x1b[0m\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("  Status: \x1b[1;32mWhite to play\x1b[0m\n");
+            printf("\x1b[1;32mWhite's turn\x1b[0m\n");
         } else {
-            printf("  Status: \x1b[1;35mBlack to play\x1b[0m\n");
+            printf("\x1b[1;35mBlack's turn\x1b[0m\n");
         }
     }
 
-    // Condensed Modes & Limits Line
+    // --- LINE 2: Modes & Limits Combined ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("  Modes:  W:%s|B:%s ", w_play, b_play);
+    printf("Modes: W:%s B:%s | ", w_play, b_play);
 
     if (time_control_type == 0) {
-        printf("| Lim: %d ms\n", time_control_val);
+        printf("Lim: %dms\n", time_control_val);
     } else if (time_control_type == 1) {
-        printf("| Lim: depth %d\n", time_control_val);
+        printf("Lim: depth %d\n", time_control_val);
     } else {
-        printf("| Lim: %d nodes\n", time_control_val);
+        printf("Lim: %d nodes\n", time_control_val);
     }
 
-    // Condensed Engine Thinking Dashboard
+    // --- LINE 3: Engine Status, Eval, and Speed Combined ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
-        printf("  Engine: Active [%c] ", current_spin);
+        printf("Eng: Thinking [%c] | ", current_spin);
 
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            if (eval > 0.0) printf("| Eval: \x1b[1;32m%+.2f\x1b[0m\n", eval);
-            else if (eval < 0.0) printf("| Eval: \x1b[1;31m%+.2f\x1b[0m\n", eval);
-            else printf("| Eval: 0.00\n");
+            printf("Ev: %+.2f | ", eval);
         } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) printf("| Eval: \x1b[1;32m+M%d\x1b[0m\n", engine_score_val);
-            else printf("| Eval: \x1b[1;31m-M%d\x1b[0m\n", -engine_score_val);
+            if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
+            else printf("Ev: -M%d | ", -engine_score_val);
         } else {
-            printf("| Eval: ----\n");
+            printf("Ev: ---- | ");
         }
-        
-        // NPS speed display
+
         if (engine_nps > 0) {
-            printf("  Speed:  %lld nps\n", engine_nps);
+            if (engine_nps >= 1000) {
+                printf("%lld knps\n", engine_nps / 1000);
+            } else {
+                printf("%lld nps\n", engine_nps);
+            }
         } else {
-            printf("  Speed:  ---- nps\n");
+            printf("---- nps\n");
         }
     } else {
-        printf("  Engine: Idle       ");
+        printf("Eng: Idle          | ");
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            printf("| Eval: %+.2f\n", eval);
+            printf("Ev: %+.2f | ", eval);
         } else {
-            printf("| Eval: ----\n");
+            printf("Ev: ---- | ");
         }
-        printf("  Speed:  Idle\n");
+        printf("Offline\n");
     }
 
     printf("--------------------------------\n");
 
     // --- EXPANDED MOVE LIST (Shows last 11 full moves) ---
-    printf("\x1b[1;33m  RECENT MOVES:\x1b[0m\n");
+    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\n");
 
     int total_full_moves = (history_count + 1) / 2;
     int start_move = (total_full_moves > 11) ? (total_full_moves - 10) : 1;
