@@ -10,6 +10,11 @@
 #ifdef __NDS__
 #include <sys/time.h> // Required for gettimeofday
 
+// Trick the compiler to prevent the DS Keyboard library from loading
+// to avoid conflicts with 'Lower' and 'Upper' symbols in Stockfish
+#define NDS_ARM9_KEYBOARD_H
+#define __KEYBOARD_H__
+
 typedef struct {
     int placeholder;
 } LightLock;
