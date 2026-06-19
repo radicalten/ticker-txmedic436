@@ -29,10 +29,10 @@ static DS_Thread main_thread;
 static DS_Thread search_thread;
 static DS_Thread* current_thread = &main_thread;
 
-// Assembly declarations for context switching
-void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
+// Forward declare with attributes to prevent LTO from stripping and ensure compatibility
+__attribute__((used)) __attribute__((noinline)) void thread_exit(void);
 void thread_launcher(void);
-void thread_exit(void);
+void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
 
 // Naked assembly context switcher (ARM Mode)
 __attribute__((naked)) __attribute__((target("arm")))
@@ -49,12 +49,16 @@ void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
 __attribute__((naked)) __attribute__((target("arm")))
 void thread_launcher(void) {
     __asm__ volatile (
-        "mov r0, r5\n\t"         // Setup arg (r5) as first argument in r0
-        "blx r4\n\t"             // Branch to start_routine (r4)
-        "b thread_exit\n\t"      // If thread finishes, branch to exit handler
+        "mov r0, r5\n\t"           // Setup arg (r5) as first argument in r0
+        "blx r4\n\t"               // Branch to start_routine (r4)
+        "ldr r1, =thread_exit\n\t" // Safely load pointer to thread_exit (keeps LTO happy)
+        "bx r1\n\t"                // Safe ARM-to-Thumb Branch and Exchange
+        ".ltorg\n\t"               // Dump literal pool for LDR instruction
     );
 }
 
+// Instruct the compiler to preserve this function under LTO
+__attribute__((used)) __attribute__((noinline))
 void thread_exit(void) {
     search_thread.active = 0;
     current_thread = &main_thread;
@@ -310,7 +314,7 @@ int sf_get_output(char *buf, size_t max_len) {
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
-    size_t stacksize = 256 * 1024; // 256 KB
+    size_t stacksize = 32 * 1024; // 32 KB - Safe and optimized for DS RAM
 
     // Allocate memory from the heap for the engine's stack
     void* stack_alloc = malloc(stacksize);
