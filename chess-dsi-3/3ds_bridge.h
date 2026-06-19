@@ -4,7 +4,15 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
+
+// On Nintendo DS/DSi (__NDS__), pthread.h is not available. 
+// We define compatibility stubs instead.
+#ifdef __NDS__
+typedef int pthread_t;
+typedef int pthread_attr_t;
+#else
 #include <pthread.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +35,9 @@ int sf_putc(int character, FILE *stream);
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 int sf_get_output(char *buf, size_t max_len);
+
+// Cooperative yield function for DS GUI integration
+void ds_yield(void);
 
 // Custom thread override to set stack sizes and cores
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
