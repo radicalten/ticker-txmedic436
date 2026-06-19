@@ -1,12 +1,21 @@
 #include "3ds_bridge.h"
-#include <calico/types.h>
 #include <nds.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
 
-// Expanded to 64KB to easily handle heavy Stockfish PV search info outputs
 #define MSG_QUEUE_SIZE 65536
+
+// Stub LightLock out, as cooperative threading on single-core does not require locking
+typedef struct {
+    int placeholder;
+} LightLock;
+
+static inline void LightLock_Init(LightLock* lock) { (void)lock; }
+static inline void LightLock_Lock(LightLock* lock) { (void)lock; }
+static inline void LightLock_Unlock(LightLock* lock) { (void)lock; }
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
@@ -17,6 +26,62 @@ typedef struct {
 
 static MsgQueue q_gui_to_engine;
 static MsgQueue q_engine_to_gui;
+
+// Cooperative Thread Scheduler Definitions
+typedef struct {
+    uint32_t sp;
+    int active;
+    void* stack_alloc;
+} DS_Thread;
+
+static DS_Thread main_thread;
+static DS_Thread search_thread;
+static DS_Thread* current_thread = &main_thread;
+
+// Assembly declarations for context switching
+void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
+void thread_launcher(void);
+void thread_exit(void);
+
+// Naked assembly context switcher (ARM Mode)
+__attribute__((naked)) __attribute__((target("arm")))
+void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
+    __asm__ volatile (
+        "push {r4-r11, lr}\n\t"  // Save callee-saved registers and Link Register
+        "str sp, [r0]\n\t"       // Save old SP into *current_sp (r0)
+        "mov sp, r1\n\t"         // Load new SP (r1) into SP register
+        "pop {r4-r11, pc}\n\t"   // Restore callee-saved registers and jump to new context PC
+    );
+}
+
+// Naked assembly launcher for starting a thread (ARM Mode)
+__attribute__((naked)) __attribute__((target("arm")))
+void thread_launcher(void) {
+    __asm__ volatile (
+        "mov r0, r5\n\t"         // Setup arg (r5) as first argument in r0
+        "blx r4\n\t"             // Branch to start_routine (r4)
+        "b thread_exit\n\t"      // If thread finishes, branch to exit handler
+    );
+}
+
+void thread_exit(void) {
+    search_thread.active = 0;
+    current_thread = &main_thread;
+    ds_switch_context(&search_thread.sp, main_thread.sp);
+}
+
+// Yield CPU time between GUI and Engine
+void ds_yield(void) {
+    if (!search_thread.active) return; // Nothing to switch to
+
+    DS_Thread* old = current_thread;
+    if (current_thread == &main_thread) {
+        current_thread = &search_thread;
+    } else {
+        current_thread = &main_thread;
+    }
+    ds_switch_context(&old->sp, current_thread->sp);
+}
 
 // Undefine target library macros to avoid infinite loops inside overrides
 #undef printf
@@ -37,23 +102,19 @@ void sf_bridge_init(void) {
 
     q_engine_to_gui.head = q_engine_to_gui.tail = 0;
     LightLock_Init(&q_engine_to_gui.lock);
+    
+    main_thread.active = 1;
+    search_thread.active = 0;
+    current_thread = &main_thread;
 }
 
-// Thread-safe helper to push characters.
-// Safely drops the oldest unread byte if the buffer fills up, preventing state corruption.
 static void queue_push_char(MsgQueue *q, char c) {
     int next_head = (q->head + 1) % MSG_QUEUE_SIZE;
     if (next_head == q->tail) {
-        // Buffer overflow! Discard the oldest character to keep pointers valid
         q->tail = (q->tail + 1) % MSG_QUEUE_SIZE;
     }
     q->data[q->head] = c;
-
-    // ARM Memory Fence: Ensure the data is written to RAM before another CPU
-    // core can read the updated 'head' index pointer.
-    __sync_synchronize();
     q->head = next_head;
-    __sync_synchronize();
 }
 
 void sf_send_command(const char *cmd) {
@@ -65,14 +126,11 @@ void sf_send_command(const char *cmd) {
     LightLock_Unlock(&q_gui_to_engine.lock);
 }
 
-// Ensure standard engine input only returns when a complete command exists in the queue.
 void sf_recv_command(char *buf, size_t max_len) {
     while (1) {
         LightLock_Lock(&q_gui_to_engine.lock);
-        __sync_synchronize(); // Force synchronization across ARM L1/L2 caches
         
         if (q_gui_to_engine.head != q_gui_to_engine.tail) {
-            // Scan queue to ensure a complete newline-terminated line is available
             int has_newline = 0;
             int temp_tail = q_gui_to_engine.tail;
             while (temp_tail != q_gui_to_engine.head) {
@@ -83,7 +141,6 @@ void sf_recv_command(char *buf, size_t max_len) {
                 temp_tail = (temp_tail + 1) % MSG_QUEUE_SIZE;
             }
 
-            // Only extract and return data if we have the complete line
             if (has_newline) {
                 size_t i = 0;
                 int truncated = 0;
@@ -96,9 +153,6 @@ void sf_recv_command(char *buf, size_t max_len) {
                         break;
                     }
                     
-                    // FIX: If the command is too large, we store what we can up to (max_len - 1)
-                    // but we CONTINUE to drain and discard the rest of this command line.
-                    // This keeps the parser safe and prevents stale buffer corruption.
                     if (i < max_len - 1) {
                         buf[i++] = c;
                     } else {
@@ -111,20 +165,18 @@ void sf_recv_command(char *buf, size_t max_len) {
                     sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
                 }
 
-                __sync_synchronize();
                 LightLock_Unlock(&q_gui_to_engine.lock);
                 return;
             }
         }
         
-        __sync_synchronize();
         LightLock_Unlock(&q_gui_to_engine.lock);
-        svcSleepThread(2000000LL); // Sleep 2ms to prevent CPU core starvation
+        ds_yield(); // Instead of sleeping, yield CPU back to the GUI
     }
 }
 
 int sf_printf(const char *format, ...) {
-    char temp_buf[4096]; // Expanded to 4KB for deep Stockfish search PV traces
+    char temp_buf[4096];
     va_list args;
     va_start(args, format);
     int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
@@ -135,11 +187,12 @@ int sf_printf(const char *format, ...) {
         queue_push_char(&q_engine_to_gui, temp_buf[i]);
     }
     LightLock_Unlock(&q_engine_to_gui.lock);
+    
+    ds_yield(); // Yield so the GUI can parse this output block immediately
     return written;
 }
 
 int sf_fprintf(FILE *stream, const char *format, ...) {
-    // If writing to standard out/err, redirect to our GUI message queue
     if (stream == stdout || stream == stderr) {
         char temp_buf[4096];
         va_list args;
@@ -152,9 +205,10 @@ int sf_fprintf(FILE *stream, const char *format, ...) {
             queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
         LightLock_Unlock(&q_engine_to_gui.lock);
+        
+        ds_yield();
         return written;
     }
-    // Otherwise, write normally (e.g., to log files)
     va_list args;
     va_start(args, format);
     int written = vfprintf(stream, format, args);
@@ -172,6 +226,8 @@ int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
             queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
         LightLock_Unlock(&q_engine_to_gui.lock);
+        
+        ds_yield();
         return written;
     }
     return vfprintf(stream, format, arg);
@@ -179,7 +235,7 @@ int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
 
 int sf_fflush(FILE *stream) {
     if (stream == stdout || stream == stderr) {
-        return 0; // Our queue is thread-safe and non-blocking, so flushing is a no-op
+        return 0;
     }
     return fflush(stream);
 }
@@ -192,6 +248,8 @@ int sf_puts(const char *str) {
     }
     queue_push_char(&q_engine_to_gui, '\n');
     LightLock_Unlock(&q_engine_to_gui.lock);
+    
+    ds_yield();
     return i + 1;
 }
 
@@ -235,13 +293,12 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return nmemb;
 }
 
-// Extracts raw stream chunks asynchronously for fast processing by main.c
 int sf_get_output(char *buf, size_t max_len) {
+    // Before checking outputs, switch to the search engine to let it run a cycle.
+    ds_yield(); 
+
     LightLock_Lock(&q_engine_to_gui.lock);
-    __sync_synchronize();
-    
     if (q_engine_to_gui.head == q_engine_to_gui.tail) {
-        __sync_synchronize();
         LightLock_Unlock(&q_engine_to_gui.lock);
         return 0;
     }
@@ -254,39 +311,39 @@ int sf_get_output(char *buf, size_t max_len) {
     }
     buf[i] = '\0';
 
-    __sync_synchronize();
     LightLock_Unlock(&q_engine_to_gui.lock);
     return (int)i;
 }
 
+// Emulated Thread Spawn Routine for Nintendo DS (ARM9)
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
-    pthread_attr_t local_attr;
-    pthread_attr_init(&local_attr);
+    size_t stacksize = 256 * 1024; // 256 KB
 
-    // FIX: Clean API-driven configuration of attributes.
-    // Rather than copying raw pointers and structures which causes heap conflicts,
-    // we fetch fields cleanly and set the mandatory 256KB execution stack.
-    if (attr != NULL) {
-        size_t stacksize = 0;
-        if (pthread_attr_getstacksize(attr, &stacksize) != 0 || stacksize < 256 * 1024) {
-            stacksize = 256 * 1024;
-        }
-        pthread_attr_setstacksize(&local_attr, stacksize);
-        
-        int detachstate = PTHREAD_CREATE_JOINABLE;
-        if (pthread_attr_getdetachstate(attr, &detachstate) == 0) {
-            pthread_attr_setdetachstate(&local_attr, detachstate);
-        }
-    } else {
-        pthread_attr_setstacksize(&local_attr, 256 * 1024);
+    // Allocate memory from the heap for the engine's stack
+    void* stack_alloc = malloc(stacksize);
+    if (!stack_alloc) {
+        return -1; // Out of memory
     }
 
-    int res = pthread_create(thread, &local_attr, start_routine, arg);
-    pthread_attr_destroy(&local_attr);
-    
-    // DIAGNOSTIC LOG: Print thread startup status to the bottom console
-    sf_printf("[BRIDGE] Spawning search thread... Status: %d\n", res);
+    search_thread.stack_alloc = stack_alloc;
+    search_thread.active = 1;
 
-    return res;
+    // Pre-populate the stack frame for cooperative switching
+    uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
+    
+    *(--sp) = (uint32_t)thread_launcher; // Land here when context shifts the first time
+    *(--sp) = 0;                         // r11
+    *(--sp) = 0;                         // r10
+    *(--sp) = 0;                         // r9
+    *(--sp) = 0;                         // r8
+    *(--sp) = 0;                         // r7
+    *(--sp) = 0;                         // r6
+    *(--sp) = (uint32_t)arg;             // r5 (Passed to thread_launcher)
+    *(--sp) = (uint32_t)start_routine;   // r4 (Passed to thread_launcher)
+
+    search_thread.sp = (uint32_t)sp;
+    *thread = 1; // Dummy thread identifier
+
+    return 0;
 }
