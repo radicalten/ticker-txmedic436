@@ -1,5 +1,4 @@
 #include "3ds_bridge.h"
-#include <3ds.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
