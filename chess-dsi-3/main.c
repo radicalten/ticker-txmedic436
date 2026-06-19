@@ -713,9 +713,8 @@ void draw_bottom_stats(void) {
     int repetitions = count_repetitions(&current_state);
 
     // --- LINE 1: Title & Turn Status Combined ---
-    printf("\x1b[1;33mChess DSi\x1b[0m | ");
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[1;33mBooting...\x1b[0m\n");
+        printf("\x1b[1;33mB...\x1b[0m\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[0m\n");
     } else if (repetitions >= 3) {
@@ -757,7 +756,7 @@ void draw_bottom_stats(void) {
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
-        printf("Eng: Thinking [%c] | ", current_spin);
+        printf("Eng: [%c] | ", current_spin);
 
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
@@ -1025,14 +1024,10 @@ int main(int argc, char **argv) {
     // Initial Loading screen on Top Screen
     consoleSelect(&topConsole);
     printf("\x1b[2J");
-    printf("\x1b[5;5H\x1b[33m-- Chess DSi --\x1b[0m\n\n");
-    printf("   Initializing Stockfish Engine...\n");
-    printf("   Please wait, setting up transposition tables...\n");
     fflush(stdout);
     
     consoleSelect(&bottomConsole);
     printf("\x1b[2J");
-    printf("Setting up console registers...\n");
     fflush(stdout);
     
     swiWaitForVBlank();
