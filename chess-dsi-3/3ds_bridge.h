@@ -10,10 +10,15 @@
 #ifdef __NDS__
 #include <sys/time.h> // Required for gettimeofday
 
-// Trick the compiler to prevent the DS Keyboard library from loading
-// to avoid conflicts with 'Lower' and 'Upper' symbols in Stockfish
-#define NDS_ARM9_KEYBOARD_H
-#define __KEYBOARD_H__
+// --- BEGIN KEYBOARD COLLISION RESOLUTION ---
+// Temporarily intercept 'Lower' and 'Upper' to rename them inside the keyboard enum,
+// then force-include <nds.h> to lock this change in.
+#define Lower DS_KBD_Lower
+#define Upper DS_KBD_Upper
+#include <nds.h>
+#undef Lower
+#undef Upper
+// --- END KEYBOARD COLLISION RESOLUTION ---
 
 typedef struct {
     int placeholder;
@@ -30,10 +35,6 @@ static inline unsigned long long osGetTime(void) {
     gettimeofday(&tv, NULL);
     return ((unsigned long long)tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL);
 }
-#endif
-
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 void sf_bridge_init(void);
