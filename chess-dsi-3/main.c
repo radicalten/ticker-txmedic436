@@ -741,7 +741,7 @@ void draw_bottom_stats(void) {
     // --- LINE 2: Modes & Limits Combined ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("Modes: W:%s B:%s | ", w_play, b_play);
+    printf("W:%s B:%s | ", w_play, b_play);
 
     if (time_control_type == 0) {
         printf("Lim: %dms\n", time_control_val);
