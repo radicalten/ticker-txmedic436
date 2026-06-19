@@ -787,8 +787,6 @@ void draw_bottom_stats(void) {
         printf("Offline\n");
     }
 
-    printf("--------------------------------\n");
-
     // --- EXPANDED MOVE LIST (Shows last 11 full moves) ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\n");
 
@@ -814,7 +812,6 @@ void draw_bottom_stats(void) {
             printf("  %2d.  ---   --- \n", display);
         }
     }
-    printf("--------------------------------\n");
     fflush(stdout);
 }
 
