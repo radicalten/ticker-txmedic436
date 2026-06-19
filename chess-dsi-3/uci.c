@@ -63,6 +63,9 @@ void position(Position *pos, char *str)
     int ply = 0;
 
     for (moves = strtok(moves, " \t"); moves; moves = strtok(NULL, " \t")) {
+      // FIX: Yield CPU to the GUI during long, cycle-heavy historical move list parsing
+      ds_yield(); 
+
       Move m = uci_to_move(pos, moves);
       if (!m) break;
       do_move(pos, m, gives_check(pos, pos->st, m));
@@ -243,6 +246,13 @@ void uci_loop(int argc, char **argv)
     while (isblank(*token))
       token++;
 
+    // FIX: If the command is empty, yield CPU to GUI immediately and fetch a new command.
+    // This stops the engine from flooding the bridge with "Unknown command:  " prints.
+    if (*token == '\0') {
+      ds_yield();
+      continue;
+    }
+
     char *str = token;
     while (*str && !isblank(*str))
       str++;
@@ -281,6 +291,7 @@ void uci_loop(int argc, char **argv)
       printf("\n");
       print_options();
       printf("uciok\n");
+      fflush(stdout); // Guarantee message delivery
     }
     else if (strcmp(token, "ucinewgame") == 0) {
       process_delayed_settings();
@@ -295,6 +306,7 @@ void uci_loop(int argc, char **argv)
       
       printf("[DIAGNOSTIC] process_delayed_settings() successfully completed!\n");
       printf("readyok\n");
+      fflush(stdout); // Ensure the handshake registers instantly in the GUI thread
       printf("[DIAGNOSTIC] Sent 'readyok\\n' to bridge output.\n");
     }
     else if (strcmp(token, "go") == 0)        go(&pos, str);
@@ -313,6 +325,7 @@ void uci_loop(int argc, char **argv)
     #endif
     else if (strncmp(token, "#", 1)) {
       printf("Unknown command: %s %s\n", token, str);
+      fflush(stdout);
     }
   } while (argc == 1 && strcmp(token, "quit") != 0);
 
