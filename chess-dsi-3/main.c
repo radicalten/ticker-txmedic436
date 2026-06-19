@@ -584,14 +584,14 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically and horizontally on 32x24 grid)
+// Draw the Top Screen Board (Centered vertically and shifted 2 units left horizontally)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
     printf("\n\n\n"); // Vertical Centering Padding (3 empty lines)
 
-    // Indent exactly 5 spaces on coordinate lines to achieve horizontal centering
-    printf("         a b c d e f g h\n");
+    // Horizontal centering offset shifted 2 units left: Reduced leading spaces from 9 to 7
+    printf("       a b c d e f g h\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -606,8 +606,8 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
         for (int sub_r = 0; sub_r < 2; sub_r++) {
-            // Indent exactly 5 spaces on every board line for perfect horizontal alignment
-            printf("     "); 
+            // Horizontal row offset shifted 2 units left: Reduced leading spaces from 5 to 3
+            printf("   "); 
 
             if (sub_r == 0) {
                 printf("  %d ", rank_lbl); // Margin of exactly 4 characters
@@ -689,8 +689,8 @@ void draw_top_board(void) {
         }
     }
 
-    // Indent exactly 5 spaces on bottom coordinate line
-    printf("         a b c d e f g h\n");
+    // Horizontal centering offset shifted 2 units left: Reduced leading spaces from 9 to 7
+    printf("       a b c d e f g h\n");
     fflush(stdout);
 }
 
