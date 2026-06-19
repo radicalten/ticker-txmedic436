@@ -30,7 +30,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
-#include <3ds.h> // FIX: Added native 3DS OS header for hardware timers
+#include <nds.h> // FIX: Added native 3DS OS header for hardware timers
 #else
 #include <sys/mman.h>
 #include <unistd.h>
