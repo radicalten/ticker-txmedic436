@@ -584,13 +584,13 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Centered vertically and shifted 2 units left horizontally)
+// Draw the Top Screen Board (Centered vertically, shifted 2 units left, coordinate line pulled 1 up)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H");
-    printf("\n\n\n"); // Vertical Centering Padding (3 empty lines)
+    printf("\n\n"); // Moved entire screen rendering 1 line up (Reduced padding from 3 to 2 lines)
 
-    // Horizontal centering offset shifted 2 units left: Reduced leading spaces from 9 to 7
+    // Adjusted horizontal offset coordinate matching: leading spaces reduced from 9 to 7
     printf("       a b c d e f g h\n");
 
     int king_in_check = -1;
@@ -682,14 +682,14 @@ void draw_top_board(void) {
             }
 
             if (sub_r == 0) {
-                printf(" %d\n", rank_lbl); 
+                printf("%d\n", rank_lbl); // Shitted right rank label 1 column left: Reduced spacing from " %d\n" to "%d\n"
             } else {
                 printf("\n");
             }
         }
     }
 
-    // Horizontal centering offset shifted 2 units left: Reduced leading spaces from 9 to 7
+    // Adjusted horizontal offset coordinate matching: leading spaces reduced from 9 to 7
     printf("       a b c d e f g h\n");
     fflush(stdout);
 }
