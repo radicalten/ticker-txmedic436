@@ -23,7 +23,8 @@
 
 #include <stdatomic.h>
 #include <pthread.h>
-#include <3ds.h>
+#include <calico/types.h>
+#include <nds.h>
 
 #include "types.h"
 
