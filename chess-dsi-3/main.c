@@ -591,7 +591,8 @@ void draw_top_board(void) {
     printf("\n\n"); // Vertical Centering Padding (2 empty lines)
 
     // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    printf("        a b c d e f g h\n");
+    // Coords colored bold white (\x1b[1;37m) and then immediately reset (\x1b[0m)
+    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
 
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
@@ -610,7 +611,8 @@ void draw_top_board(void) {
             printf("    "); 
 
             if (sub_r == 0) {
-                printf("  %d ", rank_lbl); // Margin of exactly 4 characters
+                // Rank label colored bold white (\x1b[1;37m) and reset (\x1b[0m)
+                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); // Margin of exactly 4 characters
             } else {
                 printf("    "); 
             }
@@ -682,7 +684,8 @@ void draw_top_board(void) {
             }
 
             if (sub_r == 0) {
-                printf("%d\n", rank_lbl); // Kept 1-column left shifts for rank labels
+                // Right rank label colored bold white (\x1b[1;37m) and reset (\x1b[0m)
+                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); // Kept 1-column left shifts for rank labels
             } else {
                 printf("\n");
             }
@@ -690,7 +693,8 @@ void draw_top_board(void) {
     }
 
     // Adjusted horizontal offset coordinate matching: leading spaces shifted 1 to the right (from 7 to 8)
-    printf("        a b c d e f g h\n");
+    // Coords colored bold white (\x1b[1;37m) and reset (\x1b[0m)
+    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
     fflush(stdout);
 }
 
