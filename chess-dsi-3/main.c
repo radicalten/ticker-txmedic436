@@ -249,7 +249,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 4"); // 4MB cache fits safe for Nintendo DS RAM limits
+            sf_send_command("setoption name Hash value 1"); // 4MB cache fits safe for Nintendo DS RAM limits
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
