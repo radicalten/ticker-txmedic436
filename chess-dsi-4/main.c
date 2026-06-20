@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Highly Condensed, Standard vs Bold Parallel Diagnostic Suite (using "a " instead of "##")
+// Highly Condensed, Standard vs Faint (Dim) Comparative Diagnostic Suite
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Clean Screen
@@ -671,27 +671,27 @@ void draw_top_board(void) {
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
     // 2. Condensed Diagnostic Header
-    printf("\x1b[2;3H\x1b[1;37mDSi ANSI BOLD PARALLEL MATRIX\x1b[0m");
+    printf("\x1b[2;3H\x1b[1;37mDSi ANSI FAINT (DIM) MATRIX\x1b[0m");
 
-    // 3. Rows 4-13: Side-by-Side/Sequential comparative lists of Color Registers
-    // Standard and Bold are printed directly adjacent to test terminal attributes
+    // 3. Rows 4-13: Side-by-Side comparative lists of Color Registers
+    // Standard vs. Faint (decreased intensity, SGR parameter 2)
     struct TestRow {
         int row;
         const char *label;
         const char *std_fmt;
-        const char *bld_fmt;
-        int is_fg; // If non-zero, uses character rendering instead of blank blocks
+        const char *fnt_fmt; // Faint/Dim comparative system
+        int is_fg;
     } rows[] = {
-        {4,  "30-37:",  "\x1b[3%dma \x1b[0m",   "\x1b[1;3%dma \x1b[0m",   1},
-        {5,  "40-47:",  "\x1b[4%dm  \x1b[0m",   "\x1b[1;4%dm  \x1b[0m",   0},
-        {6,  "90-97:",  "\x1b[9%dm  \x1b[0m",   "\x1b[1;9%dm  \x1b[0m",   0},
-        {7,  "100-7:",  "\x1b[10%dm  \x1b[0m",  "\x1b[1;10%dm  \x1b[0m",  0},
-        {8,  "7;3x :",  "\x1b[7;3%dm  \x1b[0m", "\x1b[7;1;3%dm  \x1b[0m", 0}
+        {4,  "30-37:",  "\x1b[3%dm##\x1b[0m",   "\x1b[2;3%dm##\x1b[0m",   1},
+        {5,  "40-47:",  "\x1b[4%dm  \x1b[0m",   "\x1b[2;4%dm  \x1b[0m",   0},
+        {6,  "90-97:",  "\x1b[9%dm  \x1b[0m",   "\x1b[2;9%dm  \x1b[0m",   0},
+        {7,  "100-7:",  "\x1b[10%dm  \x1b[0m",  "\x1b[2;10%dm  \x1b[0m",  0},
+        {8,  "7;3x :",  "\x1b[7;3%dm  \x1b[0m", "\x1b[7;2;3%dm  \x1b[0m", 0}
     };
 
     for (int i = 0; i < 5; i++) {
         int r_std = 4 + (i * 2);
-        int r_bld = 5 + (i * 2);
+        int r_fnt = 5 + (i * 2);
 
         // Render Standard Row Label & Blocks
         printf("\x1b[%d;3H%s S", r_std, rows[i].label);
@@ -700,21 +700,20 @@ void draw_top_board(void) {
             printf(rows[i].std_fmt, col);
         }
 
-        // Render Bold Row Label & Blocks
-        printf("\x1b[%d;3H%s B", r_bld, rows[i].label);
+        // Render Faint Row Label & Blocks
+        printf("\x1b[%d;3H%s F", r_fnt, rows[i].label);
         for (int col = 0; col < 8; col++) {
-            printf("\x1b[%d;%dH", r_bld, 11 + (col * 2));
-            printf(rows[i].bld_fmt, col);
+            printf("\x1b[%d;%dH", r_fnt, 11 + (col * 2));
+            printf(rows[i].fnt_fmt, col);
         }
     }
 
     // 4. Row 14-15: Aspect Ratio Test Block Matrix
     printf("\x1b[14;3H\x1b[1;33mAspect Ratio Blocks (2x1 cells):\x1b[0m");
-    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | BldBG: \x1b[103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33ma \x1b[0m");
+    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | FntBG: \x1b[2;103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
 
-    // 5. Rows 17-21: Multi-Protocol Checkerboard Analysis
-    // Draws three 8x4 mini boards side-by-side inside the 32-column bounds
-    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  BldRev HighBG\x1b[0m");
+    // 5. Rows 17-21: Checkerboard Comparative Analysis
+    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  FntRev HighBG\x1b[0m");
 
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 8; c++) {
@@ -724,8 +723,8 @@ void draw_top_board(void) {
             const char *esc_1 = is_light ? "\x1b[7;33m" : "\x1b[7;30m";
             printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 3 + c, esc_1);
 
-            // Checkerboard 2 (Col 13-20): High-Intensity Bold Reverse Video Group
-            const char *esc_2 = is_light ? "\x1b[7;1;33m" : "\x1b[7;1;30m";
+            // Checkerboard 2 (Col 13-20): Faint Reverse Video Group
+            const char *esc_2 = is_light ? "\x1b[7;2;33m" : "\x1b[7;2;30m";
             printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 13 + c, esc_2);
 
             // Checkerboard 3 (Col 23-30): High-Intensity Backgrounds Group (100-107m)
