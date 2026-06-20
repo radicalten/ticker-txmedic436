@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// 4-Page Streamlined Attribute Inspector for standard FG Colors
+// 2-Page Condensed, All-Bold FG Diagnostic Test Suite
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Direct full screen clear
@@ -670,39 +670,12 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // Map horizontal D-pad movements to 4 tabs
-    int active_tab = abs(cursor_c) % 4;
+    // Map horizontal D-pad movements to 2 tabs
+    int active_tab = abs(cursor_c) % 2;
 
     if (active_tab == 0) {
-        // --- PAGE 1: NORMAL FOREGROUND SENTENCES (30m-37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG NORMAL SENTENCES (1/4)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mStandard colors 30m-37m, no bold\x1b[0m");
-
-        struct SentenceRow {
-            const char *esc_on;
-            const char *text;
-        } sentences[] = {
-            { "30", "0: Black standard weight" },
-            { "31", "1: Red standard weight" },
-            { "32", "2: Green standard weight" },
-            { "33", "3: Yellow standard weight" },
-            { "34", "4: Blue standard weight" },
-            { "35", "5: Magenta standard weight" },
-            { "36", "6: Cyan standard weight" },
-            { "37", "7: White standard weight" }
-        };
-
-        for (int i = 0; i < 8; i++) {
-            printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + (i * 2), sentences[i].esc_on, sentences[i].text);
-        }
-
-        printf("\x1b[21;3H\x1b[1;30mNormal text weight, standard intensity\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mVerify colors render correctly.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 4: Normal Text Panel\x1b[0m");
-
-    } else if (active_tab == 1) {
-        // --- PAGE 2: BOLD FOREGROUND SENTENCES (1;30m-1;37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD SENTENCES (2/4)\x1b[0m");
+        // --- PAGE 1: BOLD FOREGROUND SENTENCES (1;30m-1;37m) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD SENTENCES (1/2)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mStandard colors 1;30m-37m, all bold\x1b[0m");
 
         struct SentenceRow {
@@ -723,66 +696,17 @@ void draw_top_board(void) {
             printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + (i * 2), sentences[i].esc_on, sentences[i].text);
         }
 
-        printf("\x1b[21;3H\x1b[1;30mHigh intensity weight with SGR 1\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mCompare brightness with Page 1.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 4: Bold Text Panel\x1b[0m");
-
-    } else if (active_tab == 2) {
-        // --- PAGE 3: NORMAL FG CHESSBOARDS USING "#" (30m-37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG NORMAL CHESSBOARDS (3/4)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mChess squares drawn with ##\x1b[0m");
-
-        // Draws four mini 6x6 boards using foreground text rendering ("##") inside coordinates
-        
-        // Board 1: Red/Green Normal (31 vs 32)
-        printf("\x1b[5;3H\x1b[1;32m1: Red/Green Normal\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[32m" : "\x1b[31m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 3 + (c * 2), esc);
-            }
-        }
-
-        // Board 2: Yellow/Blue Normal (33 vs 34)
-        printf("\x1b[5;17H\x1b[1;33m2: Yellow/Blue Normal\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[33m" : "\x1b[34m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 17 + (c * 2), esc);
-            }
-        }
-
-        // Board 3: Magenta/Cyan Normal (35 vs 36)
-        printf("\x1b[13;3H\x1b[1;34m3: Magenta/Cyan Normal\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[35m" : "\x1b[36m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 3 + (c * 2), esc);
-            }
-        }
-
-        // Board 4: Black/White Normal (30 vs 37)
-        printf("\x1b[13;17H\x1b[1;37m4: Black/White Normal\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[37m" : "\x1b[30m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 17 + (c * 2), esc);
-            }
-        }
-
-        printf("\x1b[21;3H\x1b[1;30mNo backgrounds used. Check contrast\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mbetween alternating standard cells.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 3 of 4: Normal Board Panel\x1b[0m");
+        printf("\x1b[21;3H\x1b[1;30mHigh intensity weight SGR 1 bold.\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mVerify DSi screen color contrast.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 1 of 2: Bold Text Panel\x1b[0m");
 
     } else {
-        // --- PAGE 4: BOLD FG CHESSBOARDS USING "#" (1;30m-1;37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD CHESSBOARDS (4/4)\x1b[0m");
+        // --- PAGE 2: BOLD FG CHESSBOARDS USING "#" (1;30m-1;37m) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD CHESSBOARDS (2/2)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mChess squares drawn with Bold ##\x1b[0m");
 
+        // Draws four mini 6x6 boards using bold foreground text rendering ("##") inside coordinates
+        
         // Board 1: Red/Green Bold (1;31 vs 1;32)
         printf("\x1b[5;3H\x1b[1;32m1: Red/Green Bold\x1b[0m");
         for (int r = 0; r < 6; r++) {
@@ -823,9 +747,9 @@ void draw_top_board(void) {
             }
         }
 
-        printf("\x1b[21;3H\x1b[1;30mUsing SGR 1 bold markers. Inspect\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mcontrast changes relative to Page 3.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 4 of 4: Bold Board Panel\x1b[0m");
+        printf("\x1b[21;3H\x1b[1;30mUsing SGR 1 bold markers on black.\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mL/R changes pages.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 2 of 2: Bold Board Panel\x1b[0m");
     }
 
     fflush(stdout);
