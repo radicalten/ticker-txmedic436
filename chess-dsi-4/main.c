@@ -12,10 +12,16 @@ int bg_pieces_id;
 
 PrintConsole topConsole, bottomConsole;
 
-int cursor_x = 0; // Current Palette selection (0 - 15)
-int cursor_y = 0; // Current Color Index selection (0 - 14, mapping to hardware index 1 - 15)
-
+int selected_color = 0; // Current selection index (0 - 15)
 int redraw_needed = 1;
+
+// 16 Standard Console/ANSI Color Names
+const char* color_names[16] = {
+    "Black",       "Dark Red",    "Dark Green",  "Dark Yellow",
+    "Dark Blue",    "Dark Magenta","Dark Cyan",   "Light Gray",
+    "Dark Gray",    "Bright Red",  "Bright Green", "Bright Yellow",
+    "Bright Blue",  "Bright Magenta","Bright Cyan", "White"
+};
 
 // Map coordinates helper
 void set_tile(u16* map, int x, int y, u16 tile, u16 palette) {
@@ -33,46 +39,38 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
     }
 }
 
-// Generates 240 distinct test colors across 16 palettes in GBA/DS 15-bit format (BGR555)
-void populate_test_palettes(void) {
+// Map the 16 Standard Colors to Color Index 1 across 16 Hardware Palettes
+void populate_standard_palettes(void) {
+    u16 standard_colors[16] = {
+        RGB15(0, 0, 0),       // 0: Black
+        RGB15(15, 0, 0),      // 1: Dark Red
+        RGB15(0, 15, 0),      // 2: Dark Green
+        RGB15(15, 15, 0),     // 3: Dark Yellow (Brown)
+        RGB15(0, 0, 15),      // 4: Dark Blue
+        RGB15(15, 0, 15),     // 5: Dark Magenta
+        RGB15(0, 15, 15),     // 6: Dark Cyan
+        RGB15(22, 22, 22),    // 7: Light Gray
+        RGB15(11, 11, 11),    // 8: Dark Gray
+        RGB15(31, 0, 0),      // 9: Bright Red
+        RGB15(0, 31, 0),      // 10: Bright Green
+        RGB15(31, 31, 0),     // 11: Bright Yellow
+        RGB15(0, 0, 31),      // 12: Bright Blue
+        RGB15(31, 0, 31),     // 13: Bright Magenta
+        RGB15(0, 31, 31),     // 14: Bright Cyan
+        RGB15(31, 31, 31)     // 15: White
+    };
+
     for (int p = 0; p < 16; p++) {
-        // Color 0 in 4bpp palettes is ALWAYS transparent on hardware
+        // Color 0 is kept transparent for layer overlap
         BG_PALETTE[p * 16 + 0] = RGB15(0, 0, 0); 
-
-        for (int i = 1; i < 16; i++) {
-            u16 color = 0;
-            int step = i * 2; // Linear intensity step (2 to 30)
-
-            switch (p) {
-                case 0:  color = RGB15(step, 0, 0); break;                 // Pure Red Ramp
-                case 1:  color = RGB15(0, step, 0); break;                 // Pure Green Ramp
-                case 2:  color = RGB15(0, 0, step); break;                 // Pure Blue Ramp
-                case 3:  color = RGB15(step, step, 0); break;              // Yellow Ramp
-                case 4:  color = RGB15(0, step, step); break;              // Cyan Ramp
-                case 5:  color = RGB15(step, 0, step); break;              // Magenta Ramp
-                case 6:  color = RGB15(step, step / 2, 0); break;          // Orange Ramp
-                case 7:  color = RGB15(0, step, step / 2); break;          // Teal Ramp
-                case 8:  color = RGB15(step / 2, 0, step); break;          // Violet / Purple Ramp
-                case 9:  color = RGB15(step, step / 2, step / 2); break;  // Soft Pink / Salmon
-                case 10: color = RGB15(step / 2, step, 0); break;          // Lime / Chartreuse
-                case 11: color = RGB15(step / 4, step / 2, step); break;  // Deep Sky Blue
-                case 12: color = RGB15(step, step * 7 / 10, step * 4 / 10); break; // Earth Tones / Brown
-                case 13: color = RGB15(12 + i, 12 + i, 16 + i); break;     // Cool Pastel Gamut
-                case 14: color = RGB15(16 + i, 12 + i, 12 + i); break;     // Warm Pastel Gamut
-                case 15: color = RGB15(step, step, step); break;           // Grayscale spectrum
-            }
-
-            BG_PALETTE[p * 16 + i] = color;
-        }
+        // Color 1 is assigned the designated hardware color
+        BG_PALETTE[p * 16 + 1] = standard_colors[p];
     }
-
-    // Set Palette 10 for coordinate and text labels on the top screen (Pure White)
-    BG_PALETTE[10 * 16 + 1] = RGB15(31, 31, 31);
 }
 
-// Configures the Sub Screen palette with rich gradient steps for the terminal UI
+// Configure bottom screen terminal palette
 void init_bottom_palette(void) {
-    BG_PALETTE_SUB[0]  = RGB15(2, 2, 3);        // Near-black slate background
+    BG_PALETTE_SUB[0]  = RGB15(2, 2, 3);        // Near-black background
     BG_PALETTE_SUB[1]  = RGB15(31, 8, 8);       // High-contrast Red
     BG_PALETTE_SUB[2]  = RGB15(8, 31, 8);       // High-contrast Green
     BG_PALETTE_SUB[3]  = RGB15(31, 31, 8);      // High-contrast Yellow
@@ -82,80 +80,75 @@ void init_bottom_palette(void) {
     BG_PALETTE_SUB[7]  = RGB15(25, 25, 25);     // Off-white text
     BG_PALETTE_SUB[8]  = RGB15(12, 12, 12);     // Dark gray lines
     BG_PALETTE_SUB[9]  = RGB15(31, 16, 4);      // Vibrant Orange
-    BG_PALETTE_SUB[10] = RGB15(20, 10, 31);     // Vibrant Indigo
-    BG_PALETTE_SUB[11] = RGB15(15, 31, 15);     // Light Lime
-    BG_PALETTE_SUB[12] = RGB15(30, 20, 25);     // Lavender Pastel
-    BG_PALETTE_SUB[13] = RGB15(31, 28, 15);     // Cream Yellow
-    BG_PALETTE_SUB[14] = RGB15(0, 20, 15);      // Forest Emerald
-    BG_PALETTE_SUB[15] = RGB15(31, 31, 31);     // Pure white alert
+    BG_PALETTE_SUB[15] = RGB15(31, 31, 31);     // Pure White
 }
 
-// Render Top Screen containing the color matrix and text layers
+// Render Top Screen containing the 16 standard swatches
 void draw_top_test_matrix(void) {
     u16* board_map = bgGetMapPtr(bg_board_id);
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
 
-    // Wipe background/foreground maps before writing
+    // Clear main maps
     memset(board_map, 0, 32 * 32 * sizeof(u16));
     memset(pieces_map, 0, 32 * 32 * sizeof(u16));
 
-    // Top screen header
-    draw_string(pieces_map, 3, 1, "=== DS HARDWARE PALETTE MATRIX ===", 10);
-    
-    // Column indicators (Palettes 0 to 15)
-    draw_string(pieces_map, 7, 3, "0 1 2 3 4 5 6 7 8 9 A B C D E F", 10);
+    // Header title - using Palette 15 (White)
+    draw_string(pieces_map, 2, 1, "=== STANDARD 16-COLOR TEST ===", 15);
 
-    for (int r = 0; r < 15; r++) {
-        // Row indicators (Indices 1 to 15)
-        char idx_lbl[4];
-        sprintf(idx_lbl, "%2d", r + 1);
-        draw_string(pieces_map, 3, 5 + r, idx_lbl, 10);
+    for (int i = 0; i < 16; i++) {
+        int col = i / 8; // Left (0) or Right (1) Column
+        int row = i % 8; // Row Index (0 to 7)
 
-        for (int c = 0; c < 16; c++) {
-            // Setup the background swatch tile block (solid character tile 1)
-            // It references Palette Index 'c' and color index 'r + 1' internally
-            set_tile(board_map, 7 + c * 1.5, 5 + r, 1, c); 
+        int start_x = (col == 0) ? 2 : 17;
+        int start_y = 4 + row * 2;
 
-            // Handle the Layer overlay (demonstrating characters sitting physically on top of background)
-            if (c == cursor_x && r == cursor_y) {
-                // Flash indicator over selection
-                set_tile(pieces_map, 7 + c * 1.5, 5 + r, 'X', 10);
-            } else {
-                // Standard structural layout dot
-                set_tile(pieces_map, 7 + c * 1.5, 5 + r, '.', 10);
-            }
+        // Draw Swatch Block on BG2 (4 columns wide, 1 row high)
+        // Set tile ID to 1 (solid character block) referencing Palette i
+        for (int dx = 0; dx < 4; dx++) {
+            set_tile(board_map, start_x + dx, start_y, 1, i);
+        }
+
+        // Draw alphanumeric labels on BG1 (above the background)
+        char label[16];
+        sprintf(label, "%2d:%s", i, color_names[i]);
+        label[11] = '\0'; // Clamp text length to avoid column overlaps
+        draw_string(pieces_map, start_x + 5, start_y, label, 15);
+
+        // Render Selector Bracket indicators
+        if (i == selected_color) {
+            set_tile(pieces_map, start_x - 1, start_y, '[', 15);
+            set_tile(pieces_map, start_x + 4, start_y, ']', 15);
         }
     }
 }
 
-// Display real-time channel measurements & specs on bottom screen
+// Display selected color specs on the bottom terminal screen
 void draw_bottom_specs(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H"); // Cursor reset
+    printf("\x1b[1;1H");
 
-    int palette_id = cursor_x;
-    int color_index = cursor_y + 1; // Map 0-14 back to hardware index 1-15
+    int i = selected_color;
+    // Extract color value from the first color register of the palette index
+    u16 raw_color = BG_PALETTE[i * 16 + 1];
 
-    // Read exact 15-bit color value from DS palette memory
-    u16 raw_color = BG_PALETTE[palette_id * 16 + color_index];
-
-    // Decode channels (5 bits per channel)
+    // Decode 15-bit (BGR555) Channels
     int r_val = (raw_color >> 0) & 0x1F;
     int g_val = (raw_color >> 5) & 0x1F;
     int b_val = (raw_color >> 10) & 0x1F;
 
-    // Convert channels to 24-bit spectrum coordinates
+    // Convert channels to 8-bit scale
     int r_8 = (r_val * 255) / 31;
     int g_8 = (g_val * 255) / 31;
     int b_8 = (b_val * 255) / 31;
 
-    printf("\x1b[1;33m  DS MULTI-SCREEN PALETTE UTILITY  \x1b[0m\x1b[K\n");
+    printf("\x1b[1;33m  DS STANDARD 16-COLOR SPEC SHEET  \x1b[0m\x1b[K\n");
     printf("\x1b[1;30m===================================\x1b[0m\x1b[K\n\n");
 
-    printf("  \x1b[1;36mSELECTED COLOR PROPERTIES:\x1b[0m\x1b[K\n");
+    printf("  \x1b[1;36mCOLOR DETAILS:\x1b[0m\x1b[K\n");
     printf("  -------------------------\x1b[K\n");
-    printf("  Hardware Palette : \x1b[1;35m%2d (0x%X)\x1b[0m\x1b[K\n", palette_id, palette_id);
-    printf("  Internal Index   : \x1b[1;35m%2d\x1b[0m\x1b[K\n", color_index);
+    printf("  Color Index      : \x1b[1;35m%2d (0x%X)\x1b[0m\x1b[K\n", i, i);
+    printf("  Display Name     : \x1b[1;35m%s\x1b[0m\x1b[K\n", color_names[i]);
+    printf("  Internal Palette : \x1b[1;32m%2d\x1b[0m\x1b[K\n", i);
     printf("  Raw BGR555 Val   : \x1b[1;32m0x%04X\x1b[0m\x1b[K\n\n", raw_color);
 
     printf("  \x1b[1;36mSIGNAL SPECTRUM ANALYSIS:\x1b[0m\x1b[K\n");
@@ -163,10 +156,10 @@ void draw_bottom_specs(void) {
     printf("  Red Channel   : \x1b[1;31m%2d/31\x1b[0m  (8-bit: %3d)\x1b[K\n", r_val, r_8);
     printf("  Green Channel : \x1b[1;32m%2d/31\x1b[0m  (8-bit: %3d)\x1b[K\n", g_val, g_8);
     printf("  Blue Channel  : \x1b[1;34m%2d/31\x1b[0m  (8-bit: %3d)\x1b[K\n", b_val, b_8);
-    printf("  Hex Output    : \x1b[1;33m#%02X%02X%02X\x1b[0m\x1b[K\n\n", r_8, g_8, b_8);
+    printf("  Hex Value     : \x1b[1;33m#%02X%02X%02X\x1b[0m\x1b[K\n\n", r_8, g_8, b_8);
 
     printf("\x1b[1;30m-----------------------------------\x1b[0m\x1b[K\n");
-    printf("  D-PAD : Move Selector Cursor\x1b[K\n");
+    printf("  D-PAD : Navigate Color Set\x1b[K\n");
     printf("  START : Exit Display Test Suite\x1b[K\n");
 
     fflush(stdout);
@@ -209,11 +202,11 @@ int main(int argc, char **argv) {
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
 
-    // Populate all 240 custom palette slots
-    populate_test_palettes();
+    // Populate our custom palette profiles
+    populate_standard_palettes();
     init_bottom_palette();
 
-    // Wipe console and graphics maps on startup
+    // Reset top screen map memory
     u16* board_map = bgGetMapPtr(bg_board_id);
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
     memset(board_map, 0, 32 * 32 * sizeof(u16));
@@ -232,28 +225,20 @@ int main(int argc, char **argv) {
         if (kDown & KEY_START) break; 
 
         if (kDown & KEY_UP) {
-            if (cursor_y > 0) {
-                cursor_y--;
+            if ((selected_color % 8) > 0) {
+                selected_color--;
                 redraw_needed = 1;
             }
         }
         if (kDown & KEY_DOWN) {
-            if (cursor_y < 14) {
-                cursor_y++;
+            if ((selected_color % 8) < 7) {
+                selected_color++;
                 redraw_needed = 1;
             }
         }
-        if (kDown & KEY_RIGHT) {
-            if (cursor_x < 15) {
-                cursor_x++;
-                redraw_needed = 1;
-            }
-        }
-        if (kDown & KEY_LEFT) {
-            if (cursor_x > 0) {
-                cursor_x--;
-                redraw_needed = 1;
-            }
+        if (kDown & (KEY_LEFT | KEY_RIGHT)) {
+            selected_color ^= 8; // Swap between left and right column
+            redraw_needed = 1;
         }
 
         if (redraw_needed) {
