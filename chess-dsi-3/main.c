@@ -53,11 +53,12 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
-// Thinking Traces & Real-time Console Rolling Buffer (Expanded to 9 lines)
+// Thinking Traces & Real-time Console Rolling Buffer
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
 char raw_log[9][32] = { {0} };
+int raw_log_count = 0;
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
 int redraw_needed = 1;
@@ -209,13 +210,18 @@ void push_state(const BoardState *state, Move m) {
 }
 
 void push_raw_log(const char *line) {
-    // Scroll buffer items up (8 shifts for 9 elements)
-    for (int i = 0; i < 8; i++) {
-        memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
+    if (raw_log_count < 9) {
+        strncpy(raw_log[raw_log_count], line, 31);
+        raw_log[raw_log_count][31] = '\0';
+        raw_log_count++;
+    } else {
+        // Scroll buffer items up
+        for (int i = 0; i < 8; i++) {
+            memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
+        }
+        strncpy(raw_log[8], line, 31);
+        raw_log[8][31] = '\0';
     }
-    // Safely copy the new command to the bottom slot (clipped to 31 chars safely)
-    strncpy(raw_log[8], line, 31);
-    raw_log[8][31] = '\0';
 }
 
 void trigger_engine_move(void) {
@@ -892,13 +898,26 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- LINES 15-23: Expanded 9-Line Rolling Raw UCI Engine Console ---
-    // Printed directly below the recent moves block (No divider)
-    for (int i = 0; i < 8; i++) {
-        printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[i]); // Old outputs in dark gray
+    // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
+    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
+    for (int i = 0; i < 9; i++) {
+        if (i < raw_log_count) {
+            // Newest incoming line of console traffic is colored in high-contrast Green
+            if (i == raw_log_count - 1) {
+                printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
+            } else {
+                printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
+            }
+        } else {
+            printf("\x1b[K"); // Silently clear un-occupied terminal log space
+        }
+        
+        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
+        if (i < 8) {
+            printf("\n");
+        }
     }
-    // Newest console string in terminal green. Active \x1b[J wipes margin leftovers.
-    printf("\x1b[1;32m%s\x1b[0m\x1b[K\x1b[J", raw_log[8]); 
+    printf("\x1b[J"); // Instantly clear any extra screen leftovers below index 23
 
     fflush(stdout);
 }
