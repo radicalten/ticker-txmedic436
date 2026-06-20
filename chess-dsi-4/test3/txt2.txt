@@ -2,3 +2,18 @@ gemini3.5flash
 using main-chess-dsi-3-test3-v1 as a base (uses sanitized cache to make cpu run faster)
 
 p1: I have a C file of a chess game engine for DSi that never finishes writing the engine text on the bottom screen, can you help me troubleshoot that:
+
+A: The issue you are experiencing—where the engine text on the bottom screen "never finishes writing" or appears truncated/cut off—is caused by Console Auto-Scrolling and Text Wrapping on the Nintendo DS/DSi hardware.
+Why this happens:
+
+    The 32-Column Screen Wrap Limit: The DS sub-screen is exactly 32 columns wide and 24 rows high. If any printed line exceeds 32 characters, the console library automatically wraps the text to the next line.
+    Flexible Width Format Bug: Format strings like %-5s specify a minimum width, not a maximum. A complex SAN move (like exd8=Q+ or Q1xd8=Q#) can easily be 7 or 8 characters long. Since %-5s does not truncate, the column widths expand, pushing the total line length beyond 32 characters.
+    Cumulative Vertical Scrolling: Once lines wrap, they occupy extra rows. This pushes the lower text elements past Row 24. On the DSi, writing past Row 24 triggers a hardware viewport scroll. Once scrolled, your absolute resetting command (\x1b[1;1H) starts writing from the new scrolled "top" rather than the physical top of the screen, permanently breaking your layout and causing the bottom text to slide off-screen.
+    Engine Info Metrics Overflow: During active thinking, fast engines output high NPS and Depth figures. This can easily cause the CPU evaluation and Speed lines to exceed 32 characters and trigger a screen-breaking scroll.
+
+How this code fixes it:
+
+    Absolute Row Positioning (\x1b[row;1H): Instead of relying on relative \n line-breaks (which shift dynamically when text wraps), every line is written with absolute cursor positioning. Even if a line accidentally wraps, the next line snaps back to its correct row instead of scrolling the interface.
+    Strict Move Column Truncation (%-5.5s): The SAN move columns now utilize a maximum truncation rule. Long move codes are strictly limited to 5 characters, guaranteeing your column alignment never wraps.
+    Tighter metric layout: Compresses the engine evaluation/thinking line so that it never exceeds 28 characters under any processing conditions.
+    Safe Log buffer truncation: Restricts raw engine console entries to 28 characters to leave a safe margin of error on the display boundary.
