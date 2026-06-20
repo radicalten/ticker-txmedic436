@@ -1267,5 +1267,6 @@ int main(int argc, char **argv) {
     }
 
     sf_send_command("quit");
+    sf_pthread_join(stockfish_thread, NULL); // Wait for Stockfish thread to cleanly exit and free stack memory
     return 0;
 }
