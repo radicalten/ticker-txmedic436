@@ -78,6 +78,34 @@ int get_promo_choice(void);
 
 Move gui_uci_to_move(const char *str);
 
+// Configures the DS Video Palette registers (RGB555 format) to match a polished Nintendo DS System Theme
+void apply_ds_palette(void) {
+    u16 ds_palette[16] = {
+        RGB15(5, 7, 10),    // 0: Slate Charcoal (Screen Background & Dark Squares)
+        RGB15(25, 4, 4),    // 1: Nintendo Dark Red (King-in-Check Highlight)
+        RGB15(6, 22, 10),   // 2: Classic DS Teal-Green (Selected Square)
+        RGB15(29, 28, 25),  // 3: Soft Cream-White (Light Squares)
+        RGB15(2, 10, 18),   // 4: Navy Blue (Unused BG)
+        RGB15(17, 8, 22),   // 5: Retro Indigo (History Move Path BG)
+        RGB15(0, 18, 20),   // 6: Deep Turquoise (Legal Target Square BG)
+        RGB15(26, 27, 28),  // 7: Light Gray-White (Cursor Highlight & Base Text)
+        RGB15(11, 12, 13),  // 8: Medium Gray (Old Console Rolling Logs)
+        RGB15(31, 8, 8),    // 9: Bright Orange-Red (White Chess Pieces FG)
+        RGB15(8, 31, 12),   // 10: Bright DS Green (Active UI / White Turn Text)
+        RGB15(31, 20, 0),   // 11: System Amber (Menu headers & Promo Instructions)
+        RGB15(8, 22, 31),   // 12: Electric Ice-Blue (Black Chess Pieces FG)
+        RGB15(31, 12, 26),  // 13: Vivid Magenta (Black Turn Text)
+        RGB15(10, 29, 31),  // 14: Clear Aqua (Stalemate Accent Status)
+        RGB15(31, 31, 31)   // 15: Crisp Pure White (Menu Highlights & Text)
+    };
+
+    // Apply configured colors directly to the hardware Palette VRAM banks
+    for (int i = 0; i < 16; i++) {
+        BG_PALETTE[i] = ds_palette[i];      // Main Engine (Top Screen)
+        BG_PALETTE_SUB[i] = ds_palette[i];  // Sub Engine (Bottom Screen)
+    }
+}
+
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
         return r * 8 + c;
@@ -650,112 +678,113 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// 2-Page Condensed, All-Bold FG Diagnostic Test Suite (Top Screen Bold Palette Only)
+// Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[2J"); // Direct full screen clear
+    printf("\x1b[1;1H");
+    printf("\n\n"); // Vertical Centering Padding
 
-    int max_cols = 32;
-    int max_rows = 24;
+    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
 
-    // 1. Draw Perimeter Outer Borders
-    for (int c = 1; c <= max_cols; c++) {
-        printf("\x1b[1;%dH-", c);          // Top Line
-        printf("\x1b[%d;%dH-", max_rows, c); // Bottom Line
-    }
-    for (int r = 1; r <= max_rows; r++) {
-        printf("\x1b[%d;1H|", r);          // Left Line
-        printf("\x1b[%d;%dH|", r, max_cols); // Right Line
-    }
-    printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
-    printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
-
-    // Map horizontal D-pad movements to 2 tabs
-    int active_tab = abs(cursor_c) % 2;
-
-    if (active_tab == 0) {
-        // --- PAGE 1: BOLD FOREGROUND SENTENCES (Using allowed Bold Colors only) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD SENTENCES (1/2)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mAllowed palette: 1;30,33,35,37 bold\x1b[0m");
-
-        struct SentenceRow {
-            const char *esc_on;
-            const char *text;
-        } sentences[] = {
-            { "1;30", "Black bold weight (1;30)" },
-            { "1;37", "White bold weight (1;37)" },
-            { "1;33", "Yellow bold weight (1;33)" },
-            { "1;35", "Magenta bold weight (1;35)" },
-            { "1;30", "Black bold weight (1;30)" },
-            { "1;37", "White bold weight (1;37)" },
-            { "1;33", "Yellow bold weight (1;33)" },
-            { "1;35", "Magenta bold weight (1;35)" }
-        };
-
-        for (int i = 0; i < 8; i++) {
-            printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + (i * 2), sentences[i].esc_on, sentences[i].text);
-        }
-
-        printf("\x1b[21;3H\x1b[1;30mHigh intensity weight SGR 1 bold.\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mVerify DSi screen color contrast.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 2: Bold Text Panel\x1b[0m");
-
-    } else {
-        // --- PAGE 2: BOLD FG CHESSBOARDS USING "#" (Using allowed Bold Colors only) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD CHESSBOARDS (2/2)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mChess squares drawn with Bold ##\x1b[0m");
-
-        // Draws four mini 6x6 boards using strictly allowed bold colors inside coordinates
-        
-        // Board 1: Magenta/Yellow Bold (1;35 vs 1;33)
-        printf("\x1b[5;3H\x1b[1;35m1: Magenta/Yellow Bold\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;35m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 3 + (c * 2), esc);
-            }
-        }
-
-        // Board 2: Yellow/White Bold (1;33 vs 1;37)
-        printf("\x1b[5;17H\x1b[1;33m2: Yellow/White Bold\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;37m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 17 + (c * 2), esc);
-            }
-        }
-
-        // Board 3: Magenta/Black Bold (1;35 vs 1;30)
-        printf("\x1b[13;3H\x1b[1;35m3: Magenta/Black Bold\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;35m" : "\x1b[1;30m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 3 + (c * 2), esc);
-            }
-        }
-
-        // Board 4: White/Black Bold (1;37 vs 1;30)
-        printf("\x1b[13;17H\x1b[1;37m4: White/Black Bold\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;37m" : "\x1b[1;30m";
-                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 17 + (c * 2), esc);
-            }
-        }
-
-        printf("\x1b[21;3H\x1b[1;30mUsing SGR 1 bold markers on black.\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mL/R changes pages.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 2: Bold Board Panel\x1b[0m");
+    int king_in_check = -1;
+    int w_king = find_king(&current_state, 1);
+    int b_king = find_king(&current_state, -1);
+    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
+        king_in_check = w_king;
+    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
+        king_in_check = b_king;
     }
 
+    for (int r = 0; r < 8; r++) {
+        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+
+        for (int sub_r = 0; sub_r < 2; sub_r++) {
+            printf("    "); 
+
+            if (sub_r == 0) {
+                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
+            } else {
+                printf("    "); 
+            }
+
+            for (int c = 0; c < 8; c++) {
+                int sq = screen_to_board_sq(r, c);
+                int p = current_state.board[sq];
+
+                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
+                const char *bg_color;
+
+                int is_selected = (sq == selected_sq);
+                int is_cursor = (r == cursor_r && c == cursor_c);
+
+                int is_prev_move = 0;
+                if (history_count > 0) {
+                    Move last_move = move_history[history_count - 1];
+                    if (sq == last_move.from || sq == last_move.to) {
+                        is_prev_move = 1;
+                    }
+                }
+
+                int is_legal_dest = 0;
+                if (selected_sq != -1) {
+                    Move test_m = {selected_sq, sq, 0};
+                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+                        test_m.promo = 5;
+                    }
+                    if (is_legal_move(&current_state, test_m)) {
+                        is_legal_dest = 1;
+                    }
+                }
+
+                if (is_cursor) {
+                    bg_color = "\x1b[47m"; // White/Gray Cursor (Pal Index 7)
+                } else if (is_selected) {
+                    bg_color = "\x1b[42m"; // Teal-Green Selection (Pal Index 2)
+                } else if (sq == king_in_check) {
+                    bg_color = "\x1b[41m"; // Dark Red King-in-Check (Pal Index 1)
+                } else if (is_prev_move) {
+                    bg_color = "\x1b[45m"; // Retro Indigo History Path (Pal Index 5)
+                } else if (is_legal_dest) {
+                    bg_color = "\x1b[46m"; // Deep Turquoise targets (Pal Index 6)
+                } else {
+                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Soft Cream (Index 3) / Slate Charcoal (Index 0)
+                }
+
+                if (sub_r == 0) {
+                    const char *piece_str = " ";
+                    const char *fg_color = "\x1b[34;1m"; // Bold Blue for Black Pieces (Pal Index 12)
+                    if (p != 0) {
+                        if (p > 0) {
+                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces (Pal Index 9)
+                        }
+                        switch (abs(p)) {
+                            case 1: piece_str = "P"; break;
+                            case 2: piece_str = "N"; break;
+                            case 3: piece_str = "B"; break;
+                            case 4: piece_str = "R"; break;
+                            case 5: piece_str = "Q"; break;
+                            case 6: piece_str = "K"; break;
+                        }
+                    }
+                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
+                } else {
+                    printf("%s  \x1b[0m", bg_color);
+                }
+            }
+
+            if (sub_r == 0) {
+                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
+            } else {
+                printf("\n");
+            }
+        }
+    }
+
+    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
     fflush(stdout);
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - Clean Allowed Bold Palette Only)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
@@ -769,24 +798,24 @@ void draw_bottom_stats(void) {
     if (engine_state != ENGINE_STATE_READY) {
         printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;35mDraw (50m-rule)\x1b[K\n");
+        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;35mDraw (3-fold)\x1b[K\n");
+        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[1;35mCHECKMATE!\x1b[K\n");
+            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[1;33mSTALEMATE!\x1b[K\n");
+            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[1;35mWhite in CHECK!\x1b[K\n");
+            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[1;35mBlack in CHECK!\x1b[K\n");
+            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[1;37mWhite's turn\x1b[K\n");
+            printf("\x1b[1;32mWhite's turn\x1b[K\n");
         } else {
             printf("\x1b[1;35mBlack's turn\x1b[K\n");
         }
@@ -899,10 +928,12 @@ void draw_bottom_stats(void) {
     }
 
     // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
+    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
+            // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
-                printf("\x1b[1;33m%s\x1b[0m\x1b[K", raw_log[i]);
+                printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
             } else {
                 printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
@@ -910,6 +941,7 @@ void draw_bottom_stats(void) {
             printf("\x1b[K"); // Silently clear unoccupied terminal log space
         }
         
+        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
         if (i < 8) {
             printf("\n");
         }
@@ -1130,6 +1162,9 @@ int main(int argc, char **argv) {
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
+    // Apply the hardware Nintendo DS palette registers to VRAM on both screens
+    apply_ds_palette();
+
     sf_bridge_init();
     init_board(&current_state);
 
@@ -1149,10 +1184,12 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
+        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
         while(1) swiWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
+        //printf("Background Engine Thread spawned successfully.\n\n");
         fflush(stdout);
     }
 
