@@ -21,18 +21,19 @@
 #ifndef THREAD_H
 #define THREAD_H
 
-#include <stdatomic.h>
+#include <stdbool.h>
 #include <pthread.h>
-#include <calico/types.h>
 #include <nds.h>
 #include "3ds_bridge.h"
-
 #include "types.h"
 
-// Max search threads scaled to 4 for optimal performance on New 3DS models
+// Removed: #include <calico/types.h> -> 3DS-only library, causes compile failure on NDS/DSi.
+
+// Fixed: On DSi, there is only 1 usable CPU core. Spawning more threads will 
+// cause massive scheduling overhead and instant out-of-memory crashes.
 #define MAX_THREADS 1
 
-// Redirect locks to highly-stable native 3DS LightLocks
+// Redirect locks to highly-stable native LightLocks (mapped to safe DSi mocks in 3ds_bridge.h)
 #define LOCK_T LightLock
 #define LOCK_INIT(x) LightLock_Init(&(x))
 #define LOCK_DESTROY(x) do {} while (0)
@@ -46,7 +47,7 @@ enum {
 void thread_search(Position *pos);
 void thread_wake_up(Position *pos, int action);
 void thread_wait_until_sleeping(Position *pos);
-void thread_wait(Position *pos, atomic_bool *b);
+void thread_wait(Position *pos, volatile bool *b); // Replaced atomic_bool with volatile bool for ARM9 compatibility
 
 struct MainThread {
   double previousTimeReduction;
@@ -66,7 +67,9 @@ struct ThreadPool {
   LightLock mutex;
   volatile bool initializing;
   bool searching, sleeping, stopOnPonderhit;
-  atomic_bool ponder, stop, increaseDepth;
+  volatile bool ponder;       // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
+  volatile bool stop;         // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
+  volatile bool increaseDepth; // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
   LOCK_T lock;
 };
 
