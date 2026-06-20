@@ -1,6 +1,6 @@
 #define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
 #include <nds.h>
-#include <stdio.h>
+#include <stdio;h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,6 +17,7 @@ typedef enum {
 } EngineInitState;
 
 EngineInitState engine_state = ENGINE_STATE_BOOTING;
+int handshake_retry_timer = 0; // Timer to retry handshake commands if engine is slow to boot
 
 typedef struct {
     int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
@@ -281,6 +282,7 @@ void process_engine_output(char *line) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
+            handshake_retry_timer = 0; // Reset retry timer
             redraw_needed = 1;
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
@@ -289,6 +291,7 @@ void process_engine_output(char *line) {
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
+            handshake_retry_timer = 0; // Reset retry timer
             redraw_needed = 1;
         }
     }
@@ -766,9 +769,13 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn Status ---
-    if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[K\n");
+    // --- LINE 1: Turn Status / Handshake Messages ---
+    if (engine_state == ENGINE_STATE_BOOTING) {
+        printf("\x1b[1;33m[SYS] Thread Spawning...\x1b[K\n");
+    } else if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
+        printf("\x1b[1;33m[SYS] Waiting for Engine (UCI)...\x1b[K\n");
+    } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
+        printf("\x1b[1;33m[SYS] Handshaking (ISREADY)...\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
@@ -1148,22 +1155,21 @@ int main(int argc, char **argv) {
     
     swiWaitForVBlank();
 
+    // Spawning Stockfish thread
     pthread_t stockfish_thread;
     int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
+        push_raw_log("THREAD CREATE FAILED!");
         fflush(stdout);
         while(1) swiWaitForVBlank();
     } else {
-        consoleSelect(&bottomConsole);
-        //printf("Background Engine Thread spawned successfully.\n\n");
-        fflush(stdout);
+        push_raw_log("Engine Thread Spawned.");
     }
 
-    // Yield control delay for engine initialization setup
-    for (int i = 0; i < 3; i++) {
+    // Yield control to give Stockfish thread CPU time to initialize
+    for (int i = 0; i < 60; i++) {
         ds_yield();
         swiWaitForVBlank();
     }
@@ -1171,6 +1177,7 @@ int main(int argc, char **argv) {
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
+    handshake_retry_timer = 0;
 
     redraw_needed = 1;
     int frame_counter = 0;
@@ -1196,7 +1203,7 @@ int main(int argc, char **argv) {
 
         if (kDown & KEY_L) {
             time_control_type = (time_control_type + 1) % 3;
-            time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+            time_control_val = (time_control_type == 0) ? 1000 : (time_control_type == 1 ? 5 : 4096);
             input_detected = 1;
         }
         if (kDown & KEY_R) {
@@ -1206,6 +1213,24 @@ int main(int argc, char **argv) {
 
         if (input_detected) {
             redraw_needed = 1;
+        }
+
+        // --- HANDSHAKE SELF-HEALING KEEPALIVE LOOP ---
+        // If the engine takes a long time to boot, we re-send handshake commands periodically (every ~1.5 seconds)
+        if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
+            handshake_retry_timer++;
+            if (handshake_retry_timer >= 90) { // ~1.5 seconds
+                sf_send_command("uci");
+                push_raw_log("Sent: uci [retry]");
+                handshake_retry_timer = 0;
+            }
+        } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
+            handshake_retry_timer++;
+            if (handshake_retry_timer >= 90) {
+                sf_send_command("isready");
+                push_raw_log("Sent: isready [retry]");
+                handshake_retry_timer = 0;
+            }
         }
 
         int engine_active = 0;
@@ -1223,8 +1248,8 @@ int main(int argc, char **argv) {
         read_from_engine();
 
         frame_counter++;
-        if (engine_thinking) {
-            // Animate thinking spinner and periodically refresh metrics (every 10 frames)
+        if (engine_thinking || engine_state != ENGINE_STATE_READY) {
+            // Animate thinking spinner / status ticks (every 10 frames)
             if (frame_counter % 10 == 0) {
                 spinner_frame++;
                 redraw_needed = 1;
