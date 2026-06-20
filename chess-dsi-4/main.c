@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// 2-Page Condensed, All-Bold FG Diagnostic Test Suite (Top Screen Bold, Bottom Screen Normal)
+// 2-Page Condensed, All-Bold FG Diagnostic Test Suite (Top Screen Bold Palette Only)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Direct full screen clear
@@ -674,22 +674,22 @@ void draw_top_board(void) {
     int active_tab = abs(cursor_c) % 2;
 
     if (active_tab == 0) {
-        // --- PAGE 1: BOLD FOREGROUND SENTENCES (1;30m-1;37m) ---
+        // --- PAGE 1: BOLD FOREGROUND SENTENCES (Using allowed Bold Colors only) ---
         printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD SENTENCES (1/2)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mStandard colors 1;30m-37m, all bold\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mAllowed palette: 1;30,33,35,37 bold\x1b[0m");
 
         struct SentenceRow {
             const char *esc_on;
             const char *text;
         } sentences[] = {
-            { "1;30", "0: Black bold weight" },
-            { "1;31", "1: Red bold weight" },
-            { "1;32", "2: Green bold weight" },
-            { "1;33", "3: Yellow bold weight" },
-            { "1;34", "4: Blue bold weight" },
-            { "1;35", "5: Magenta bold weight" },
-            { "1;36", "6: Cyan bold weight" },
-            { "1;37", "7: White bold weight" }
+            { "1;30", "Black bold weight (1;30)" },
+            { "1;37", "White bold weight (1;37)" },
+            { "1;33", "Yellow bold weight (1;33)" },
+            { "1;35", "Magenta bold weight (1;35)" },
+            { "1;30", "Black bold weight (1;30)" },
+            { "1;37", "White bold weight (1;37)" },
+            { "1;33", "Yellow bold weight (1;33)" },
+            { "1;35", "Magenta bold weight (1;35)" }
         };
 
         for (int i = 0; i < 8; i++) {
@@ -701,44 +701,44 @@ void draw_top_board(void) {
         printf("\x1b[23;3H\x1b[1;35mPage 1 of 2: Bold Text Panel\x1b[0m");
 
     } else {
-        // --- PAGE 2: BOLD FG CHESSBOARDS USING "#" (1;30m-1;37m) ---
+        // --- PAGE 2: BOLD FG CHESSBOARDS USING "#" (Using allowed Bold Colors only) ---
         printf("\x1b[2;3H\x1b[1;37mDSi FG BOLD CHESSBOARDS (2/2)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mChess squares drawn with Bold ##\x1b[0m");
 
-        // Draws four mini 6x6 boards using bold foreground text rendering ("##") inside coordinates
+        // Draws four mini 6x6 boards using strictly allowed bold colors inside coordinates
         
-        // Board 1: Red/Green Bold (1;31 vs 1;32)
-        printf("\x1b[5;3H\x1b[1;32m1: Red/Green Bold\x1b[0m");
+        // Board 1: Magenta/Yellow Bold (1;35 vs 1;33)
+        printf("\x1b[5;3H\x1b[1;35m1: Magenta/Yellow Bold\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;32m" : "\x1b[1;31m";
+                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;35m";
                 printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 3 + (c * 2), esc);
             }
         }
 
-        // Board 2: Yellow/Blue Bold (1;33 vs 1;34)
-        printf("\x1b[5;17H\x1b[1;33m2: Yellow/Blue Bold\x1b[0m");
+        // Board 2: Yellow/White Bold (1;33 vs 1;37)
+        printf("\x1b[5;17H\x1b[1;33m2: Yellow/White Bold\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;34m";
+                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;37m";
                 printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 17 + (c * 2), esc);
             }
         }
 
-        // Board 3: Magenta/Cyan Bold (1;35 vs 1;36)
-        printf("\x1b[13;3H\x1b[1;34m3: Magenta/Cyan Bold\x1b[0m");
+        // Board 3: Magenta/Black Bold (1;35 vs 1;30)
+        printf("\x1b[13;3H\x1b[1;35m3: Magenta/Black Bold\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
-                const char *esc = is_light ? "\x1b[1;35m" : "\x1b[1;36m";
+                const char *esc = is_light ? "\x1b[1;35m" : "\x1b[1;30m";
                 printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 3 + (c * 2), esc);
             }
         }
 
-        // Board 4: Black/White Bold (1;30 vs 1;37)
-        printf("\x1b[13;17H\x1b[1;37m4: Black/White Bold\x1b[0m");
+        // Board 4: White/Black Bold (1;37 vs 1;30)
+        printf("\x1b[13;17H\x1b[1;37m4: White/Black Bold\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -755,7 +755,7 @@ void draw_top_board(void) {
     fflush(stdout);
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - Clean Normal Foreground Only)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - Clean Allowed Bold Palette Only)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
@@ -769,26 +769,26 @@ void draw_bottom_stats(void) {
     if (engine_state != ENGINE_STATE_READY) {
         printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[31mDraw (50m-rule)\x1b[K\n");
+        printf("\x1b[1;35mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[31mDraw (3-fold)\x1b[K\n");
+        printf("\x1b[1;35mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[31mCHECKMATE!\x1b[K\n");
+            printf("\x1b[1;35mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[36mSTALEMATE!\x1b[K\n");
+            printf("\x1b[1;33mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[31mWhite in CHECK!\x1b[K\n");
+            printf("\x1b[1;35mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[31mBlack in CHECK!\x1b[K\n");
+            printf("\x1b[1;35mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[32mWhite's turn\x1b[K\n");
+            printf("\x1b[1;37mWhite's turn\x1b[K\n");
         } else {
-            printf("\x1b[35mBlack's turn\x1b[K\n");
+            printf("\x1b[1;35mBlack's turn\x1b[K\n");
         }
     }
 
@@ -842,7 +842,7 @@ void draw_bottom_stats(void) {
     }
 
     // --- LINE 4: Recent Moves Title ---
-    printf("\x1b[33mRECENT MOVES:\x1b[0m\x1b[K\n");
+    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
     // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
@@ -895,16 +895,16 @@ void draw_bottom_stats(void) {
             sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        printf(" %s\x1b[30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
     // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
             if (i == raw_log_count - 1) {
-                printf("\x1b[32m%s\x1b[0m\x1b[K", raw_log[i]);
+                printf("\x1b[1;33m%s\x1b[0m\x1b[K", raw_log[i]);
             } else {
-                printf("\x1b[30m%s\x1b[0m\x1b[K", raw_log[i]);
+                printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
             printf("\x1b[K"); // Silently clear unoccupied terminal log space
@@ -927,7 +927,7 @@ void draw_ui(void) {
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[7;1H\x1b[J"); 
-    printf("\n\x1b[33mPROMOTION! Tap Key selection:\n");
+    printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
     
