@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Highly Condensed, Standard vs Explicit Style Reset (SGR 0) Comparative Suite
+// Draw Interactive 256-Color ANSI Hardware Palette Inspector
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Clean Screen
@@ -670,88 +670,107 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // 2. Condensed Diagnostic Header
-    printf("\x1b[2;3H\x1b[1;37mDSi ANSI RESET OR NORMAL (0)\x1b[0m");
+    // Map the bottom horizontal navigation cursor (0-7) to 3 separate tabs
+    int page = abs(cursor_c) % 3;
 
-    // 3. Rows 4-13: Style Persistence (S) vs. Immediate SGR 0 Clears (R)
-    // S-Row prints two blocks under the specified style parameter.
-    // R-Row prints first block, injects \x1b[0m, then prints second block to show reset behavior.
-    struct TestRow {
-        int row;
-        const char *label;
-        const char *style_on;  // Starting ANSI code sequence
-        int is_fg;             // Uses text markers (1) or background blocks (0)
-    } rows[] = {
-        {4,  "30-37:",  "\x1b[3%dm",   1},
-        {5,  "40-47:",  "\x1b[4%dm",   0},
-        {6,  "90-97:",  "\x1b[9%dm",   0},
-        {7,  "100-7:",  "\x1b[10%dm",  0},
-        {8,  "7;3x :",  "\x1b[7;3%dm", 0}
-    };
+    if (page == 0) {
+        // --- PAGE 1: 256-COLOR BACKGROUNDS MATRIX ---
+        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR BACKGROUNDS (1/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
 
-    for (int i = 0; i < 5; i++) {
-        int r_std = 4 + (i * 2);
-        int r_rst = 5 + (i * 2);
-
-        // Render Standard Row (S) - Attribute persists across both printed segments
-        printf("\x1b[%d;3H%s S", r_std, rows[i].label);
-        for (int col = 0; col < 8; col++) {
-            printf("\x1b[%d;%dH", r_std, 11 + (col * 2));
-            printf("%s", rows[i].style_on, col);
-            if (rows[i].is_fg) {
-                printf("##\x1b[0m");
-            } else {
-                printf("  \x1b[0m");
+        // Render a 16x16 color block grid centered on the screen
+        // Width: 16 columns (cols 9 to 24), Height: 16 rows (rows 5 to 20)
+        for (int r = 0; r < 16; r++) {
+            for (int c = 0; c < 16; c++) {
+                int color_idx = r * 16 + c;
+                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 5 + r, 9 + c, color_idx);
             }
         }
 
-        // Render Reset Row (R) - Intermediate explicit style reset \x1b[0m clears subsequent block
-        printf("\x1b[%d;3H%s R", r_rst, rows[i].label);
-        for (int col = 0; col < 8; col++) {
-            printf("\x1b[%d;%dH", r_rst, 11 + (col * 2));
-            
-            // Print segment 1 under the style
-            printf("%s", rows[i].style_on, col);
-            printf(rows[i].is_fg ? "#" : " ");
-            
-            // Inject SGR 0 style reset
-            printf("\x1b[0m");
-            
-            // Print segment 2 under the terminal's default style
-            printf(rows[i].is_fg ? "#" : " ");
-            printf("\x1b[0m"); // Ensure local termination
+        // Map cursor Up/Down (0-7) & select axis to sample the 16x16 grid index
+        int hover_r = cursor_r * 2;
+        int hover_c = (cursor_c % 8) * 2;
+        int hover_idx = hover_r * 16 + hover_c;
+
+        // Draw an active asterisk indicator overlay at the hovered cell
+        printf("\x1b[%d;%dH\x1b[48;5;%dm\x1b[1;37m*\x1b[0m", 5 + hover_r, 9 + hover_c, hover_idx);
+
+        // Hover Index Decoded Parameters Output
+        printf("\x1b[21;3H\x1b[1;33mHover Color ID:  %d\x1b[0m", hover_idx);
+        printf("\x1b[22;3H\x1b[1;32mEscape Sequence: \\x1b[48;5;%dm\x1b[0m", hover_idx);
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+
+    } else if (page == 1) {
+        // --- PAGE 2: 256-COLOR FOREGROUNDS MATRIX ---
+        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR FOREGROUNDS (2/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
+
+        // Render 16x16 grid utilizing foreground escape sequences
+        for (int r = 0; r < 16; r++) {
+            for (int c = 0; c < 16; c++) {
+                int color_idx = r * 16 + c;
+                printf("\x1b[%d;%dH\x1b[38;5;%dma\x1b[0m", 5 + r, 9 + c, color_idx);
+            }
         }
-    }
 
-    // 4. Row 14-15: Aspect Ratio Test Block Matrix
-    printf("\x1b[14;3H\x1b[1;33mAspect Ratio Blocks (2x1 cells):\x1b[0m");
-    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | Normal: \x1b[0;103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
+        int hover_r = cursor_r * 2;
+        int hover_c = (cursor_c % 8) * 2;
+        int hover_idx = hover_r * 16 + hover_c;
 
-    // 5. Rows 17-21: Checkerboard Comparative Analysis
-    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  NormRev HighBG\x1b[0m");
+        // Overlay sample index selection with reverse video attribute
+        printf("\x1b[%d;%dH\x1b[38;5;%d;7ma\x1b[0m", 5 + hover_r, 9 + hover_c, hover_idx);
 
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 8; c++) {
-            int is_light = (r + c) % 2 == 0;
+        printf("\x1b[21;3H\x1b[1;33mHover Color ID:  %d\x1b[0m", hover_idx);
+        printf("\x1b[22;3H\x1b[1;32mEscape Sequence: \\x1b[38;5;%dm\x1b[0m", hover_idx);
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
 
-            // Checkerboard 1 (Col 3-10): Standard Reverse Video Group
-            const char *esc_1 = is_light ? "\x1b[7;33m" : "\x1b[7;30m";
-            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 3 + c, esc_1);
+    } else {
+        // --- PAGE 3: CHESSBOARD THEME LOOKUP PAIRINGS ---
+        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR CHESSBOARD THEMES (3/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mSample pairings for top-screen GUI\x1b[0m");
 
-            // Checkerboard 2 (Col 13-20): Reset-Validated Reverse Video Group
-            const char *esc_2 = is_light ? "\x1b[0;7;33m" : "\x1b[0;7;30m";
-            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 13 + c, esc_2);
-
-            // Checkerboard 3 (Col 23-30): High-Intensity Backgrounds Group (100-107m)
-            const char *esc_3 = is_light ? "\x1b[103m" : "\x1b[100m";
-            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 23 + c, esc_3);
+        // Stacks four custom 6x6 test boards built from 256-color cube indices
+        
+        // 1. Forest Green Theme (Colors 22 vs 121)
+        printf("\x1b[5;3H\x1b[1;32mForest (22/121)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 121 : 22;
+                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 6 + r, 3 + c, col);
+            }
         }
-    }
 
-    // 6. Row 23: Hardware Controller Metric Outputs
-    printf("\x1b[23;3H\x1b[1;36mD-Pad-Y:%d\x1b[0m", cursor_r);
-    printf("\x1b[23;14H\x1b[1;36mD-Pad-X:%d\x1b[0m", cursor_c);
-    printf("\x1b[23;25H\x1b[1;36mSq:%d\x1b[0m", selected_sq);
+        // 2. Walnut Wood Theme (Colors 94 vs 222)
+        printf("\x1b[5;17H\x1b[1;33mWalnut (94/222)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 222 : 94;
+                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 6 + r, 17 + c, col);
+            }
+        }
+
+        // 3. Ocean Blue Theme (Colors 18 vs 159)
+        printf("\x1b[13;3H\x1b[1;34mOcean (18/159)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 159 : 18;
+                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 14 + r, 3 + c, col);
+            }
+        }
+
+        // 4. Monochrome Ice Theme (Colors 235 vs 250)
+        printf("\x1b[13;17H\x1b[1;37mIce Grey (235/250)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 250 : 235;
+                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 14 + r, 17 + c, col);
+            }
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mPick the cleanest render pairing\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mto update your double-height UI!\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+    }
 
     fflush(stdout);
 }
