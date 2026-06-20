@@ -30,7 +30,7 @@
 #include "types.h"
 
 // Max search threads scaled to 4 for optimal performance on New 3DS models
-#define MAX_THREADS 4
+#define MAX_THREADS 1
 
 // Redirect locks to highly-stable native 3DS LightLocks
 #define LOCK_T LightLock
