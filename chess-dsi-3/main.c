@@ -891,14 +891,15 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- LINE 15: Clean Divider Line ---
-    printf("\x1b[1;30m--------------------------------\x1b[0m\x1b[K\n");
+    // --- LINES 15-17: Real-Time Raw UCI Engine Terminal Console ---
+    // Printed directly below the recent moves block
+    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[0]); // Oldest Output (Dark Gray)
+    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[1]); // Mid Output (Dark Gray)
+    printf("\x1b[1;32m%s\x1b[0m\x1b[K\n", raw_log[2]); // Newest Output (Terminal Green)
 
-    // --- LINE 16-18: Raw Log Feed ---
-    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[0]);
-    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[1]);
-    // Note: Added \x1b[J to clear any trailing leftovers, and no final trailing newline to prevent scrolling
-    printf("\x1b[1;32m%s\x1b[0m\x1b[K\x1b[J", raw_log[2]); 
+    // --- LINE 18: Clean Divider Line (Bottom screen border block) ---
+    // Wipes any screen leftovers down below the divider margin
+    printf("\x1b[1;30m--------------------------------\x1b[0m\x1b[K\x1b[J");
 
     fflush(stdout);
 }
