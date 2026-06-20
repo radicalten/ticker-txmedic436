@@ -1,1 +1,1 @@
-
+p1for main-chess-dsi-3-test2-v6: I have a C file of a chess game engine for DSi that never finishes writing the engine text on the bottom screen, can you help me troubleshoot that:
