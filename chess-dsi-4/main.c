@@ -650,10 +650,10 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw Advanced ANSI Diagnostics for Foreground, Background, and Video Rendering Capabilities
+// Highly Condensed, Standard vs Bold Parallel Diagnostic Suite
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[2J"); // Clean screen
+    printf("\x1b[2J"); // Clean Screen
 
     int max_cols = 32;
     int max_rows = 24;
@@ -670,73 +670,74 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // 2. Main Title Header
-    printf("\x1b[2;3H\x1b[1;37mDSi ANSI COLOR & ATTRIBUTE MATRIX\x1b[0m");
+    // 2. Condensed Diagnostic Header
+    printf("\x1b[2;3H\x1b[1;37mDSi ANSI BOLD PARALLEL MATRIX\x1b[0m");
 
-    // 3. Row 4-5: Standard Foreground Test (30m - 37m)
-    printf("\x1b[4;3H\x1b[1;30mFG 30m-37m (Standard Foreground):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[5;%dH\x1b[3%dm##\x1b[0m", 3 + (col * 3), col);
-    }
+    // 3. Rows 4-13: Side-by-Side/Sequential comparative lists of Color Registers
+    // Standard and Bold are printed directly adjacent to test terminal attributes
+    struct TestRow {
+        int row;
+        const char *label;
+        const char *std_fmt;
+        const char *bld_fmt;
+        int is_fg; // If non-zero, uses '##' marker instead of blank spaces
+    } rows[] = {
+        {4,  "30-37:",  "\x1b[3%dm##\x1b[0m",   "\x1b[1;3%dm##\x1b[0m",   1},
+        {5,  "40-47:",  "\x1b[4%dm  \x1b[0m",   "\x1b[1;4%dm  \x1b[0m",   0},
+        {6,  "90-97:",  "\x1b[9%dm  \x1b[0m",   "\x1b[1;9%dm  \x1b[0m",   0},
+        {7,  "100-7:",  "\x1b[10%dm  \x1b[0m",  "\x1b[1;10%dm  \x1b[0m",  0},
+        {8,  "7;3x :",  "\x1b[7;3%dm  \x1b[0m", "\x1b[7;1;3%dm  \x1b[0m", 0}
+    };
 
-    // 4. Row 6-7: Standard Background Test (40m - 47m)
-    printf("\x1b[6;3H\x1b[1;30mBG 40m-47m (Standard Background):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[7;%dH\x1b[4%dm  \x1b[0m", 3 + (col * 3), col);
-    }
+    for (int i = 0; i < 5; i++) {
+        int r_std = 4 + (i * 2);
+        int r_bld = 5 + (i * 2);
 
-    // 5. Row 8-9: High-Intensity Range 1 (90m - 97m)
-    printf("\x1b[8;3H\x1b[1;30mBG 90m-97m (High-Intensity FG/BG?):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[9;%dH\x1b[9%dm  \x1b[0m", 3 + (col * 3), col);
-    }
+        // Render Standard Row Label & Blocks
+        printf("\x1b[%d;3H%s S", r_std, rows[i].label);
+        for (int col = 0; col < 8; col++) {
+            printf("\x1b[%d;%dH", r_std, 11 + (col * 2));
+            printf(rows[i].std_fmt, col);
+        }
 
-    // 6. Row 10-11: High-Intensity Range 2 (100m - 107m)
-    printf("\x1b[10;3H\x1b[1;30mBG 100m-107m (Extended Bright BG):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[11;%dH\x1b[10%dm  \x1b[0m", 3 + (col * 3), col);
-    }
-
-    // 7. Row 12-13: Reverse Video Attribute with Foreground Colors (7m + 30m-37m)
-    printf("\x1b[12;3H\x1b[1;37mBG Swap via Reverse Video (7m + 3x):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[13;%dH\x1b[7;3%dm  \x1b[0m", 3 + (col * 3), col);
-    }
-
-    // 8. Row 14-15: Reverse Video + Bold Attribute (7;1m + 30m-37m)
-    printf("\x1b[14;3H\x1b[1;37mBG Swap via Rev Video Bold (7;1m+3x):\x1b[0m");
-    for (int col = 0; col < 8; col++) {
-        printf("\x1b[15;%dH\x1b[7;1;3%dm  \x1b[0m", 3 + (col * 3), col);
-    }
-
-    // 9. Row 16: Aspect Ratio Testing Matrix (With standard foreground tracker)
-    printf("\x1b[16;3H\x1b[1;33mAspect:\x1b[0m Std \x1b[43m \x1b[0m | Bright \x1b[103m \x1b[0m | Rev \x1b[7;33m \x1b[0m | FG \x1b[33m##\x1b[0m");
-
-    // 10. Row 17-21: Multi-Protocol Miniature Checkerboards
-    // Left Board: High-Intensity Background (100m / 103m)
-    printf("\x1b[17;3H\x1b[1;30mHigh-Intensity (10x):\x1b[0m");
-    for (int r = 0; r < 4; r++) {
-        for (int c = 0; c < 8; c++) {
-            int is_light = (r + c) % 2 == 0;
-            const char *color_esc = is_light ? "\x1b[103m" : "\x1b[100m";
-            printf("\x1b[%d;%dH%s  \x1b[0m", 18 + r, 3 + (c * 2), color_esc);
+        // Render Bold Row Label & Blocks
+        printf("\x1b[%d;3H%s B", r_bld, rows[i].label);
+        for (int col = 0; col < 8; col++) {
+            printf("\x1b[%d;%dH", r_bld, 11 + (col * 2));
+            printf(rows[i].bld_fmt, col);
         }
     }
 
-    // Right Board: Reverse Video Swapped Board (7m + 30m / 33m)
-    printf("\x1b[17;21H\x1b[1;37mReversed (7m):\x1b[0m");
+    // 4. Row 14-15: Aspect Ratio Test Block Matrix
+    printf("\x1b[14;3H\x1b[1;33mAspect Ratio Blocks (2x1 cells):\x1b[0m");
+    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | BldBG: \x1b[103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
+
+    // 5. Rows 17-21: Multi-Protocol Checkerboard Analysis
+    // Draws three 8x4 mini boards side-by-side inside the 32-column bounds
+    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  BldRev HighBG\x1b[0m");
+
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 8; c++) {
             int is_light = (r + c) % 2 == 0;
-            const char *color_esc = is_light ? "\x1b[7;33m" : "\x1b[7;30m";
-            printf("\x1b[%d;%dH%s  \x1b[0m", 18 + r, 21 + (c * 2), color_esc);
+
+            // Checkerboard 1 (Col 3-10): Standard Reverse Video Group
+            const char *esc_1 = is_light ? "\x1b[7;33m" : "\x1b[7;30m";
+            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 3 + c, esc_1);
+
+            // Checkerboard 2 (Col 13-20): High-Intensity Bold Reverse Video Group
+            const char *esc_2 = is_light ? "\x1b[7;1;33m" : "\x1b[7;1;30m";
+            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 13 + c, esc_2);
+
+            // Checkerboard 3 (Col 23-30): High-Intensity Backgrounds Group (100-107m)
+            const char *esc_3 = is_light ? "\x1b[103m" : "\x1b[100m";
+            printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 23 + c, esc_3);
         }
     }
 
-    // 11. Live User Keypad Axis Coordinate Tracker (Row 23)
-    printf("\x1b[23;3H\x1b[1;36mD-Pad-Y: %d\x1b[0m", cursor_r);
-    printf("\x1b[23;14H\x1b[1;36mD-Pad-X: %d\x1b[0m", cursor_c);
-    printf("\x1b[23;25H\x1b[1;36mSq: %d\x1b[0m", selected_sq);
+    // 6. Row 23: Hardware Controller Metric Outputs
+    printf("\x1b[23;3H\x1b[1;36mD-Pad-Y:%d\x1b[0m", cursor_r);
+    printf("\x1b[23;14H\x1b[1;36mD-Pad-X:%d\x1b[0m", cursor_c);
+    printf("\x1b[23;25H\x1b[1;36mSq:%d\x1b[0m", selected_sq);
 
     fflush(stdout);
 }
