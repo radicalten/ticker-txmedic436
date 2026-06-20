@@ -1,6 +1,6 @@
 #define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
 #include <nds.h>
-#include <stdio;h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
