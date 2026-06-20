@@ -5,3 +5,4 @@ p2v2: can you modify this into a display test suite to display as many palette c
 p2v3 ok for this next modification instead of the 240 unique colors can you show the 16 standard colors
 p2v4 can we change this test suite to be more comprehensive: cycle through all the available colors you can manage. and use short labels on the bottom screen. also the function should be bgGetGfxPtr instead of bgGetTilePtr
 p2v5 nothing currently appears on the top screen. bottom screen is visible in white
+p2v6 ok the HSV sweeper works perfectly. can we now apply what we learned to the original chess gui file here. that is modify the current colors to utilize the hardware palettes the way this program does with HSV to draw the pieces and the chessboard, and everything else:
