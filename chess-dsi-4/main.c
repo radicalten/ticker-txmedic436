@@ -66,6 +66,10 @@ int spinner_frame = 0;
 
 PrintConsole topConsole, bottomConsole;
 
+// Hardware Background Layer IDs
+int bg_board_id;
+int bg_pieces_id;
+
 void init_board(BoardState *state);
 int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
@@ -650,113 +654,174 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw Interactive 16-Color NDS Hardware Palette Inspector
+// Map coordinates helper
+void set_tile(u16* map, int x, int y, u16 tile, u16 palette) {
+    if (x >= 0 && x < 32 && y >= 0 && y < 32) {
+        map[y * 32 + x] = tile | (palette << 12);
+    }
+}
+
+// String printing on graphics map helper
+void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
+    while (*str) {
+        set_tile(map, x, y, (u16)(*str), palette);
+        x++;
+        str++;
+    }
+}
+
+// Custom Top Screen Palettes Config
+void init_custom_palettes(void) {
+    // Light board square: Palette 1
+    BG_PALETTE[1 * 16 + 1] = RGB15(28, 26, 20); // Cream / Yellowish
+    // Dark board square: Palette 2
+    BG_PALETTE[2 * 16 + 1] = RGB15(12, 10, 8);  // Slate Gray / Dark Wood
+    // Selected square: Palette 3
+    BG_PALETTE[3 * 16 + 1] = RGB15(10, 24, 10); // Green Highlight
+    // Cursor square: Palette 4
+    BG_PALETTE[4 * 16 + 1] = RGB15(31, 31, 31); // Pure White Cursor
+    // Prev move square: Palette 5
+    BG_PALETTE[5 * 16 + 1] = RGB15(20, 10, 20); // Magenta Path
+    // Legal destination square: Palette 6
+    BG_PALETTE[6 * 16 + 1] = RGB15(10, 22, 24); // Cyan Target
+    // King in check square: Palette 7
+    BG_PALETTE[7 * 16 + 1] = RGB15(28, 6, 6);   // Red Threat alert
+
+    // White pieces: Palette 8 (Goldish Red representation)
+    BG_PALETTE[8 * 16 + 0] = 0; // Transparent Background Layer (Critical)
+    BG_PALETTE[8 * 16 + 1] = RGB15(31, 5, 5); 
+    BG_PALETTE[8 * 16 + 15] = RGB15(31, 5, 5); 
+
+    // Black pieces: Palette 9 (Deep Navy Blue representation)
+    BG_PALETTE[9 * 16 + 0] = 0; // Transparent Background Layer (Critical)
+    BG_PALETTE[9 * 16 + 1] = RGB15(5, 5, 31); 
+    BG_PALETTE[9 * 16 + 15] = RGB15(5, 5, 31); 
+
+    // Text Label annotations: Palette 10 (Clean Gray)
+    BG_PALETTE[10 * 16 + 1] = RGB15(26, 26, 26);
+    BG_PALETTE[10 * 16 + 15] = RGB15(26, 26, 26);
+}
+
+// Override Sub Screen ANSI default console colors with custom palette
+void init_bottom_palette(void) {
+    BG_PALETTE_SUB[0]  = RGB15(0, 0, 0);       // Black Background
+    BG_PALETTE_SUB[1]  = RGB15(18, 2, 2);      // Dark Red
+    BG_PALETTE_SUB[2]  = RGB15(2, 18, 2);      // Dark Green
+    BG_PALETTE_SUB[3]  = RGB15(18, 18, 2);     // Dark Yellow
+    BG_PALETTE_SUB[4]  = RGB15(2, 2, 18);      // Dark Blue
+    BG_PALETTE_SUB[5]  = RGB15(18, 2, 18);     // Dark Magenta
+    BG_PALETTE_SUB[6]  = RGB15(2, 18, 18);     // Dark Cyan
+    BG_PALETTE_SUB[7]  = RGB15(22, 22, 22);    // Light Gray
+    BG_PALETTE_SUB[8]  = RGB15(10, 10, 10);    // Intense Dark Gray
+    BG_PALETTE_SUB[9]  = RGB15(31, 5, 5);      // High Red
+    BG_PALETTE_SUB[10] = RGB15(5, 31, 5);      // High Green
+    BG_PALETTE_SUB[11] = RGB15(31, 31, 5);     // High Yellow
+    BG_PALETTE_SUB[12] = RGB15(5, 5, 31);      // High Blue
+    BG_PALETTE_SUB[13] = RGB15(31, 5, 31);     // High Magenta
+    BG_PALETTE_SUB[14] = RGB15(5, 31, 31);     // High Cyan
+    BG_PALETTE_SUB[15] = RGB15(31, 31, 31);    // Bright White
+}
+
+// Draw the Top Screen Board (Pristine, Utilizing Hardware Layering Priority)
 void draw_top_board(void) {
-    consoleSelect(&topConsole);
-    printf("\x1b[2J"); // Clean Screen
+    u16* board_map = bgGetMapPtr(bg_board_id);
+    u16* pieces_map = bgGetMapPtr(bg_pieces_id);
 
-    int max_cols = 32;
-    int max_rows = 24;
+    // Completely reset screen tile memories
+    memset(board_map, 0, 32 * 32 * sizeof(u16));
+    memset(pieces_map, 0, 32 * 32 * sizeof(u16));
 
-    // 1. Draw Perimeter Outer Border
-    for (int c = 1; c <= max_cols; c++) {
-        printf("\x1b[1;%dH-", c);          // Top Line
-        printf("\x1b[%d;%dH-", max_rows, c); // Bottom Line
-    }
-    for (int r = 1; r <= max_rows; r++) {
-        printf("\x1b[%d;1H|", r);          // Left Line
-        printf("\x1b[%d;%dH|", r, max_cols); // Right Line
-    }
-    printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
-    printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
-
-    // Map bottom navigation cursor to 3 separate pages
-    int page = abs(cursor_c) % 3;
-
-    if (page == 0) {
-        // --- PAGE 1: NDS BG PALETTE SLOTS (0 to 7) ---
-        printf("\x1b[2;3H\x1b[1;37mNDS BG HARDWARE PALETTE (1/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
-
-        int hover_idx = cursor_r % 8;
-
-        for (int i = 0; i < 8; i++) {
-            char hover_char = (i == hover_idx) ? '*' : ' ';
-            // Standard NDS background color escapes mapped directly to palette memory 0-7
-            printf("\x1b[%d;5H%c \x1b[4%dm      \x1b[0m Slot %d Background", 5 + i * 2, hover_char, i, i);
-        }
-
-        // Hover Index Decoded Parameters Output
-        printf("\x1b[21;3H\x1b[1;33mHover Color Index: %d\x1b[0m", hover_idx);
-        printf("\x1b[22;3H\x1b[1;32mEscape Sequence:   \\x1b[4%dm\x1b[0m", hover_idx);
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
-
-    } else if (page == 1) {
-        // --- PAGE 2: NDS HIGH INTENSITY FOREGROUND SLOTS (8 to 15) ---
-        printf("\x1b[2;3H\x1b[1;37mNDS HIGH INTENSITY FG (2/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
-
-        int hover_idx = cursor_r % 8;
-
-        for (int i = 0; i < 8; i++) {
-            char hover_char = (i == hover_idx) ? '*' : ' ';
-            // Standard NDS foreground intensity escape sequence (8-15)
-            printf("\x1b[%d;5H%c \x1b[1;3%dmChess Piece Sample\x1b[0m (Slot %d)", 5 + i * 2, hover_char, i, i + 8);
-        }
-
-        printf("\x1b[21;3H\x1b[1;33mHover Color Index: %d\x1b[0m", hover_idx + 8);
-        printf("\x1b[22;3H\x1b[1;32mEscape Sequence:   \\x1b[1;3%dm\x1b[0m", hover_idx);
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
-
-    } else {
-        // --- PAGE 3: CHESSBOARD THEMES BUILT FROM HARDWARE PALETTES ---
-        printf("\x1b[2;3H\x1b[1;37mNDS HARDWARE CHESS THEMES (3/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mMapped dynamically from VRAM BG slots\x1b[0m");
-
-        // Stacks four custom 6x6 preview boards mapped to physical NDS BG registers:
-        
-        // 1. Forest Green Theme (BG Color 2 vs 7)
-        printf("\x1b[5;3H\x1b[1;32mForest (2/7)\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 7 : 2;
-                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 6 + r, 3 + c, col);
-            }
-        }
-
-        // 2. Walnut Wood Theme (BG Color 3 vs 6)
-        printf("\x1b[5;17H\x1b[1;33mWalnut (3/6)\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 6 : 3;
-                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 6 + r, 17 + c, col);
-            }
-        }
-
-        // 3. Ocean Blue Theme (BG Color 4 vs 7)
-        printf("\x1b[13;3H\x1b[1;34mOcean (4/7)\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 7 : 4;
-                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 14 + r, 3 + c, col);
-            }
-        }
-
-        // 4. Monochrome Ice Theme (BG Color 5 vs 7)
-        printf("\x1b[13;17H\x1b[1;37mIce Grey (5/7)\x1b[0m");
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 7 : 5;
-                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 14 + r, 17 + c, col);
-            }
-        }
-
-        printf("\x1b[21;3H\x1b[1;30mConsistent hardware colors scale\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mboth screens to matching aesthetics!\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+    // Draw alphanumeric coordinate files (At Y-margin offset bounds)
+    for (int col = 0; col < 8; col++) {
+        char label = 'a' + col;
+        char str[2] = {label, '\0'};
+        // Draw centered files on top/bottom coordinates
+        draw_string(pieces_map, 8 + col * 2, 2, str, 10);
+        draw_string(pieces_map, 8 + col * 2, 19, str, 10);
     }
 
-    fflush(stdout);
+    int king_in_check = -1;
+    int w_king = find_king(&current_state, 1);
+    int b_king = find_king(&current_state, -1);
+    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
+        king_in_check = w_king;
+    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
+        king_in_check = b_king;
+    }
+
+    for (int r = 0; r < 8; r++) {
+        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+        char lbl_str[2] = {'0' + rank_lbl, '\0'};
+
+        // Draw ranks on left/right vertical borders
+        draw_string(pieces_map, 6, 3 + r * 2, lbl_str, 10);
+        draw_string(pieces_map, 24, 3 + r * 2, lbl_str, 10);
+
+        for (int c = 0; c < 8; c++) {
+            int sq = screen_to_board_sq(r, c);
+            int p = current_state.board[sq];
+
+            int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
+            int bg_palette = is_light ? 1 : 2; // Default wood textures
+
+            int is_selected = (sq == selected_sq);
+            int is_cursor = (r == cursor_r && c == cursor_c);
+
+            int is_prev_move = 0;
+            if (history_count > 0) {
+                Move last_move = move_history[history_count - 1];
+                if (sq == last_move.from || sq == last_move.to) {
+                    is_prev_move = 1;
+                }
+            }
+
+            int is_legal_dest = 0;
+            if (selected_sq != -1) {
+                Move test_m = {selected_sq, sq, 0};
+                if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+                    test_m.promo = 5;
+                }
+                if (is_legal_move(&current_state, test_m)) {
+                    is_legal_dest = 1;
+                }
+            }
+
+            // Assign proper color palette mapping directly to hardware indices
+            if (is_cursor) {
+                bg_palette = 4;
+            } else if (is_selected) {
+                bg_palette = 3;
+            } else if (sq == king_in_check) {
+                bg_palette = 7;
+            } else if (is_prev_move) {
+                bg_palette = 5;
+            } else if (is_legal_dest) {
+                bg_palette = 6;
+            }
+
+            // Draw the 2x2 board background grid block on BG2 (solid block pattern tile 1)
+            set_tile(board_map, 8 + c * 2,     3 + r * 2,     1, bg_palette);
+            set_tile(board_map, 8 + c * 2 + 1, 3 + r * 2,     1, bg_palette);
+            set_tile(board_map, 8 + c * 2,     3 + r * 2 + 1, 1, bg_palette);
+            set_tile(board_map, 8 + c * 2 + 1, 3 + r * 2 + 1, 1, bg_palette);
+
+            // Draw the piece character on BG1 (drawn on top of background)
+            if (p != 0) {
+                u16 fg_palette = (p > 0) ? 8 : 9;
+                char piece_char = ' ';
+                switch (abs(p)) {
+                    case 1: piece_char = 'P'; break;
+                    case 2: piece_char = 'N'; break;
+                    case 3: piece_char = 'B'; break;
+                    case 4: piece_char = 'R'; break;
+                    case 5: piece_char = 'Q'; break;
+                    case 6: piece_char = 'K'; break;
+                }
+                // Center printed piece at top-left quadrant of the 2x2 board cell
+                set_tile(pieces_map, 8 + c * 2, 3 + r * 2, piece_char, fg_palette);
+            }
+        }
+    }
 }
 
 // Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
@@ -903,6 +968,7 @@ void draw_bottom_stats(void) {
     }
 
     // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
+    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
             // Newest incoming line of console traffic is colored in high-contrast Green
@@ -912,7 +978,7 @@ void draw_bottom_stats(void) {
                 printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
-            printf("\x1b[K"); // Silently clear unoccupied terminal log space
+            printf("\x1b[K"); // Silently clear un-occupied terminal log space
         }
         
         // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
@@ -1113,37 +1179,6 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-// Configures standard physical 2D graphics palette chips to support the Custom NDS UI Palette Theme
-void init_nds_palettes(void) {
-    // 15-Bit Hardware Palettes mapping directly to the NDS VRAM engine registers
-    u16 custom_palette[16] = {
-        RGB15(2, 2, 2),     // 0: Deep Graphite Black
-        RGB15(26, 4, 4),    // 1: Vibrant Ruby Crimson (Selector/Alert Backings)
-        RGB15(3, 12, 3),    // 2: Forest Dark Square (Rich Deep Emerald)
-        RGB15(15, 8, 3),    // 3: Walnut Wood Dark Square (Warm Walnut Brown)
-        RGB15(3, 7, 16),    // 4: Ocean Blue Dark Square (Deep Navy Blue)
-        RGB15(8, 8, 10),    // 5: Slate Grey Dark Square
-        RGB15(30, 28, 20),  // 6: Vintage Cream Light Square (Matches Walnut)
-        RGB15(26, 26, 26),  // 7: Ice Grey Light Square (Matches Forest/Ocean/Monochrome)
-
-        // Palette registers mapped to High Intensity Bold Text attributes
-        RGB15(12, 12, 12),  // 8: Medium Slate Grey
-        RGB15(31, 6, 6),    // 9: NDS Alert Cherry Red
-        RGB15(8, 28, 8),    // 10: Bright NDS Lime Green
-        RGB15(31, 28, 10),  // 11: NDS Yellow Highlight
-        RGB15(10, 20, 31),  // 12: NDS Cyan Blue
-        RGB15(28, 10, 28),  // 13: Magenta Accent
-        RGB15(12, 28, 28),  // 14: Soft Turquoise Cyan
-        RGB15(31, 31, 31)   // 15: Pure Gloss White
-    };
-
-    // Load definitions into physical Main engine memory (Top Screen) and Sub engine memory (Bottom Screen)
-    for (int i = 0; i < 16; i++) {
-        BG_PALETTE[i] = custom_palette[i];
-        BG_PALETTE_SUB[i] = custom_palette[i];
-    }
-}
-
 extern int main_stockfish(int argc, char **argv);
 void stockfish_thread_func(void* arg) {
     (void)arg;
@@ -1167,11 +1202,36 @@ int main(int argc, char **argv) {
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    // Inject hardware colors directly into NDS VRAM palette blocks
-    init_nds_palettes();
+    // Setup multiple hardware background layers (Sharing Tile Base 0 for loaded standard font glyphs)
+    bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0); // Background Layer 2 (Squares)
+    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // Background Layer 1 (Pieces & Text)
+
+    // Create a pure solid color glyph in memory at safe tile location [Index 1] (SOH slot)
+    u32 solid_tile[8] = {
+        0x11111111,
+        0x11111111,
+        0x11111111,
+        0x11111111,
+        0x11111111,
+        0x11111111,
+        0x11111111,
+        0x11111111
+    };
+    u8* tile_memory = (u8*)bgGetTilePtr(bg_board_id);
+    dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
+
+    // Initialize customized RGB DS hardware color registers
+    init_custom_palettes();
+    init_bottom_palette();
 
     sf_bridge_init();
     init_board(&current_state);
+
+    // Clear graphics memory buffers completely before draw frame
+    u16* board_map = bgGetMapPtr(bg_board_id);
+    u16* pieces_map = bgGetMapPtr(bg_pieces_id);
+    memset(board_map, 0, 32 * 32 * sizeof(u16));
+    memset(pieces_map, 0, 32 * 32 * sizeof(u16));
 
     // Initial Loading screen on Top Screen
     consoleSelect(&topConsole);
