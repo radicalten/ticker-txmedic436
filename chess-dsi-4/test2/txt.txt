@@ -1,1 +1,3 @@
-prompt: can you modify this c file so that it uses the nintendo DS palette for colors?
+prompt1: can you modify this c file so that it uses the nintendo DS palette for colors?
+
+p2: can you modify this file to utilize the DS multiple background layers? so that the pieces are always visible above the chessboard squares. likewise instead of plain ansi map colors to the DS palette memory.
