@@ -890,14 +890,12 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
 
-    // --- LIVE THINKING TRACES & CONNECTION STATUS (Screen Lines 20-23) ---
-    printf("\x1b[20;1H\x1b[1;30m--------------------------------\x1b[0m\x1b[K\n"); // Line 20 Divider
-    
-    // Line 21: Connection Status Display
-    printf("\x1b[21;1H\x1b[1;33mStatus: %s\x1b[0m\x1b[K\n", engine_status_msg);
+    // --- LIVE THINKING TRACES & CONNECTION STATUS (Screen Lines 19-21) ---
+    // Line 19: Connection Status Display
+    printf("\x1b[19;1H\x1b[1;33mStatus: %s\x1b[0m\x1b[K\n", engine_status_msg);
 
-    // Line 22: Live calculation trace (or last raw console command)
-    printf("\x1b[22;1H");
+    // Line 20: Live calculation trace (or last raw console command)
+    printf("\x1b[20;1H");
     if (engine_thinking) {
         printf("\x1b[1;36mTrace: D:%d | Nodes:%lld\x1b[0m\x1b[K\n", engine_depth, engine_nodes);
     } else {
@@ -908,8 +906,8 @@ void draw_bottom_stats(void) {
         printf("\x1b[1;30mConsole: %s\x1b[0m\x1b[K\n", trunc_raw);
     }
 
-    // Line 23: Dynamic PV/Trace Display or Standby State
-    printf("\x1b[23;1H");
+    // Line 21: Dynamic PV/Trace Display or Standby State
+    printf("\x1b[21;1H");
     if (engine_thinking && strlen(engine_pv) > 0) {
         char trunc_pv[28];
         strncpy(trunc_pv, engine_pv, 27);
@@ -918,6 +916,10 @@ void draw_bottom_stats(void) {
     } else {
         printf("\x1b[1;30mWaiting for next turn...\x1b[0m\x1b[K\n");
     }
+
+    // Clear old trailing leftovers on lines 22 & 23
+    printf("\x1b[22;1H\x1b[K\n");
+    printf("\x1b[23;1H\x1b[K\n");
 
     fflush(stdout);
 }
