@@ -1,0 +1,1 @@
+prompt: can you modify this c file so that it uses the nintendo DS palette for colors?
