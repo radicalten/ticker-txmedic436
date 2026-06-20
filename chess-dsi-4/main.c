@@ -78,34 +78,6 @@ int get_promo_choice(void);
 
 Move gui_uci_to_move(const char *str);
 
-// Configures the DS Video Palette registers (RGB555 format) to match a polished Nintendo DS System Theme
-void apply_ds_palette(void) {
-    u16 ds_palette[16] = {
-        RGB15(5, 7, 10),    // 0: Slate Charcoal (Screen Background & Dark Squares)
-        RGB15(25, 4, 4),    // 1: Nintendo Dark Red (King-in-Check Highlight)
-        RGB15(6, 22, 10),   // 2: Classic DS Teal-Green (Selected Square)
-        RGB15(29, 28, 25),  // 3: Soft Cream-White (Light Squares)
-        RGB15(2, 10, 18),   // 4: Navy Blue (Unused BG)
-        RGB15(17, 8, 22),   // 5: Retro Indigo (History Move Path BG)
-        RGB15(0, 18, 20),   // 6: Deep Turquoise (Legal Target Square BG)
-        RGB15(26, 27, 28),  // 7: Light Gray-White (Cursor Highlight & Base Text)
-        RGB15(11, 12, 13),  // 8: Medium Gray (Old Console Rolling Logs)
-        RGB15(31, 8, 8),    // 9: Bright Orange-Red (White Chess Pieces FG)
-        RGB15(8, 31, 12),   // 10: Bright DS Green (Active UI / White Turn Text)
-        RGB15(31, 20, 0),   // 11: System Amber (Menu headers & Promo Instructions)
-        RGB15(8, 22, 31),   // 12: Electric Ice-Blue (Black Chess Pieces FG)
-        RGB15(31, 12, 26),  // 13: Vivid Magenta (Black Turn Text)
-        RGB15(10, 29, 31),  // 14: Clear Aqua (Stalemate Accent Status)
-        RGB15(31, 31, 31)   // 15: Crisp Pure White (Menu Highlights & Text)
-    };
-
-    // Apply configured colors directly to the hardware Palette VRAM banks
-    for (int i = 0; i < 16; i++) {
-        BG_PALETTE[i] = ds_palette[i];      // Main Engine (Top Screen)
-        BG_PALETTE_SUB[i] = ds_palette[i];  // Sub Engine (Bottom Screen)
-    }
-}
-
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
         return r * 8 + c;
@@ -678,109 +650,112 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
+// Draw Interactive 16-Color NDS Hardware Palette Inspector
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H");
-    printf("\n\n"); // Vertical Centering Padding
+    printf("\x1b[2J"); // Clean Screen
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    int max_cols = 32;
+    int max_rows = 24;
 
-    int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
+    // 1. Draw Perimeter Outer Border
+    for (int c = 1; c <= max_cols; c++) {
+        printf("\x1b[1;%dH-", c);          // Top Line
+        printf("\x1b[%d;%dH-", max_rows, c); // Bottom Line
     }
+    for (int r = 1; r <= max_rows; r++) {
+        printf("\x1b[%d;1H|", r);          // Left Line
+        printf("\x1b[%d;%dH|", r, max_cols); // Right Line
+    }
+    printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
+    printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    for (int r = 0; r < 8; r++) {
-        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+    // Map bottom navigation cursor to 3 separate pages
+    int page = abs(cursor_c) % 3;
 
-        for (int sub_r = 0; sub_r < 2; sub_r++) {
-            printf("    "); 
+    if (page == 0) {
+        // --- PAGE 1: NDS BG PALETTE SLOTS (0 to 7) ---
+        printf("\x1b[2;3H\x1b[1;37mNDS BG HARDWARE PALETTE (1/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
-            } else {
-                printf("    "); 
-            }
+        int hover_idx = cursor_r % 8;
 
-            for (int c = 0; c < 8; c++) {
-                int sq = screen_to_board_sq(r, c);
-                int p = current_state.board[sq];
+        for (int i = 0; i < 8; i++) {
+            char hover_char = (i == hover_idx) ? '*' : ' ';
+            // Standard NDS background color escapes mapped directly to palette memory 0-7
+            printf("\x1b[%d;5H%c \x1b[4%dm      \x1b[0m Slot %d Background", 5 + i * 2, hover_char, i, i);
+        }
 
-                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-                const char *bg_color;
+        // Hover Index Decoded Parameters Output
+        printf("\x1b[21;3H\x1b[1;33mHover Color Index: %d\x1b[0m", hover_idx);
+        printf("\x1b[22;3H\x1b[1;32mEscape Sequence:   \\x1b[4%dm\x1b[0m", hover_idx);
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
 
-                int is_selected = (sq == selected_sq);
-                int is_cursor = (r == cursor_r && c == cursor_c);
+    } else if (page == 1) {
+        // --- PAGE 2: NDS HIGH INTENSITY FOREGROUND SLOTS (8 to 15) ---
+        printf("\x1b[2;3H\x1b[1;37mNDS HIGH INTENSITY FG (2/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
 
-                int is_prev_move = 0;
-                if (history_count > 0) {
-                    Move last_move = move_history[history_count - 1];
-                    if (sq == last_move.from || sq == last_move.to) {
-                        is_prev_move = 1;
-                    }
-                }
+        int hover_idx = cursor_r % 8;
 
-                int is_legal_dest = 0;
-                if (selected_sq != -1) {
-                    Move test_m = {selected_sq, sq, 0};
-                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                        test_m.promo = 5;
-                    }
-                    if (is_legal_move(&current_state, test_m)) {
-                        is_legal_dest = 1;
-                    }
-                }
+        for (int i = 0; i < 8; i++) {
+            char hover_char = (i == hover_idx) ? '*' : ' ';
+            // Standard NDS foreground intensity escape sequence (8-15)
+            printf("\x1b[%d;5H%c \x1b[1;3%dmChess Piece Sample\x1b[0m (Slot %d)", 5 + i * 2, hover_char, i, i + 8);
+        }
 
-                if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White/Gray Cursor (Pal Index 7)
-                } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Teal-Green Selection (Pal Index 2)
-                } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Dark Red King-in-Check (Pal Index 1)
-                } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Retro Indigo History Path (Pal Index 5)
-                } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Deep Turquoise targets (Pal Index 6)
-                } else {
-                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Soft Cream (Index 3) / Slate Charcoal (Index 0)
-                }
+        printf("\x1b[21;3H\x1b[1;33mHover Color Index: %d\x1b[0m", hover_idx + 8);
+        printf("\x1b[22;3H\x1b[1;32mEscape Sequence:   \\x1b[1;3%dm\x1b[0m", hover_idx);
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
 
-                if (sub_r == 0) {
-                    const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Bold Blue for Black Pieces (Pal Index 12)
-                    if (p != 0) {
-                        if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces (Pal Index 9)
-                        }
-                        switch (abs(p)) {
-                            case 1: piece_str = "P"; break;
-                            case 2: piece_str = "N"; break;
-                            case 3: piece_str = "B"; break;
-                            case 4: piece_str = "R"; break;
-                            case 5: piece_str = "Q"; break;
-                            case 6: piece_str = "K"; break;
-                        }
-                    }
-                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
-                } else {
-                    printf("%s  \x1b[0m", bg_color);
-                }
-            }
+    } else {
+        // --- PAGE 3: CHESSBOARD THEMES BUILT FROM HARDWARE PALETTES ---
+        printf("\x1b[2;3H\x1b[1;37mNDS HARDWARE CHESS THEMES (3/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mMapped dynamically from VRAM BG slots\x1b[0m");
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
-            } else {
-                printf("\n");
+        // Stacks four custom 6x6 preview boards mapped to physical NDS BG registers:
+        
+        // 1. Forest Green Theme (BG Color 2 vs 7)
+        printf("\x1b[5;3H\x1b[1;32mForest (2/7)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 7 : 2;
+                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 6 + r, 3 + c, col);
             }
         }
+
+        // 2. Walnut Wood Theme (BG Color 3 vs 6)
+        printf("\x1b[5;17H\x1b[1;33mWalnut (3/6)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 6 : 3;
+                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 6 + r, 17 + c, col);
+            }
+        }
+
+        // 3. Ocean Blue Theme (BG Color 4 vs 7)
+        printf("\x1b[13;3H\x1b[1;34mOcean (4/7)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 7 : 4;
+                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 14 + r, 3 + c, col);
+            }
+        }
+
+        // 4. Monochrome Ice Theme (BG Color 5 vs 7)
+        printf("\x1b[13;17H\x1b[1;37mIce Grey (5/7)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int col = ((r + c) % 2 == 0) ? 7 : 5;
+                printf("\x1b[%d;%dH\x1b[4%dm \x1b[0m", 14 + r, 17 + c, col);
+            }
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mConsistent hardware colors scale\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mboth screens to matching aesthetics!\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
     }
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
     fflush(stdout);
 }
 
@@ -928,7 +903,6 @@ void draw_bottom_stats(void) {
     }
 
     // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
-    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
             // Newest incoming line of console traffic is colored in high-contrast Green
@@ -1139,6 +1113,37 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
+// Configures standard physical 2D graphics palette chips to support the Custom NDS UI Palette Theme
+void init_nds_palettes(void) {
+    // 15-Bit Hardware Palettes mapping directly to the NDS VRAM engine registers
+    u16 custom_palette[16] = {
+        RGB15(2, 2, 2),     // 0: Deep Graphite Black
+        RGB15(26, 4, 4),    // 1: Vibrant Ruby Crimson (Selector/Alert Backings)
+        RGB15(3, 12, 3),    // 2: Forest Dark Square (Rich Deep Emerald)
+        RGB15(15, 8, 3),    // 3: Walnut Wood Dark Square (Warm Walnut Brown)
+        RGB15(3, 7, 16),    // 4: Ocean Blue Dark Square (Deep Navy Blue)
+        RGB15(8, 8, 10),    // 5: Slate Grey Dark Square
+        RGB15(30, 28, 20),  // 6: Vintage Cream Light Square (Matches Walnut)
+        RGB15(26, 26, 26),  // 7: Ice Grey Light Square (Matches Forest/Ocean/Monochrome)
+
+        // Palette registers mapped to High Intensity Bold Text attributes
+        RGB15(12, 12, 12),  // 8: Medium Slate Grey
+        RGB15(31, 6, 6),    // 9: NDS Alert Cherry Red
+        RGB15(8, 28, 8),    // 10: Bright NDS Lime Green
+        RGB15(31, 28, 10),  // 11: NDS Yellow Highlight
+        RGB15(10, 20, 31),  // 12: NDS Cyan Blue
+        RGB15(28, 10, 28),  // 13: Magenta Accent
+        RGB15(12, 28, 28),  // 14: Soft Turquoise Cyan
+        RGB15(31, 31, 31)   // 15: Pure Gloss White
+    };
+
+    // Load definitions into physical Main engine memory (Top Screen) and Sub engine memory (Bottom Screen)
+    for (int i = 0; i < 16; i++) {
+        BG_PALETTE[i] = custom_palette[i];
+        BG_PALETTE_SUB[i] = custom_palette[i];
+    }
+}
+
 extern int main_stockfish(int argc, char **argv);
 void stockfish_thread_func(void* arg) {
     (void)arg;
@@ -1162,8 +1167,8 @@ int main(int argc, char **argv) {
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    // Apply the hardware Nintendo DS palette registers to VRAM on both screens
-    apply_ds_palette();
+    // Inject hardware colors directly into NDS VRAM palette blocks
+    init_nds_palettes();
 
     sf_bridge_init();
     init_board(&current_state);
@@ -1184,12 +1189,10 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
         while(1) swiWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
-        //printf("Background Engine Thread spawned successfully.\n\n");
         fflush(stdout);
     }
 
