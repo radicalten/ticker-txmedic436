@@ -663,11 +663,18 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
 // ---------------------------------------------------------------------------
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    consoleClear();
 
-    // Find kings in check
+    // Move cursor to top-left
+    printf("\x1b[1;1H");
+
+    // Optional padding (keeps your centering)
+    printf("\n\n");
+
+    // File labels
+    printf("        a b c d e f g h\n");
+
     int king_in_check = -1;
-    int w_king = find_king(&current_state,  1);
+    int w_king = find_king(&current_state, 1);
     int b_king = find_king(&current_state, -1);
     if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
         king_in_check = w_king;
@@ -675,82 +682,91 @@ void draw_top_board(void) {
         king_in_check = b_king;
     }
 
-    // Row 0: top file labels
-    printf("\x1b[0;1H"); // row 0, col 0
-    printf("\x1b[1;37m     a b c d e f g h\x1b[0m\n");
-
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
-        // Rank label (left)
-        printf("\x1b[1;37m  %d \x1b[0m", rank_lbl);
+        // double-height: 2 terminal rows per chess rank
+        for (int sub_r = 0; sub_r < 2; sub_r++) {
+            printf("    ");
 
-        for (int c = 0; c < 8; c++) {
-            int sq = screen_to_board_sq(r, c);
-            int p  = current_state.board[sq];
+            if (sub_r == 0) printf("  %d ", rank_lbl);
+            else            printf("    ");
 
-            int is_light     = ((sq / 8) + (sq % 8)) % 2 == 0;
-            int is_selected  = (sq == selected_sq);
-            int is_cursor    = (r == cursor_r && c == cursor_c);
-            int is_check_sq  = (sq == king_in_check);
+            for (int c = 0; c < 8; c++) {
+                int sq = screen_to_board_sq(r, c);
+                int p  = current_state.board[sq];
 
-            int is_prev_move = 0;
-            if (history_count > 0) {
-                Move lm = move_history[history_count - 1];
-                if (sq == lm.from || sq == lm.to) is_prev_move = 1;
-            }
+                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
 
-            int is_legal_dest = 0;
-            if (selected_sq != -1) {
-                Move test_m = {selected_sq, sq, 0};
-                if (abs(current_state.board[selected_sq]) == 1 &&
-                    (sq / 8 == 0 || sq / 8 == 7)) {
-                    test_m.promo = 5;
+                int is_selected = (sq == selected_sq);
+                int is_cursor   = (r == cursor_r && c == cursor_c);
+
+                int is_prev_move = 0;
+                if (history_count > 0) {
+                    Move last_move = move_history[history_count - 1];
+                    if (sq == last_move.from || sq == last_move.to) is_prev_move = 1;
                 }
-                if (is_legal_move(&current_state, test_m)) is_legal_dest = 1;
+
+                int is_legal_dest = 0;
+                if (selected_sq != -1) {
+                    Move test_m = { selected_sq, sq, 0 };
+                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+                        test_m.promo = 5;
+                    }
+                    if (is_legal_move(&current_state, test_m)) is_legal_dest = 1;
+                }
+
+                // Base checker pattern for empty squares (2 chars wide)
+                const char *base = is_light ? "##" : "..";
+
+                // Highlight patterns for empty squares
+                const char *empty_cell = base;
+                if (is_cursor)                empty_cell = "[]";
+                else if (is_selected)         empty_cell = "<>";
+                else if (sq == king_in_check) empty_cell = "!!";
+                else if (is_prev_move)        empty_cell = "::";
+                else if (is_legal_dest)       empty_cell = "()";
+
+                // Piece character: uppercase = white, lowercase = black
+                char pc = ' ';
+                if (p != 0) {
+                    switch (abs(p)) {
+                        case 1: pc = 'p'; break;
+                        case 2: pc = 'n'; break;
+                        case 3: pc = 'b'; break;
+                        case 4: pc = 'r'; break;
+                        case 5: pc = 'q'; break;
+                        case 6: pc = 'k'; break;
+                        default: pc = '?'; break;
+                    }
+                    if (p > 0) pc = (char)(pc - 32); // ASCII to upper-case
+                }
+
+                if (sub_r == 0) {
+                    if (p != 0) {
+                        // Second character indicates highlight/shade
+                        char mark = is_light ? '#' : '.';
+                        if (is_cursor)                 mark = '@';
+                        else if (is_selected)          mark = '*';
+                        else if (sq == king_in_check)  mark = '!';
+                        else if (is_prev_move)         mark = ':';
+                        else if (is_legal_dest)        mark = '?';
+
+                        printf("%c%c", pc, mark);
+                    } else {
+                        printf("%s", empty_cell);
+                    }
+                } else {
+                    printf("%s", empty_cell);
+                }
             }
 
-            // Background colour
-            const char *bg;
-            if      (is_cursor)     bg = "\x1b[47m"; // White/grey  – cursor
-            else if (is_selected)   bg = "\x1b[42m"; // Green       – selected piece
-            else if (is_check_sq)   bg = "\x1b[41m"; // Red         – king in check
-            else if (is_prev_move)  bg = "\x1b[45m"; // Magenta     – last move path
-            else if (is_legal_dest) bg = "\x1b[46m"; // Cyan        – legal targets
-            else                    bg = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow / Black
-
-            // Foreground colour and piece letter
-            const char *fg;
-            const char *piece_str;
-            if (p > 0) {
-                fg = "\x1b[31;1m"; // Bright red  – White pieces
-            } else if (p < 0) {
-                fg = "\x1b[34;1m"; // Bright blue – Black pieces
-            } else {
-                fg = "\x1b[37m";   // Grey        – empty
-            }
-
-            switch (abs(p)) {
-                case 1:  piece_str = "P"; break;
-                case 2:  piece_str = "N"; break;
-                case 3:  piece_str = "B"; break;
-                case 4:  piece_str = "R"; break;
-                case 5:  piece_str = "Q"; break;
-                case 6:  piece_str = "K"; break;
-                default: piece_str = " "; break;
-            }
-
-            // Each square = piece char + trailing space, both on same background
-            printf("%s%s%s\x1b[0m", bg, fg, piece_str);
-            printf("%s \x1b[0m", bg);
+            if (sub_r == 0) printf("%d\n", rank_lbl);
+            else            printf("\n");
         }
-
-        // Rank label (right) + newline
-        printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl);
     }
 
-    // Bottom file labels
-    printf("\x1b[1;37m     a b c d e f g h\x1b[0m\n");
+    printf("        a b c d e f g h\n");
     fflush(stdout);
 }
 
