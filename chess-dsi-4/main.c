@@ -670,14 +670,14 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // Map horizontal D-pad movements to 4 tabs
-    int active_tab = abs(cursor_c) % 4;
+    // Map horizontal D-pad movements to 5 tabs
+    int active_tab = abs(cursor_c) % 5;
     // Map vertical D-pad movements to line inspections (0 to 3)
     int inspect_row = abs(cursor_r) % 4;
 
     if (active_tab == 0) {
         // --- PAGE 1: FOREGROUNDS SPECTRUM (30-37, 90-97) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/4)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/5)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         // Row offsets inside perimeter limits
@@ -714,11 +714,11 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 4: Foregrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 1 of 5: Foregrounds Panel\x1b[0m");
 
     } else if (active_tab == 1) {
         // --- PAGE 2: BACKGROUNDS SPECTRUM (40-47, 100-107) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/4)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/5)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         int rendering_rows[] = {5, 8, 12, 15};
@@ -751,11 +751,11 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 4: Backgrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 2 of 5: Backgrounds Panel\x1b[0m");
 
     } else if (active_tab == 2) {
         // --- PAGE 3: BG CHESSBOARD THEME SANDBOXES ---
-        printf("\x1b[2;3H\x1b[1;37mDSi BG-TILE CHESSBOARDS (3/4)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi BG-TILE CHESSBOARDS (3/5)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mComparing BG combinations\x1b[0m");
 
         // Draws four mini 6x6 boards comparing how Bold & Bright affect chessboard structures
@@ -802,11 +802,11 @@ void draw_top_board(void) {
 
         printf("\x1b[21;3H\x1b[1;30mStandard background color test blocks\x1b[0m");
         printf("\x1b[22;3H\x1b[1;30mDetermining hardware limits...\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 3 of 4: BG Sandbox Panels\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 3 of 5: BG Sandbox Panels\x1b[0m");
 
-    } else {
-        // --- PAGE 4: FG CHESSBOARD THEME SANDBOXES (NEW Fallback Method) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG-TEXT CHESSBOARDS (4/4)\x1b[0m");
+    } else if (active_tab == 3) {
+        // --- PAGE 4: FG CHESSBOARD THEME SANDBOXES ---
+        printf("\x1b[2;3H\x1b[1;37mDSi FG-TEXT CHESSBOARDS (4/5)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mComparing FG marker blocks\x1b[0m");
 
         // Draws four mini 6x6 boards using foreground text rendering ("##") instead of backgrounds
@@ -853,7 +853,43 @@ void draw_top_board(void) {
 
         printf("\x1b[21;3H\x1b[1;30mStandard character foreground test blocks\x1b[0m");
         printf("\x1b[22;3H\x1b[1;30mGreat fallback if BG render is broken\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 4 of 4: FG Sandbox Panels\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 4 of 5: FG Sandbox Panels\x1b[0m");
+
+    } else {
+        // --- PAGE 5: ALTERNATING SENTENCE INTENSITY INSPECTOR (NEW) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi SENTENCE INTENSITY (5/5)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mTesting Standard vs Bold sentences\x1b[0m");
+
+        // Sentences restricted to <= 28 characters to protect DSi terminal boundary columns (3-31)
+        struct SentenceRow {
+            const char *esc_on;
+            const char *text;
+        } sentences[] = {
+            { "30",   "0: Normal black text." },
+            { "1;30", "0: Bold black/grey text." },
+            { "31",   "1: Normal red text." },
+            { "1;31", "1: Bold red text." },
+            { "32",   "2: Normal green text." },
+            { "1;32", "2: Bold green text." },
+            { "33",   "3: Normal yellow text." },
+            { "1;33", "3: Bold yellow text." },
+            { "34",   "4: Normal blue text." },
+            { "1;34", "4: Bold blue text." },
+            { "35",   "5: Normal magenta text." },
+            { "1;35", "5: Bold magenta text." },
+            { "36",   "6: Normal cyan text." },
+            { "1;36", "6: Bold cyan text." },
+            { "37",   "7: Normal white text." },
+            { "1;37", "7: Bold white text." }
+        };
+
+        for (int i = 0; i < 16; i++) {
+            printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + i, sentences[i].esc_on, sentences[i].text);
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mVerify if bold lines (1;xx) show\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mdifferent thickness or brightness.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 5 of 5: Parallel Text Panel\x1b[0m");
     }
 
     fflush(stdout);
