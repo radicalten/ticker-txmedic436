@@ -58,7 +58,7 @@ int engine_score_val = 0;
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
-char raw_log[9][32] = { {0} };
+char raw_log[9][33] = { {0} }; // Increased width to 33 to store 32 characters + null terminator
 int raw_log_count = 0;
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
@@ -231,18 +231,18 @@ void push_state(const BoardState *state, Move m) {
 }
 
 void push_raw_log(const char *line) {
-    // Truncate Raw Logs safely at 28 chars to fit perfectly on sub screen without line wrap
+    // Truncate Raw Logs safely at exactly 32 chars to fit perfectly on the screen edge
     if (raw_log_count < 9) {
-        strncpy(raw_log[raw_log_count], line, 28);
-        raw_log[raw_log_count][28] = '\0';
+        strncpy(raw_log[raw_log_count], line, 32);
+        raw_log[raw_log_count][32] = '\0';
         raw_log_count++;
     } else {
         // Scroll buffer items up
         for (int i = 0; i < 8; i++) {
             memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
         }
-        strncpy(raw_log[8], line, 28);
-        raw_log[8][28] = '\0';
+        strncpy(raw_log[8], line, 32);
+        raw_log[8][32] = '\0';
     }
     redraw_needed = 1; // Mark UI as needing to be redrawn on the next frame
 }
@@ -849,7 +849,7 @@ void draw_top_board(void) {
     }
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - Scroll/Wrap Fixed)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - Expanded to exactly 32 Columns)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
 
@@ -900,7 +900,7 @@ void draw_bottom_stats(void) {
         printf("Lim:%dnod\x1b[K", time_control_val);
     }
 
-    // --- LINE 3: Engine Stats & Eval (Absolute Row 3 - Tightly Formatted to Prevent Wrap) ---
+    // --- LINE 3: Engine Stats & Eval (Absolute Row 3 - Optimized 32-column spacing) ---
     printf("\x1b[3;1H");
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
@@ -942,7 +942,7 @@ void draw_bottom_stats(void) {
     // --- LINE 4: Recent Moves Title (Absolute Row 4) ---
     printf("\x1b[4;1H\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K");
 
-    // --- LINES 5-14: Move List Display (Absolute Rows 5 to 14 - Truncated) ---
+    // --- LINES 5-14: Move List Display (Absolute Rows 5 to 14 - Truncated to exactly 32 columns) ---
     int total_full_moves = (history_count + 1) / 2;
     int max_visible_moves = 20;
     int half_visible = max_visible_moves / 2; // 10 rows total
@@ -955,7 +955,7 @@ void draw_bottom_stats(void) {
         char left_str[24] = "";
         char right_str[24] = "";
 
-        // Render Left Column Move Data (Maximum limits to 5 chars via %-5.5s to absolutely avoid screen wrap)
+        // Render Left Column Move Data (Limited to exactly 6 characters per SAN string via %-6.6s)
         if (total_full_moves > 0 && left_display <= total_full_moves) {
             int w_idx = (left_display - 1) * 2;
             int b_idx = w_idx + 1;
@@ -969,9 +969,10 @@ void draw_bottom_stats(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(left_str, "%2d.%-5.5s%-5.5s", left_display, w_str, b_str);
+            // 2 (display) + 1 (.) + 6 (white) + 6 (black) = 15 chars total
+            sprintf(left_str, "%2d.%-6.6s%-6.6s", left_display, w_str, b_str);
         } else {
-            sprintf(left_str, "%2d. ---  --- ", left_display);
+            sprintf(left_str, "%2d. ------ ------", left_display);
         }
 
         // Render Right Column Move Data
@@ -988,16 +989,16 @@ void draw_bottom_stats(void) {
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(right_str, "%2d.%-5.5s%-5.5s", right_display, w_str, b_str);
+            sprintf(right_str, "%2d.%-6.6s%-6.6s", right_display, w_str, b_str);
         } else {
-            sprintf(right_str, "%2d. ---  --- ", right_display);
+            sprintf(right_str, "%2d. ------ ------", right_display);
         }
 
-        // Position cursor explicitly at row index 5 + r
+        // Output formatting: Space (1) + left (15) + divider (1) + right (15) = 32 visible columns
         printf("\x1b[%d;1H %s\x1b[1;30m|\x1b[0m%s\x1b[K", 5 + r, left_str, right_str);
     }
 
-    // --- LINES 15-23: Rolling UCI Engine Console (Absolute Rows 15 to 23) ---
+    // --- LINES 15-23: Rolling UCI Engine Console (Absolute Rows 15 to 23 - Max 32 characters) ---
     for (int i = 0; i < 9; i++) {
         printf("\x1b[%d;1H", 15 + i);
         if (i < raw_log_count) {
