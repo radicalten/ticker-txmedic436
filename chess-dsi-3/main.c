@@ -209,10 +209,10 @@ void push_state(const BoardState *state, Move m) {
 }
 
 void push_raw_log(const char *line) {
-    // Scroll buffer items up
+    // Scroll rolling output buffer up
     memmove(raw_log[0], raw_log[1], sizeof(raw_log[0]));
     memmove(raw_log[1], raw_log[2], sizeof(raw_log[1]));
-    // Safely copy raw console output to the rolling display (clipped to 31 chars safely)
+    // Copy incoming command lines dynamically (clipping to 31 chars safely)
     strncpy(raw_log[2], line, 31);
     raw_log[2][31] = '\0';
 }
@@ -758,7 +758,7 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn Status Combined ---
+    // --- LINE 1: Turn Status ---
     if (engine_state != ENGINE_STATE_READY) {
         printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
@@ -785,7 +785,7 @@ void draw_bottom_stats(void) {
         }
     }
 
-    // --- LINE 2: Modes & Limits Combined ---
+    // --- LINE 2: Modes & Limits ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     printf("W:%s B:%s | ", w_play, b_play);
@@ -798,7 +798,7 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed Combined ---
+    // --- LINE 3: Engine Status, Eval, and Speed ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
@@ -834,12 +834,13 @@ void draw_bottom_stats(void) {
         printf("Offline\x1b[K\n");
     }
 
-    // --- EXPANDED DUAL-COLUMN MOVE LIST (Shows last 28 full moves) ---
-    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\n");
+    // --- LINE 4: Recent Moves Title ---
+    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
+    // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
-    int max_visible_moves = 28;
-    int half_visible = max_visible_moves / 2; // 14 rows total
+    int max_visible_moves = 20;
+    int half_visible = max_visible_moves / 2; // 10 rows total
     int start_move = (total_full_moves > max_visible_moves) ? (total_full_moves - (max_visible_moves - 1)) : 1;
 
     for (int r = 0; r < half_visible; r++) {
@@ -887,19 +888,17 @@ void draw_bottom_stats(void) {
             sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        // Print combined line with a dark gray divider
-        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- REAL-TIME RAW UCI ENGINE TERMINAL CONSOLE (Screen Lines 19-21) ---
-    // Displays the actual direct line outputs streaming out of the Stockfish engine process
-    printf("\x1b[19;1H\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[0]); // Oldest Output (Dark Gray)
-    printf("\x1b[20;1H\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[1]); // Mid Output (Dark Gray)
-    printf("\x1b[21;1H\x1b[1;32m%s\x1b[0m\x1b[K\n", raw_log[2]); // Newest Output (Terminal Green)
+    // --- LINE 15: Clean Divider Line ---
+    printf("\x1b[1;30m--------------------------------\x1b[0m\x1b[K\n");
 
-    // Explicit clean wipe of the bottom display margins
-    printf("\x1b[22;1H\x1b[K\n");
-    printf("\x1b[23;1H\x1b[K\n");
+    // --- LINE 16-18: Raw Log Feed ---
+    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[0]);
+    printf("\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[1]);
+    // Note: Added \x1b[J to clear any trailing leftovers, and no final trailing newline to prevent scrolling
+    printf("\x1b[1;32m%s\x1b[0m\x1b[K\x1b[J", raw_log[2]); 
 
     fflush(stdout);
 }
