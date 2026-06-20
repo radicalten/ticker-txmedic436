@@ -17,3 +17,5 @@ How this code fixes it:
     Strict Move Column Truncation (%-5.5s): The SAN move columns now utilize a maximum truncation rule. Long move codes are strictly limited to 5 characters, guaranteeing your column alignment never wraps.
     Tighter metric layout: Compresses the engine evaluation/thinking line so that it never exceeds 28 characters under any processing conditions.
     Safe Log buffer truncation: Restricts raw engine console entries to 28 characters to leave a safe margin of error on the display boundary.
+
+p1v2: you can increase the boundary to 32 characters
