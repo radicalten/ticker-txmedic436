@@ -1,4 +1,4 @@
 gemini3.5flash
 using main-chess-dsi-3-test3-v1 as a base (uses sanitized cache to make cpu run faster)
 
-p1
+p1: I have a C file of a chess game engine for DSi that never finishes writing the engine text on the bottom screen, can you help me troubleshoot that:
