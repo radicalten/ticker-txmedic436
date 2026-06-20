@@ -2,3 +2,4 @@ prompt1: can you modify this c file so that it uses the nintendo DS palette for 
 
 p2: can you modify this file to utilize the DS multiple background layers? so that the pieces are always visible above the chessboard squares. likewise instead of plain ansi map colors to the DS palette memory.
 p2v2: can you modify this into a display test suite to display as many palette colors on the top and bottom screen as possible. label them as you see fit.
+p2v3 ok for this next modification instead of the 240 unique colors can you show the 16 standard colors
