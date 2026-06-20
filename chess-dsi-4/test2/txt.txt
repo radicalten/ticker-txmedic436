@@ -8,3 +8,4 @@ p2v5 nothing currently appears on the top screen. bottom screen is visible in wh
 p2v6 ok the HSV sweeper works perfectly. can we now apply what we learned to the original chess gui file here. that is modify the current colors to utilize the hardware palettes the way this program does with HSV to draw the pieces and the chessboard, and everything else:
 
 p3v1 for main-chess-dsi-test2-v1: unfortunately, the chessboard squares do not appear. it is pure black next to the letters. any ideas?
+p3v2 the squares are still all black, do you have any other debugging ideas? feel free to implement them
