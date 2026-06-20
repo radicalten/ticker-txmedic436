@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw Interactive Palette spectrum showing Normal/Bold/Bright combinations of standard ANSI colors
+// 7-Page Multi-Attribute Interactive Diagnostic System
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Direct full screen clear
@@ -670,14 +670,14 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // Map horizontal D-pad movements to 5 tabs
-    int active_tab = abs(cursor_c) % 5;
+    // Map horizontal D-pad movements to 7 tabs
+    int active_tab = abs(cursor_c) % 7;
     // Map vertical D-pad movements to line inspections (0 to 3)
     int inspect_row = abs(cursor_r) % 4;
 
     if (active_tab == 0) {
         // --- PAGE 1: FOREGROUNDS SPECTRUM (30-37, 90-97) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/5)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/7)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         // Row offsets inside perimeter limits
@@ -714,11 +714,11 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 5: Foregrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 1 of 7: Foregrounds Panel\x1b[0m");
 
     } else if (active_tab == 1) {
         // --- PAGE 2: BACKGROUNDS SPECTRUM (40-47, 100-107) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/5)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/7)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         int rendering_rows[] = {5, 8, 12, 15};
@@ -751,11 +751,11 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 5: Backgrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 2 of 7: Backgrounds Panel\x1b[0m");
 
     } else if (active_tab == 2) {
         // --- PAGE 3: BG CHESSBOARD THEME SANDBOXES ---
-        printf("\x1b[2;3H\x1b[1;37mDSi BG-TILE CHESSBOARDS (3/5)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi BG-TILE CHESSBOARDS (3/7)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mComparing BG combinations\x1b[0m");
 
         // Draws four mini 6x6 boards comparing how Bold & Bright affect chessboard structures
@@ -802,14 +802,12 @@ void draw_top_board(void) {
 
         printf("\x1b[21;3H\x1b[1;30mStandard background color test blocks\x1b[0m");
         printf("\x1b[22;3H\x1b[1;30mDetermining hardware limits...\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 3 of 5: BG Sandbox Panels\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 3 of 7: BG Sandbox Panels\x1b[0m");
 
     } else if (active_tab == 3) {
         // --- PAGE 4: FG CHESSBOARD THEME SANDBOXES ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG-TEXT CHESSBOARDS (4/5)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi FG-TEXT CHESSBOARDS (4/7)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mComparing FG marker blocks\x1b[0m");
-
-        // Draws four mini 6x6 boards using foreground text rendering ("##") instead of backgrounds
 
         // Board 1: Normal Foreground Chessboard (33m vs 30m)
         printf("\x1b[5;3H\x1b[1;32m1: Normal FG (##)\x1b[0m");
@@ -853,12 +851,12 @@ void draw_top_board(void) {
 
         printf("\x1b[21;3H\x1b[1;30mStandard character foreground test blocks\x1b[0m");
         printf("\x1b[22;3H\x1b[1;30mGreat fallback if BG render is broken\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 4 of 5: FG Sandbox Panels\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 4 of 7: FG Sandbox Panels\x1b[0m");
 
-    } else {
-        // --- PAGE 5: ALTERNATING SENTENCE INTENSITY INSPECTOR (NEW) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi SENTENCE INTENSITY (5/5)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mTesting Standard vs Bold sentences\x1b[0m");
+    } else if (active_tab == 4) {
+        // --- PAGE 5: ALTERNATING SENTENCE INTENSITY INSPECTOR ---
+        printf("\x1b[2;3H\x1b[1;37mDSi PARALLEL INTENSITY (5/7)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mTesting Standard vs Bold lines\x1b[0m");
 
         // Sentences restricted to <= 28 characters to protect DSi terminal boundary columns (3-31)
         struct SentenceRow {
@@ -889,7 +887,77 @@ void draw_top_board(void) {
 
         printf("\x1b[21;3H\x1b[1;30mVerify if bold lines (1;xx) show\x1b[0m");
         printf("\x1b[22;3H\x1b[1;30mdifferent thickness or brightness.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 5 of 5: Parallel Text Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 5 of 7: Parallel Text Panel\x1b[0m");
+
+    } else if (active_tab == 5) {
+        // --- PAGE 6: ALL BOLD TEXT (NEW) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi ALL BOLD SPECTRA (6/7)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mTesting absolute SGR 1 weight\x1b[0m");
+
+        struct ColorRow {
+            const char *esc;
+            const char *label;
+        } bold_colors[] = {
+            { "1;30", "Bold Black   (Col 0)" },
+            { "1;31", "Bold Red     (Col 1)" },
+            { "1;32", "Bold Green   (Col 2)" },
+            { "1;33", "Bold Yellow  (Col 3)" },
+            { "1;34", "Bold Blue    (Col 4)" },
+            { "1;35", "Bold Magenta (Col 5)" },
+            { "1;36", "Bold Cyan    (Col 6)" },
+            { "1;37", "Bold White   (Col 7)" },
+            { "1;90", "Bold Bri Blk (Col 8)" },
+            { "1;91", "Bold Bri Red (Col 9)" },
+            { "1;92", "Bold Bri Grn (Col 10)" },
+            { "1;93", "Bold Bri Yel (Col 11)" },
+            { "1;94", "Bold Bri Blu (Col 12)" },
+            { "1;95", "Bold Bri Mag (Col 13)" },
+            { "1;96", "Bold Bri Cyn (Col 14)" },
+            { "1;97", "Bold Bri Wht (Col 15)" }
+        };
+
+        for (int i = 0; i < 16; i++) {
+            printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + i, bold_colors[i].esc, bold_colors[i].label);
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mStandard bold and high bright colors\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mdrawn side-by-side sequentially.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 6 of 7: All Bold Panel\x1b[0m");
+
+    } else {
+        // --- PAGE 7: ALL NORMAL TEXT (NEW) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi ALL NORMAL SPECTRA (7/7)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mTesting baseline SGR 22 weight\x1b[0m");
+
+        struct ColorRow {
+            const char *esc;
+            const char *label;
+        } normal_colors[] = {
+            { "22;30", "Normal Black   (Col 0)" },
+            { "22;31", "Normal Red     (Col 1)" },
+            { "22;32", "Normal Green   (Col 2)" },
+            { "22;33", "Normal Yellow  (Col 3)" },
+            { "22;34", "Normal Blue    (Col 4)" },
+            { "22;35", "Normal Magenta (Col 5)" },
+            { "22;36", "Normal Cyan    (Col 6)" },
+            { "22;37", "Normal White   (Col 7)" },
+            { "22;90", "Normal Bri Blk (Col 8)" },
+            { "22;91", "Normal Bri Red (Col 9)" },
+            { "22;92", "Normal Bri Grn (Col 10)" },
+            { "22;93", "Normal Bri Yel (Col 11)" },
+            { "22;94", "Normal Bri Blu (Col 12)" },
+            { "22;95", "Normal Bri Mag (Col 13)" },
+            { "22;96", "Normal Bri Cyn (Col 14)" },
+            { "22;97", "Normal Bri Wht (Col 15)" }
+        };
+
+        for (int i = 0; i < 16; i++) {
+            printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + i, normal_colors[i].esc, normal_colors[i].label);
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mStandard normal weight spectra\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mwith absolute bold overrides off.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 7 of 7: All Normal Panel\x1b[0m");
     }
 
     fflush(stdout);
