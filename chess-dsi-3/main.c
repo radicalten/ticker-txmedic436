@@ -53,12 +53,11 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
-// Thinking Traces & Connection Status
+// Thinking Traces & Real-time Console Rolling Buffer
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
-char engine_status_msg[48] = "Booting...";
-char last_raw_output[48] = "Initializing Stockfish...";
+char raw_log[3][32] = { {0}, {0}, {0} };
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
 int redraw_needed = 1;
@@ -209,6 +208,15 @@ void push_state(const BoardState *state, Move m) {
     }
 }
 
+void push_raw_log(const char *line) {
+    // Scroll buffer items up
+    memmove(raw_log[0], raw_log[1], sizeof(raw_log[0]));
+    memmove(raw_log[1], raw_log[2], sizeof(raw_log[1]));
+    // Safely copy raw console output to the rolling display (clipped to 31 chars safely)
+    strncpy(raw_log[2], line, 31);
+    raw_log[2][31] = '\0';
+}
+
 void trigger_engine_move(void) {
     engine_nps = 0;
     engine_score_type = -1;
@@ -216,7 +224,6 @@ void trigger_engine_move(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    strcpy(engine_status_msg, "Searching...");
 
     static char cmd[8192];
     
@@ -224,7 +231,8 @@ void trigger_engine_move(void) {
         strcpy(cmd, "position startpos");
     } else {
         strcpy(cmd, "position startpos moves");
-        int len = strlen(cmd);
+        int len = cmd[23] == ' ' ? 23 : strlen(cmd);
+        len = strlen(cmd);
         for (int i = 0; i < history_count; i++) {
             char uci_m[10];
             move_to_uci(move_history[i], uci_m);
@@ -258,17 +266,14 @@ void process_engine_output(char *line) {
         len--;
     }
 
-    // Save non-info raw traffic lines to simulate the live engine log feed
-    if (strncmp(line, "info", 4) != 0 && strlen(line) > 0) {
-        strncpy(last_raw_output, line, sizeof(last_raw_output) - 1);
-        last_raw_output[sizeof(last_raw_output) - 1] = '\0';
+    if (strlen(line) > 0) {
+        push_raw_log(line);
     }
 
     if (engine_state == ENGINE_STATE_WAIT_UCIOK) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
-            strcpy(engine_status_msg, "Sending isready...");
             redraw_needed = 1;
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
@@ -277,7 +282,6 @@ void process_engine_output(char *line) {
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
-            strcpy(engine_status_msg, "Ready & Connected");
             redraw_needed = 1;
         }
     }
@@ -339,7 +343,6 @@ void process_engine_output(char *line) {
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
-                strcpy(engine_status_msg, "Ready & Connected");
                 redraw_needed = 1;
                 return;
             }
@@ -352,7 +355,6 @@ void process_engine_output(char *line) {
                 current_state = next;
             }
             engine_thinking = 0;
-            strcpy(engine_status_msg, "Ready & Connected");
             redraw_needed = 1;
         }
     }
@@ -747,7 +749,7 @@ void draw_top_board(void) {
     fflush(stdout);
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
@@ -757,9 +759,9 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Title & Turn Status Combined (Added \x1b[K to clear line tail) ---
+    // --- LINE 1: Title & Turn Status Combined ---
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[1;33mConnecting to Engine...\x1b[K\n");
+        printf("\x1b[1;33mStockfish Chess\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
@@ -784,7 +786,7 @@ void draw_bottom_stats(void) {
         }
     }
 
-    // --- LINE 2: Modes & Limits Combined (Added \x1b[K to clear "node" trail) ---
+    // --- LINE 2: Modes & Limits Combined ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     printf("W:%s B:%s | ", w_play, b_play);
@@ -797,7 +799,7 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed Combined (Added \x1b[K to clear line tail) ---
+    // --- LINE 3: Engine Status, Eval, and Speed Combined ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
@@ -890,34 +892,13 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str); // \x1b[K clears to the end of the line
     }
 
-    // --- LIVE THINKING TRACES & CONNECTION STATUS (Screen Lines 19-21) ---
-    // Line 19: Connection Status Display
-    printf("\x1b[19;1H\x1b[1;33mStatus: %s\x1b[0m\x1b[K\n", engine_status_msg);
+    // --- REAL-TIME RAW UCI ENGINE TERMINAL CONSOLE (Screen Lines 19-21) ---
+    // Displays the actual direct line outputs streaming out of the Stockfish engine process
+    printf("\x1b[19;1H\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[0]); // Oldest Output (Dark Gray)
+    printf("\x1b[20;1H\x1b[1;30m%s\x1b[0m\x1b[K\n", raw_log[1]); // Mid Output (Dark Gray)
+    printf("\x1b[21;1H\x1b[1;32m%s\x1b[0m\x1b[K\n", raw_log[2]); // Newest Output (Terminal Green)
 
-    // Line 20: Live calculation trace (or last raw console command)
-    printf("\x1b[20;1H");
-    if (engine_thinking) {
-        printf("\x1b[1;36mTrace: D:%d | Nodes:%lld\x1b[0m\x1b[K\n", engine_depth, engine_nodes);
-    } else {
-        // Display a 23-char window of the last raw output to fit 32-col layout
-        char trunc_raw[24];
-        strncpy(trunc_raw, last_raw_output, 23);
-        trunc_raw[23] = '\0';
-        printf("\x1b[1;30mConsole: %s\x1b[0m\x1b[K\n", trunc_raw);
-    }
-
-    // Line 21: Dynamic PV/Trace Display or Standby State
-    printf("\x1b[21;1H");
-    if (engine_thinking && strlen(engine_pv) > 0) {
-        char trunc_pv[28];
-        strncpy(trunc_pv, engine_pv, 27);
-        trunc_pv[27] = '\0';
-        printf("\x1b[1;32mPV: %s\x1b[0m\x1b[K\n", trunc_pv);
-    } else {
-        printf("\x1b[1;30mWaiting for next turn...\x1b[0m\x1b[K\n");
-    }
-
-    // Clear old trailing leftovers on lines 22 & 23
+    // Explicit clean wipe of the bottom display margins
     printf("\x1b[22;1H\x1b[K\n");
     printf("\x1b[23;1H\x1b[K\n");
 
@@ -1022,7 +1003,6 @@ void handle_undo(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    strcpy(engine_status_msg, "Ready & Connected");
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1043,7 +1023,6 @@ void handle_reset_board(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    strcpy(engine_status_msg, "Ready & Connected");
     init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
@@ -1061,7 +1040,6 @@ void handle_switch_sides(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    strcpy(engine_status_msg, "Ready & Connected");
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
@@ -1175,7 +1153,6 @@ int main(int argc, char **argv) {
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
-    strcpy(engine_status_msg, "Waiting for uciok...");
 
     redraw_needed = 1;
     int frame_counter = 0;
