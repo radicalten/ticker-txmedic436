@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Highly Condensed, Standard vs Normal Intensity Override (22m) Comparative Suite
+// Highly Condensed, Standard Italic (3) vs Normal/Italic Reset (23) Comparative Suite
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Clean Screen
@@ -671,36 +671,36 @@ void draw_top_board(void) {
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
     // 2. Condensed Diagnostic Header
-    printf("\x1b[2;3H\x1b[1;37mDSi ANSI NORMAL INTENSITY (22)\x1b[0m");
+    printf("\x1b[2;3H\x1b[1;37mDSi ANSI ITALIC RESET (23)\x1b[0m");
 
-    // 3. Rows 4-13: Standard vs. Explicit Normal Intensity Override (SGR 22m)
+    // 3. Rows 4-13: Standard/Italic (SGR 3) vs. Explicit Reset Overrides (SGR 23)
     struct TestRow {
         int row;
         const char *label;
-        const char *std_fmt;
-        const char *nrm_fmt; // Explicit Normal Intensity Override (22)
+        const char *std_fmt; // Applied Italic (3m)
+        const char *nrm_fmt; // Explicit Italic Reset (23m)
         int is_fg;
     } rows[] = {
-        {4,  "30-37:",  "\x1b[3%dm##\x1b[0m",   "\x1b[22;3%dm##\x1b[0m",   1},
-        {5,  "40-47:",  "\x1b[4%dm  \x1b[0m",   "\x1b[22;4%dm  \x1b[0m",   0},
-        {6,  "90-97:",  "\x1b[9%dm  \x1b[0m",   "\x1b[22;9%dm  \x1b[0m",   0},
-        {7,  "100-7:",  "\x1b[10%dm  \x1b[0m",  "\x1b[22;10%dm  \x1b[0m",  0},
-        {8,  "7;3x :",  "\x1b[7;3%dm  \x1b[0m", "\x1b[7;22;3%dm  \x1b[0m", 0}
+        {4,  "30-37:",  "\x1b[3;3%dm##\x1b[0m",   "\x1b[23;3%dm##\x1b[0m",   1},
+        {5,  "40-47:",  "\x1b[3;4%dm  \x1b[0m",   "\x1b[23;4%dm  \x1b[0m",   0},
+        {6,  "90-97:",  "\x1b[3;9%dm  \x1b[0m",   "\x1b[23;9%dm  \x1b[0m",   0},
+        {7,  "100-7:",  "\x1b[3;10%dm  \x1b[0m",  "\x1b[23;10%dm  \x1b[0m",  0},
+        {8,  "7;3x :",  "\x1b[3;7;3%dm  \x1b[0m", "\x1b[23;7;3%dm  \x1b[0m", 0}
     };
 
     for (int i = 0; i < 5; i++) {
         int r_std = 4 + (i * 2);
         int r_nrm = 5 + (i * 2);
 
-        // Render Standard Row Label & Blocks
-        printf("\x1b[%d;3H%s S", r_std, rows[i].label);
+        // Render Applied Italic Row Label & Blocks (Labeled I for Italic)
+        printf("\x1b[%d;3H%s I", r_std, rows[i].label);
         for (int col = 0; col < 8; col++) {
             printf("\x1b[%d;%dH", r_std, 11 + (col * 2));
             printf(rows[i].std_fmt, col);
         }
 
-        // Render Explicit Normal Row Label & Blocks
-        printf("\x1b[%d;3H%s N", r_nrm, rows[i].label);
+        // Render Explicit Italic Reset Row Label & Blocks (Labeled R for Reset)
+        printf("\x1b[%d;3H%s R", r_nrm, rows[i].label);
         for (int col = 0; col < 8; col++) {
             printf("\x1b[%d;%dH", r_nrm, 11 + (col * 2));
             printf(rows[i].nrm_fmt, col);
@@ -709,10 +709,10 @@ void draw_top_board(void) {
 
     // 4. Row 14-15: Aspect Ratio Test Block Matrix
     printf("\x1b[14;3H\x1b[1;33mAspect Ratio Blocks (2x1 cells):\x1b[0m");
-    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | NrmBG: \x1b[22;103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
+    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | ItlBG: \x1b[3;103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
 
     // 5. Rows 17-21: Checkerboard Comparative Analysis
-    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  NormRev HighBG\x1b[0m");
+    printf("\x1b[17;3H\x1b[1;37mChess Comparative: Rev  ItalRev HighBG\x1b[0m");
 
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 8; c++) {
@@ -722,8 +722,8 @@ void draw_top_board(void) {
             const char *esc_1 = is_light ? "\x1b[7;33m" : "\x1b[7;30m";
             printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 3 + c, esc_1);
 
-            // Checkerboard 2 (Col 13-20): Normal Intensity Reverse Video Group
-            const char *esc_2 = is_light ? "\x1b[7;22;33m" : "\x1b[7;22;30m";
+            // Checkerboard 2 (Col 13-20): Italicized Reverse Video Group (SGR 3)
+            const char *esc_2 = is_light ? "\x1b[3;7;33m" : "\x1b[3;7;30m";
             printf("\x1b[%d;%dH%s \x1b[0m", 18 + r, 13 + c, esc_2);
 
             // Checkerboard 3 (Col 23-30): High-Intensity Backgrounds Group (100-107m)
