@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// 2-Page Condensed, Standard Normal Weight FG Diagnostic Test Suite (No Bold)
+// 2-Page Condensed, Standard FG Diagnostic Test Suite (No Bold)
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Direct full screen clear
@@ -675,8 +675,8 @@ void draw_top_board(void) {
 
     if (active_tab == 0) {
         // --- PAGE 1: NORMAL FOREGROUND SENTENCES (30m-37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG NORMAL SENTENCES (1/2)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mStandard colors 30m-37m, no bold\x1b[0m");
+        printf("\x1b[2;3H\x1b[37mDSi FG NORMAL SENTENCES (1/2)\x1b[0m");
+        printf("\x1b[3;3H\x1b[30mStandard colors 30m-37m, no bold\x1b[0m");
 
         struct SentenceRow {
             const char *esc_on;
@@ -696,19 +696,19 @@ void draw_top_board(void) {
             printf("\x1b[%d;3H\x1b[%sm%s\x1b[0m", 5 + (i * 2), sentences[i].esc_on, sentences[i].text);
         }
 
-        printf("\x1b[21;3H\x1b[1;30mStandard normal weight text intensity.\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mVerify DSi screen color contrast.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 2: Normal Text Panel\x1b[0m");
+        printf("\x1b[21;3H\x1b[30mStandard normal weight text intensity.\x1b[0m");
+        printf("\x1b[22;3H\x1b[30mVerify DSi screen color contrast.\x1b[0m");
+        printf("\x1b[23;3H\x1b[35mPage 1 of 2: Normal Text Panel\x1b[0m");
 
     } else {
         // --- PAGE 2: NORMAL FG CHESSBOARDS USING "#" (30m-37m) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FG NORMAL CHESSBOARDS (2/2)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mChess squares drawn with Normal ##\x1b[0m");
+        printf("\x1b[2;3H\x1b[37mDSi FG NORMAL CHESSBOARDS (2/2)\x1b[0m");
+        printf("\x1b[3;3H\x1b[30mChess squares drawn with Normal ##\x1b[0m");
 
         // Draws four mini 6x6 boards using standard normal foreground text rendering ("##") inside coordinates
         
         // Board 1: Red/Green Normal (31 vs 32)
-        printf("\x1b[5;3H\x1b[1;32m1: Red/Green Normal\x1b[0m");
+        printf("\x1b[5;3H\x1b[32m1: Red/Green Normal\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -718,7 +718,7 @@ void draw_top_board(void) {
         }
 
         // Board 2: Yellow/Blue Normal (33 vs 34)
-        printf("\x1b[5;17H\x1b[1;33m2: Yellow/Blue Normal\x1b[0m");
+        printf("\x1b[5;17H\x1b[33m2: Yellow/Blue Normal\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -728,7 +728,7 @@ void draw_top_board(void) {
         }
 
         // Board 3: Magenta/Cyan Normal (35 vs 36)
-        printf("\x1b[13;3H\x1b[1;34m3: Magenta/Cyan Normal\x1b[0m");
+        printf("\x1b[13;3H\x1b[34m3: Magenta/Cyan Normal\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -738,7 +738,7 @@ void draw_top_board(void) {
         }
 
         // Board 4: Black/White Normal (30 vs 37)
-        printf("\x1b[13;17H\x1b[1;37m4: Black/White Normal\x1b[0m");
+        printf("\x1b[13;17H\x1b[37m4: Black/White Normal\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -747,15 +747,15 @@ void draw_top_board(void) {
             }
         }
 
-        printf("\x1b[21;3H\x1b[1;30mUsing SGR 22 normal intensity on black.\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mL/R changes pages.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 2: Normal Board Panel\x1b[0m");
+        printf("\x1b[21;3H\x1b[30mUsing standard foregrounds on black.\x1b[0m");
+        printf("\x1b[22;3H\x1b[30mL/R changes pages.\x1b[0m");
+        printf("\x1b[23;3H\x1b[35mPage 2 of 2: Normal Board Panel\x1b[0m");
     }
 
     fflush(stdout);
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - All Standard Colors)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
@@ -769,26 +769,26 @@ void draw_bottom_stats(void) {
     if (engine_state != ENGINE_STATE_READY) {
         printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
+        printf("\x1b[31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
+        printf("\x1b[31mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
+            printf("\x1b[31mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
+            printf("\x1b[36mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
+            printf("\x1b[31mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
+            printf("\x1b[31mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[1;32mWhite's turn\x1b[K\n");
+            printf("\x1b[32mWhite's turn\x1b[K\n");
         } else {
-            printf("\x1b[1;35mBlack's turn\x1b[K\n");
+            printf("\x1b[35mBlack's turn\x1b[K\n");
         }
     }
 
@@ -842,7 +842,7 @@ void draw_bottom_stats(void) {
     }
 
     // --- LINE 4: Recent Moves Title ---
-    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
+    printf("\x1b[33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
     // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
@@ -895,24 +895,21 @@ void draw_bottom_stats(void) {
             sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
+        printf(" %s\x1b[30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
     // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
-    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
-            // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
-                printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
+                printf("\x1b[32m%s\x1b[0m\x1b[K", raw_log[i]);
             } else {
-                printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
+                printf("\x1b[30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
             printf("\x1b[K"); // Silently clear unoccupied terminal log space
         }
         
-        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
         if (i < 8) {
             printf("\n");
         }
@@ -930,7 +927,7 @@ void draw_ui(void) {
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
     printf("\x1b[7;1H\x1b[J"); 
-    printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
+    printf("\n\x1b[33mPROMOTION! Tap Key selection:\n");
     printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
     
