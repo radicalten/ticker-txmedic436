@@ -10,8 +10,8 @@
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
-    volatile int head; // Fixed: marked volatile to prevent compiler caching in registers
-    volatile int tail; // Fixed: marked volatile to prevent compiler caching in registers
+    volatile int head; // Volatile prevents compiler caching of register values across threads
+    volatile int tail; // Volatile prevents compiler caching of register values across threads
     LightLock lock;
 } MsgQueue;
 
@@ -29,12 +29,12 @@ static DS_Thread main_thread;
 static DS_Thread search_thread;
 static DS_Thread* current_thread = &main_thread;
 
-// Forward declarations
+// Forward declare to prevent LTO issues and keep compiler optimizations happy
 __attribute__((used)) __attribute__((noinline)) void thread_exit(void);
 void thread_launcher(void);
 
 // Naked assembly context switcher (ARM Mode)
-// Fixed: Added noinline to prevent compiler optimization from breaking the stack frames
+// Added: __attribute__((noinline)) to prevent stack frames being inlined during compiler optimizations
 __attribute__((naked)) __attribute__((noinline)) __attribute__((target("arm")))
 void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
     __asm__ volatile (
@@ -90,6 +90,9 @@ void ds_yield(void) {
 #undef putc
 #undef fwrite
 #undef pthread_create
+#undef fgets
+#undef getchar
+#undef fgetc
 
 void sf_bridge_init(void) {
     q_gui_to_engine.head = q_gui_to_engine.tail = 0;
@@ -125,7 +128,6 @@ void sf_recv_command(char *buf, size_t max_len) {
     while (1) {
         LightLock_Lock(&q_gui_to_engine.lock);
         
-        // Thanks to volatile, these reads are forced to read directly from RAM on every loop iteration
         if (q_gui_to_engine.head != q_gui_to_engine.tail) {
             int has_newline = 0;
             int temp_tail = q_gui_to_engine.tail;
@@ -289,6 +291,35 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return nmemb;
 }
 
+// Redirect standard fgets to non-blocking engine receive
+char *sf_fgets(char *str, int n, FILE *stream) {
+    if (stream == stdin) {
+        sf_recv_command(str, (size_t)n);
+        size_t len = strlen(str);
+        if (len < (size_t)n - 1) {
+            str[len] = '\n';
+            str[len + 1] = '\0';
+        }
+        return str;
+    }
+    return fgets(str, n, stream);
+}
+
+// Redirect standard getchar to the non-blocking engine buffer
+int sf_getchar(void) {
+    char buf[2];
+    sf_recv_command(buf, 2);
+    return (int)buf[0];
+}
+
+// Redirect standard fgetc to handle stdin capture
+int sf_fgetc(FILE *stream) {
+    if (stream == stdin) {
+        return sf_getchar();
+    }
+    return fgetc(stream);
+}
+
 int sf_get_output(char *buf, size_t max_len) {
     ds_yield(); // Give engine thread a turn to run and populate output
 
@@ -315,14 +346,15 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
 
+    // Recursive thread guard check
     if (search_thread.active) {
         if (thread != NULL) {
             *thread = (pthread_t)999;
         }
-        return 0;
+        return 0; // Return dummy success code
     }
 
-    // Fixed: Upgraded stack size to 128 KB to support deep chess engine recursion
+    // Upgraded search thread stack footprint to 128 KB for stable minimax/eval recursion depth
     size_t stacksize = 128 * 1024; 
 
     void* stack_alloc = malloc(stacksize);
@@ -336,6 +368,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     // Align the top stack limit
     uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
     
+    // Setup context frame alignment
     *(--sp) = (uint32_t)thread_launcher; // pc
     *(--sp) = 0;                         // r11
     *(--sp) = 0;                         // r10
@@ -345,7 +378,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     *(--sp) = 0;                         // r6
     *(--sp) = (uint32_t)arg;             // r5 (arg passed to launcher)
     *(--sp) = (uint32_t)start_routine;   // r4 (start_routine passed to launcher)
-    *(--sp) = 0;                         // r3 (dummy padding register to keep 8-byte stack alignment)
+    *(--sp) = 0;                         // r3 (dummy register for stack-alignment padding)
 
     search_thread.sp = (uint32_t)sp;
     
