@@ -22,6 +22,7 @@
 #define THREAD_H
 
 #include <stdbool.h>
+#include <stdatomic.h> // Restored: standard C11 atomic operations are supported by the compiler
 #include <pthread.h>
 #include <nds.h>
 #include "3ds_bridge.h"
@@ -47,7 +48,7 @@ enum {
 void thread_search(Position *pos);
 void thread_wake_up(Position *pos, int action);
 void thread_wait_until_sleeping(Position *pos);
-void thread_wait(Position *pos, volatile bool *b); // Replaced atomic_bool with volatile bool for ARM9 compatibility
+void thread_wait(Position *pos, atomic_bool *b); // Restored: atomic_bool matches thread.c definition
 
 struct MainThread {
   double previousTimeReduction;
@@ -67,9 +68,9 @@ struct ThreadPool {
   LightLock mutex;
   volatile bool initializing;
   bool searching, sleeping, stopOnPonderhit;
-  volatile bool ponder;       // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
-  volatile bool stop;         // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
-  volatile bool increaseDepth; // Replaced atomic_bool with volatile bool for ARMv5 ARM9 core
+  atomic_bool ponder;        // Restored to atomic_bool to prevent compilation errors
+  atomic_bool stop;          // Restored to atomic_bool to prevent compilation errors
+  atomic_bool increaseDepth; // Restored to atomic_bool to prevent compilation errors
   LOCK_T lock;
 };
 
