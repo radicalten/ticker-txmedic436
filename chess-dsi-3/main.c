@@ -231,8 +231,7 @@ void trigger_engine_move(void) {
         strcpy(cmd, "position startpos");
     } else {
         strcpy(cmd, "position startpos moves");
-        int len = cmd[23] == ' ' ? 23 : strlen(cmd);
-        len = strlen(cmd);
+        int len = strlen(cmd);
         for (int i = 0; i < history_count; i++) {
             char uci_m[10];
             move_to_uci(move_history[i], uci_m);
@@ -759,9 +758,9 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Title & Turn Status Combined ---
+    // --- LINE 1: Turn Status Combined ---
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[1;33mStockfish Chess\x1b[K\n");
+        printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
         printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
