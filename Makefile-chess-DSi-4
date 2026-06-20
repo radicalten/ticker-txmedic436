@@ -21,7 +21,7 @@ LDFLAGS := $(CFLAGS) \
 -lnds9 -lcalico_ds9 -lm
 TARGET  := myapp
 EXCLUDE := chess-dsi-4/nnue.c chess-dsi-4/numa.c
-SRCDIR 	:= chess-dsi-3
+SRCDIR 	:= chess-dsi-4
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
