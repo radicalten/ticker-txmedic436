@@ -1194,9 +1194,13 @@ int main(int argc, char **argv) {
 
     // Initialize top custom backgrounds (Sharing Tile Base 0 with loaded console font)
     bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);  // Low Priority: Swatches
-    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // High Priority: Cursor/Labels
+    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // High Priority: Pieces/Labels
 
-    // Create a pure solid color glyph in tile index 1
+    // Initialize Stockfish/handshake bridge (this may reset some settings, so we configure registers after)
+    sf_bridge_init();
+    init_board(&current_state);
+
+    // Late-binding copy: Create a pure solid color glyph in tile index 1
     u32 solid_tile[8] = {
         0x11111111,
         0x11111111,
@@ -1210,12 +1214,12 @@ int main(int argc, char **argv) {
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
 
-    // Map hardware palettes
+    // Map hardware palette colors after bridge loaded to bypass overwrites
     init_custom_palettes();
     init_bottom_palette();
 
-    sf_bridge_init();
-    init_board(&current_state);
+    // Explicitly force hardware Backgrounds 1, 2, and 3 active on main screen
+    REG_DISPCNT |= DISPLAY_BG1_ACTIVE | DISPLAY_BG2_ACTIVE | DISPLAY_BG3_ACTIVE;
 
     // Clear graphics maps and console text screen maps before starting
     u16* board_map = bgGetMapPtr(bg_board_id);
