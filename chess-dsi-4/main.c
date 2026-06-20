@@ -1217,7 +1217,7 @@ int main(int argc, char **argv) {
         0x11111111,
         0x11111111
     };
-    u8* tile_memory = (u8*)bgGetTilePtr(bg_board_id);
+    u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
 
     // Initialize customized RGB DS hardware color registers
