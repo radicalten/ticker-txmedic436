@@ -70,6 +70,18 @@ PrintConsole topConsole, bottomConsole;
 int bg_board_id;
 int bg_pieces_id;
 
+// Safe global read-only block for DTCM cache-safety
+static const u32 solid_tile[8] = {
+    0x11111111,
+    0x11111111,
+    0x11111111,
+    0x11111111,
+    0x11111111,
+    0x11111111,
+    0x11111111,
+    0x11111111
+};
+
 void init_board(BoardState *state);
 int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
@@ -672,24 +684,27 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
 
 // Configure DS Palette memory on main display for chess elements
 void init_custom_palettes(void) {
-    // Solid background squares configurations
-    BG_PALETTE[0 * 16 + 1] = RGB15(26, 23, 18); // Palette 0, Color 1: Light Board Square (Tan)
-    BG_PALETTE[1 * 16 + 1] = RGB15(11,  8,  5); // Palette 1, Color 1: Dark Board Square (Brown)
-    BG_PALETTE[2 * 16 + 1] = RGB15(10, 24, 10); // Palette 2, Color 1: Highlight Green Selection
-    BG_PALETTE[3 * 16 + 1] = RGB15(31, 31, 31); // Palette 3, Color 1: White Cursor
-    BG_PALETTE[4 * 16 + 1] = RGB15(22, 10, 22); // Palette 4, Color 1: Magenta Prev Move trace
-    BG_PALETTE[5 * 16 + 1] = RGB15( 5, 20, 25); // Palette 5, Color 1: Cyan Legal Destinations
-    BG_PALETTE[6 * 16 + 1] = RGB15(28,  5,  5); // Palette 6, Color 1: Red Alert (King in Check)
+    // Solid background squares configurations (Color Index 1)
+    BG_PALETTE[0 * 16 + 1] = RGB15(26, 23, 18); // Palette 0: Light Board Square (Tan)
+    BG_PALETTE[1 * 16 + 1] = RGB15(11,  8,  5); // Palette 1: Dark Board Square (Brown)
+    BG_PALETTE[2 * 16 + 1] = RGB15(10, 24, 10); // Palette 2: Highlight Green Selection
+    BG_PALETTE[3 * 16 + 1] = RGB15(31, 31, 31); // Palette 3: White Cursor
+    BG_PALETTE[4 * 16 + 1] = RGB15(22, 10, 22); // Palette 4: Magenta Prev Move trace
+    BG_PALETTE[5 * 16 + 1] = RGB15( 5, 20, 25); // Palette 5: Cyan Legal Destinations
+    BG_PALETTE[6 * 16 + 1] = RGB15(28,  5,  5); // Palette 6: Red Alert (King in Check)
 
     // Foreground piece overlay configurations (Color index 0 must be transparent)
     BG_PALETTE[7 * 16 + 0] = 0;
-    BG_PALETTE[7 * 16 + 1] = RGB15(31, 30, 22); // Palette 7, Color 1: White Pieces (Golden-Cream)
+    BG_PALETTE[7 * 16 + 1] = RGB15(31, 30, 22);  // Palette 7, Color 1: White Pieces (Golden-Cream)
+    BG_PALETTE[7 * 16 + 15] = RGB15(31, 30, 22); // Palette 7, Color 15 (Matches font body pixels)
 
     BG_PALETTE[8 * 16 + 0] = 0;
-    BG_PALETTE[8 * 16 + 1] = RGB15( 6,  6, 12); // Palette 8, Color 1: Black Pieces (Slate/Midnight Blue)
+    BG_PALETTE[8 * 16 + 1] = RGB15( 6,  6, 12);  // Palette 8, Color 1: Black Pieces (Slate/Midnight Blue)
+    BG_PALETTE[8 * 16 + 15] = RGB15( 6,  6, 12); // Palette 8, Color 15 (Matches font body pixels)
 
     // Alphanumeric coordinate boundary texts
-    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20); // Palette 9, Color 1: Muted Gray label
+    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20);  // Palette 9, Color 1: Muted Gray label
+    BG_PALETTE[9 * 16 + 15] = RGB15(20, 20, 20); // Palette 9, Color 15
 }
 
 // Overwrite Sub Screen ANSI default console colors with custom palette
@@ -714,6 +729,13 @@ void init_bottom_palette(void) {
 
 // Draw the Top Screen Board (Pristine, Direct Hardware Layering, double-height formats)
 void draw_top_board(void) {
+    // Late binding enforcement: Refresh our custom solid tile at index 255
+    u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
+    memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
+
+    // Force palette mapping recovery on every single redraw cycle to prevent console wipes
+    init_custom_palettes();
+
     u16* board_map = bgGetMapPtr(bg_board_id);
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
 
@@ -788,11 +810,11 @@ void draw_top_board(void) {
                 palette_idx = 5;
             }
 
-            // Render background square cells on BG2 (Tile 1 is our solid block)
-            set_tile(board_map, 8 + c * 2,     4 + r * 2,     1, palette_idx);
-            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2,     1, palette_idx);
-            set_tile(board_map, 8 + c * 2,     4 + r * 2 + 1, 1, palette_idx);
-            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2 + 1, 1, palette_idx);
+            // Render background square cells on BG2 (Tile index 255 is our solid block)
+            set_tile(board_map, 8 + c * 2,     4 + r * 2,     255, palette_idx);
+            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2,     255, palette_idx);
+            set_tile(board_map, 8 + c * 2,     4 + r * 2 + 1, 255, palette_idx);
+            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2 + 1, 255, palette_idx);
 
             // Render pieces on high-priority BG1 (transparency handles overlay properly)
             if (p != 0) {
@@ -1196,23 +1218,13 @@ int main(int argc, char **argv) {
     bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);  // Low Priority: Swatches
     bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // High Priority: Pieces/Labels
 
-    // Initialize Stockfish/handshake bridge (this may reset some settings, so we configure registers after)
+    // Initialize Stockfish/handshake bridge
     sf_bridge_init();
     init_board(&current_state);
 
-    // Late-binding copy: Create a pure solid color glyph in tile index 1
-    u32 solid_tile[8] = {
-        0x11111111,
-        0x11111111,
-        0x11111111,
-        0x11111111,
-        0x11111111,
-        0x11111111,
-        0x11111111,
-        0x11111111
-    };
+    // Copy solid color tile array safely to Index 255 of Main Engine VRAM via CPU Memcpy
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
-    dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
+    memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
 
     // Map hardware palette colors after bridge loaded to bypass overwrites
     init_custom_palettes();
