@@ -1,1 +1,82 @@
+
 p1for main-chess-dsi-3-test2-v6: I have a C file of a chess game engine for DSi that never finishes writing the engine text on the bottom screen, can you help me troubleshoot that:
+
+gemini3.5flash A: The reason your chess engine "never finishes writing the engine text on the bottom screen" (and likely freezes or runs at extremely low frame rates) is due to a massive CPU bottleneck inside your UI drawing routine.
+The Problem
+In draw_bottom_stats(), you have a loop that renders the recent moves list (up to 20 moves). For every single frame, you call:
+move_to_san(&history[w_idx], move_history[w_idx], w_str);
+Step 1: Add a Global SAN History Cache
+Near the top of your file where you declare move_history, add a cache array to store the formatted SAN strings:
+BoardState current_state;
+BoardState history[MAX_HISTORY];
+Move move_history[MAX_HISTORY];
+char san_history[MAX_HISTORY][16]; // <-- Add this to cache SAN strings (e.g., "Nf3+", "O-O-O")
+int history_count = 0;
+Step 2: Cache SAN Notation on Move Submission
+Update the push_state() function to compute the SAN string immediately when a move is recorded:
+void push_state(const BoardState *state, Move m) {
+    if (history_count < MAX_HISTORY - 1) {
+        history[history_count] = *state;
+        move_history[history_count] = m;
+        
+        // Compute and cache the SAN string once right here
+        move_to_san(state, m, san_history[history_count]); 
+        
+        history_count++;
+    }
+}
+Step 3: Use the Cached SAN Strings in the UI Renderer
+
+In draw_bottom_stats(), locate the move list rendering loops (lines 535-573 in your original code) and replace the calls to move_to_san() with a fast strcpy() from your cached array:
+
+for (int r = 0; r < half_visible; r++) {
+        int left_display = start_move + r;
+        int right_display = start_move + half_visible + r;
+
+        char left_str[32] = "";
+        char right_str[32] = "";
+
+        // Render Left Column Move Data
+        if (total_full_moves > 0 && left_display <= total_full_moves) {
+            int w_idx = (left_display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) {
+                // Instantly copy from our pre-calculated cache
+                strcpy(w_str, san_history[w_idx]); 
+            }
+            if (b_idx < history_count) {
+                // Instantly copy from our pre-calculated cache
+                strcpy(b_str, san_history[b_idx]); 
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(left_str, "%2d.%-5s%-5s", left_display, w_str, b_str);
+        } else {
+            sprintf(left_str, "%2d. ---  --- ", left_display);
+        }
+
+        // Render Right Column Move Data
+        if (total_full_moves > 0 && right_display <= total_full_moves) {
+            int w_idx = (right_display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) {
+                // Instantly copy from our pre-calculated cache
+                strcpy(w_str, san_history[w_idx]); 
+            }
+            if (b_idx < history_count) {
+                // Instantly copy from our pre-calculated cache
+                strcpy(b_str, san_history[b_idx]); 
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(right_str, "%2d.%-5s%-5s", right_display, w_str, b_str);
+        } else {
+            sprintf(right_str, "%2d. ---  --- ", right_display);
+        }
+
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
+    }
