@@ -12,6 +12,13 @@ p3v2 the squares are still all black, do you have any other debugging ideas? fee
 
 
 p3v2 worked! a full chessboard is now displayed :) here is what gemini3.5 flash had to say:
+after p3v3: 
+p3v4: can you now update the colors to match those from this file: chesss-3ds-3-main.c
+
+
+
+
+Bonus:
 p3v3: Wow! that worked. you are a maestro
 A: Thank you so much! I am thrilled to hear that it is working perfectly now!
 
