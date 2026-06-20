@@ -751,12 +751,12 @@ void draw_top_board(void) {
     memset(board_map, 0, 32 * 32 * sizeof(u16));
     memset(pieces_map, 0, 32 * 32 * sizeof(u16));
 
-    // Render coordinate files (columns a-h) at safe margins (centered at 8 + c * 2 offset)
+    // Render coordinate files (columns a-h) at safe margins (now shifted 1 unit left to 7 + col * 2 offset)
     for (int col = 0; col < 8; col++) {
         char file_lbl = (board_orientation == 1) ? ('a' + col) : ('h' - col);
         char str[2] = {file_lbl, '\0'};
-        draw_string(pieces_map, 8 + col * 2, 2, str, 9);
-        draw_string(pieces_map, 8 + col * 2, 21, str, 9);
+        draw_string(pieces_map, 7 + col * 2, 2, str, 9);
+        draw_string(pieces_map, 7 + col * 2, 21, str, 9);
     }
 
     int king_in_check = -1;
@@ -772,9 +772,9 @@ void draw_top_board(void) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         char lbl_str[2] = {'0' + rank_lbl, '\0'};
 
-        // Draw rank labels on sides
-        draw_string(pieces_map, 6, 4 + r * 2, lbl_str, 9);
-        draw_string(pieces_map, 25, 4 + r * 2, lbl_str, 9);
+        // Draw rank labels on sides (shifted 1 unit left to x=5 and x=24)
+        draw_string(pieces_map, 5, 4 + r * 2, lbl_str, 9);
+        draw_string(pieces_map, 24, 4 + r * 2, lbl_str, 9);
 
         for (int c = 0; c < 8; c++) {
             int sq = screen_to_board_sq(r, c);
@@ -818,13 +818,13 @@ void draw_top_board(void) {
                 palette_idx = is_light ? 6 : 7; // Sage Light / Dark Greens
             }
 
-            // Render background square cells on BG2 (Tile index 255 is our solid block)
-            set_tile(board_map, 8 + c * 2,     4 + r * 2,     255, palette_idx);
-            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2,     255, palette_idx);
-            set_tile(board_map, 8 + c * 2,     4 + r * 2 + 1, 255, palette_idx);
-            set_tile(board_map, 8 + c * 2 + 1, 4 + r * 2 + 1, 255, palette_idx);
+            // Render background square cells on BG2 (shifted 1 unit left to 7 + c * 2)
+            set_tile(board_map, 7 + c * 2,     4 + r * 2,     255, palette_idx);
+            set_tile(board_map, 7 + c * 2 + 1, 4 + r * 2,     255, palette_idx);
+            set_tile(board_map, 7 + c * 2,     4 + r * 2 + 1, 255, palette_idx);
+            set_tile(board_map, 7 + c * 2 + 1, 4 + r * 2 + 1, 255, palette_idx);
 
-            // Render pieces on high-priority BG1 (transparency handles overlay properly)
+            // Render pieces on high-priority BG1 (shifted 1 unit left to 7 + c * 2)
             if (p != 0) {
                 u16 fg_palette = (p > 0) ? 10 : 11; // White is palette 10, Black is palette 11
                 char piece_str = ' ';
@@ -837,7 +837,7 @@ void draw_top_board(void) {
                     case 6: piece_str = 'K'; break;
                 }
                 // Draw piece centered in top-left cell quadrant of our 2x2 board square
-                set_tile(pieces_map, 8 + c * 2, 4 + r * 2, piece_str, fg_palette);
+                set_tile(pieces_map, 7 + c * 2, 4 + r * 2, piece_str, fg_palette);
             }
         }
     }
