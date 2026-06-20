@@ -222,6 +222,7 @@ void push_raw_log(const char *line) {
         strncpy(raw_log[8], line, 31);
         raw_log[8][31] = '\0';
     }
+    redraw_needed = 1; // Mark UI as needing to be redrawn on the next frame
 }
 
 void trigger_engine_move(void) {
