@@ -36,6 +36,7 @@ typedef struct {
 BoardState current_state;
 BoardState history[MAX_HISTORY];
 Move move_history[MAX_HISTORY];
+char san_history[MAX_HISTORY][16]; // Cache array to store pre-calculated SAN strings
 int history_count = 0;
 
 int cursor_r = 6;
@@ -221,6 +222,10 @@ void push_state(const BoardState *state, Move m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
         move_history[history_count] = m;
+        
+        // Compute and cache the SAN string immediately upon pushing the move
+        move_to_san(state, m, san_history[history_count]);
+        
         history_count++;
     }
 }
@@ -717,7 +722,7 @@ void init_custom_palettes(void) {
 
 // Overwrite Sub Screen ANSI default console colors with custom palette
 void init_bottom_palette(void) {
-    BG_PALETTE_SUB[0]  = RGB15(0, 0, 0);       // Black Background
+    BG_PALETTE_SUB[0]  = RGB15(2, 2, 3);       // Black Background
     BG_PALETTE_SUB[1]  = RGB15(22, 4, 4);      // Dark Red
     BG_PALETTE_SUB[2]  = RGB15(4, 22, 4);      // Dark Green
     BG_PALETTE_SUB[3]  = RGB15(22, 22, 4);     // Dark Yellow
@@ -952,10 +957,12 @@ void draw_bottom_stats(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                move_to_san(&history[w_idx], move_history[w_idx], w_str);
+                // Instantly copy from the pre-calculated cache
+                strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
-                move_to_san(&history[b_idx], move_history[b_idx], b_str);
+                // Instantly copy from the pre-calculated cache
+                strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
@@ -971,10 +978,12 @@ void draw_bottom_stats(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                move_to_san(&history[w_idx], move_history[w_idx], w_str);
+                // Instantly copy from the pre-calculated cache
+                strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
-                move_to_san(&history[b_idx], move_history[b_idx], b_str);
+                // Instantly copy from the pre-calculated cache
+                strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
