@@ -650,109 +650,92 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
+// Draw ANSI Diagnostics & Test Patterns to evaluate the limits of the DSi Console
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H");
-    printf("\n\n"); // Vertical Centering Padding
+    printf("\x1b[2J"); // Direct full screen clear
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    int max_cols = 32;
+    int max_rows = 24;
 
-    int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
+    // 1. Render Outer Perimeter borders to define clipping boundaries
+    for (int c = 1; c <= max_cols; c++) {
+        printf("\x1b[1;%dH-", c);          // Top limit
+        printf("\x1b[%d;%dH-", max_rows, c); // Bottom limit
+    }
+    for (int r = 1; r <= max_rows; r++) {
+        printf("\x1b[%d;1H|", r);          // Left limit
+        printf("\x1b[%d;%dH|", r, max_cols); // Right limit
+    }
+    printf("\x1b[1;1H+");
+    printf("\x1b[1;%dH+", max_cols);
+    printf("\x1b[%d;1H+", max_rows);
+    printf("\x1b[%d;%dH+", max_rows, max_cols);
+
+    // 2. Terminal Metadata Header
+    printf("\x1b[2;3H\x1b[1;37mDSi TERMINAL DIAGNOSTICS\x1b[0m");
+    printf("\x1b[3;3H\x1b[1;30mTarget Bounds: %dx%d cells\x1b[0m", max_cols, max_rows);
+
+    // 3. Horizontal Column Ruler (at Row 5)
+    printf("\x1b[5;3H");
+    for (int i = 3; i < max_cols - 1; i++) {
+        printf("%d", i % 10);
     }
 
-    for (int r = 0; r < 8; r++) {
-        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+    // 4. Vertical Row Ruler (at Column 2)
+    for (int r = 2; r < max_rows; r++) {
+        printf("\x1b[%d;2H%d", r, r % 10);
+    }
 
-        for (int sub_r = 0; sub_r < 2; sub_r++) {
-            printf("    "); 
+    // 5. ANSI Color Palette Matrix (Rows 7 to 13)
+    // Background Color Blocks (40m - 47m)
+    printf("\x1b[7;3H\x1b[1;37mBG Colors (40m-47m):\x1b[0m");
+    for (int color = 0; color < 8; color++) {
+        // Standard BG Block
+        printf("\x1b[8;%dH\x1b[4%dm  \x1b[0m", 3 + (color * 3), color);
+        // High Intensity BG Block (Bold active)
+        printf("\x1b[9;%dH\x1b[1;4%dm  \x1b[0m", 3 + (color * 3), color);
+    }
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
-            } else {
-                printf("    "); 
-            }
+    // Foreground Color Indicators (30m - 37m)
+    printf("\x1b[11;3H\x1b[1;37mFG Colors (30m-37m):\x1b[0m");
+    for (int color = 0; color < 8; color++) {
+        // Standard Text Character
+        printf("\x1b[12;%dH\x1b[3%dm#\x1b[0m", 3 + (color * 3), color);
+        // High Intensity Bold Character
+        printf("\x1b[13;%dH\x1b[1;3%dm#\x1b[0m", 3 + (color * 3), color);
+    }
 
-            for (int c = 0; c < 8; c++) {
-                int sq = screen_to_board_sq(r, c);
-                int p = current_state.board[sq];
+    // 6. Shape & Aspect Ratio Evaluation Panel (Rows 15 to 17)
+    printf("\x1b[15;3H\x1b[1;37mAspect Ratio Blocks:\x1b[0m");
+    
+    // 1x1 character grid block (Typically 8x8 pixels)
+    printf("\x1b[16;3H1x1:\x1b[43m \x1b[0m");
+    
+    // 2x2 character grid block (Typically 16x16 pixels)
+    printf("\x1b[16;12H2x2:\x1b[42m  \x1b[0m");
+    printf("\x1b[17;16H\x1b[42m  \x1b[0m");
+    
+    // 4x2 character grid block (Typically 32x16 pixels)
+    printf("\x1b[16;22H4x2:\x1b[45m    \x1b[0m");
+    printf("\x1b[17;26H\x1b[45m    \x1b[0m");
 
-                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-                const char *bg_color;
-
-                int is_selected = (sq == selected_sq);
-                int is_cursor = (r == cursor_r && c == cursor_c);
-
-                int is_prev_move = 0;
-                if (history_count > 0) {
-                    Move last_move = move_history[history_count - 1];
-                    if (sq == last_move.from || sq == last_move.to) {
-                        is_prev_move = 1;
-                    }
-                }
-
-                int is_legal_dest = 0;
-                if (selected_sq != -1) {
-                    Move test_m = {selected_sq, sq, 0};
-                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                        test_m.promo = 5;
-                    }
-                    if (is_legal_move(&current_state, test_m)) {
-                        is_legal_dest = 1;
-                    }
-                }
-
-                if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White/Gray Cursor
-                } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Green Selection
-                } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Red King-in-Check
-                } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Magenta History Path
-                } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Cyan Targets
-                } else {
-                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow/Black Board
-                }
-
-                if (sub_r == 0) {
-                    const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Blue Text for Black Pieces
-                    if (p != 0) {
-                        if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces
-                        }
-                        switch (abs(p)) {
-                            case 1: piece_str = "P"; break;
-                            case 2: piece_str = "N"; break;
-                            case 3: piece_str = "B"; break;
-                            case 4: piece_str = "R"; break;
-                            case 5: piece_str = "Q"; break;
-                            case 6: piece_str = "K"; break;
-                        }
-                    }
-                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
-                } else {
-                    printf("%s  \x1b[0m", bg_color);
-                }
-            }
-
-            if (sub_r == 0) {
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
-            } else {
-                printf("\n");
-            }
+    // 7. Mini Checkerboard Alignment Grid (Rows 19 to 23)
+    // Demonstrates whether 2x1 character pairs create clean chessboard squares on hardware
+    printf("\x1b[19;3H\x1b[1;37mMini Board Grid:\x1b[0m");
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 8; c++) {
+            int is_light = (r + c) % 2 == 0;
+            const char *color_esc = is_light ? "\x1b[43m" : "\x1b[40m";
+            printf("\x1b[%d;%dH%s  \x1b[0m", 20 + r, 3 + (c * 2), color_esc);
         }
     }
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    // 8. Live Interactive Cursor Position Data Tracking
+    printf("\x1b[21;21H\x1b[1;36mD-Pad R: %d\x1b[0m", cursor_r);
+    printf("\x1b[22;21H\x1b[1;36mD-Pad C: %d\x1b[0m", cursor_c);
+    printf("\x1b[23;21H\x1b[1;36mSelected: %d\x1b[0m", selected_sq);
+
     fflush(stdout);
 }
 
@@ -910,7 +893,7 @@ void draw_bottom_stats(void) {
                 printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
-            printf("\x1b[K"); // Silently clear un-occupied terminal log space
+            printf("\x1b[K"); // Silently clear unoccupied terminal log space
         }
         
         // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
@@ -1153,12 +1136,10 @@ int main(int argc, char **argv) {
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
         while(1) swiWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
-        //printf("Background Engine Thread spawned successfully.\n\n");
         fflush(stdout);
     }
 
