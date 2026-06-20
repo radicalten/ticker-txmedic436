@@ -14,7 +14,8 @@ p3v2 the squares are still all black, do you have any other debugging ideas? fee
 p3v2 worked! a full chessboard is now displayed :) here is what gemini3.5 flash had to say:
 after p3v3: 
 p3v4: can you now update the colors to match those from this file: chesss-3ds-3-main.c
-
+(gemini 3.5 flash does this perfectly!)
+p3v5: can you move the entire chessboard 1 unit left? 
 
 
 
