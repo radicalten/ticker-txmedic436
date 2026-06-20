@@ -10,8 +10,8 @@
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
-    int head;
-    int tail;
+    volatile int head; // Fixed: marked volatile to prevent compiler caching in registers
+    volatile int tail; // Fixed: marked volatile to prevent compiler caching in registers
     LightLock lock;
 } MsgQueue;
 
@@ -29,14 +29,13 @@ static DS_Thread main_thread;
 static DS_Thread search_thread;
 static DS_Thread* current_thread = &main_thread;
 
-// Forward declare to prevent LTO issues and keep compiler optimizations happy
+// Forward declarations
 __attribute__((used)) __attribute__((noinline)) void thread_exit(void);
 void thread_launcher(void);
-void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
 
 // Naked assembly context switcher (ARM Mode)
-// Fixed: Restores 10 registers (r3-r11, lr/pc) to keep stack 8-byte aligned at all times
-__attribute__((naked)) __attribute__((target("arm")))
+// Fixed: Added noinline to prevent compiler optimization from breaking the stack frames
+__attribute__((naked)) __attribute__((noinline)) __attribute__((target("arm")))
 void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
     __asm__ volatile (
         "push {r3-r11, lr}\n\t"  // Save callee-saved registers (10 registers total)
@@ -47,7 +46,7 @@ void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
 }
 
 // Naked assembly launcher for starting a thread (ARM Mode)
-__attribute__((naked)) __attribute__((target("arm")))
+__attribute__((naked)) __attribute__((noinline)) __attribute__((target("arm")))
 void thread_launcher(void) {
     __asm__ volatile (
         "mov r0, r5\n\t"           // Setup arg (r5) as first argument in r0
@@ -126,6 +125,7 @@ void sf_recv_command(char *buf, size_t max_len) {
     while (1) {
         LightLock_Lock(&q_gui_to_engine.lock);
         
+        // Thanks to volatile, these reads are forced to read directly from RAM on every loop iteration
         if (q_gui_to_engine.head != q_gui_to_engine.tail) {
             int has_newline = 0;
             int temp_tail = q_gui_to_engine.tail;
@@ -315,16 +315,15 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
 
-    // --- FIX FOR BUG 1: Recursive thread guard ---
-    // If the engine main thread is already running, satisfy internal thread spawns safely
     if (search_thread.active) {
         if (thread != NULL) {
             *thread = (pthread_t)999;
         }
-        return 0; // Return dummy success code
+        return 0;
     }
 
-    size_t stacksize = 32 * 1024; // 32 KB Stack (optimized allocation size)
+    // Fixed: Upgraded stack size to 128 KB to support deep chess engine recursion
+    size_t stacksize = 128 * 1024; 
 
     void* stack_alloc = malloc(stacksize);
     if (!stack_alloc) {
@@ -337,7 +336,6 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     // Align the top stack limit
     uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
     
-    // --- FIX FOR BUG 2: Setup 10-register alignment frame mapping ---
     *(--sp) = (uint32_t)thread_launcher; // pc
     *(--sp) = 0;                         // r11
     *(--sp) = 0;                         // r10
