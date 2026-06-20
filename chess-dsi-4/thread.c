@@ -21,8 +21,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>  // Enforced inclusion for explicit attribute handling
-#include <calico/types.h>
+#include <pthread.h>  
 #include <nds.h>
 
 #include "material.h"
@@ -37,6 +36,8 @@
 #include "uci.h"
 #include "tbprobe.h"
 #include "3ds_bridge.h"
+
+// Removed: #include <calico/types.h> -> 3DS specific, causes NDS compile failure
 
 static void thread_idle_loop(Position *pos);
 
@@ -53,12 +54,10 @@ static THREAD_FUNC thread_init(void *arg)
 {
   int idx = (intptr_t)arg;
 
-  // Use native 3DS system call to assign worker calculations to lower priority layers.
-  // Thread 0 gets 0x3D, Thread 1 gets 0x3E, etc.
-  // This keeps the master thread (at 0x3B) highly responsive to check timer structures.
+  // Set cooperative task priorities (safe stub handled by 3ds_bridge.h)
   svcSetThreadPriority(CUR_THREAD_HANDLE, 0x3D + idx);
 
-  int t = 0; // NUMA disabled for 3DS
+  int t = 0; 
   if (t >= numCmhTables) {
     int old = numCmhTables;
     numCmhTables = t + 16;
@@ -133,8 +132,7 @@ static THREAD_FUNC thread_init(void *arg)
   // Store the initialized Position structural handle
   Threads.pos[idx] = pos;
 
-  // GCC Hardware Barrier: Force Thread 0 to finish mapping and writing memory addresses
-  // before the parent execution flow wakes up from its yield sleep block.
+  // Force Memory synchronization check
   __sync_synchronize();
 
   // Signal completion
@@ -153,10 +151,8 @@ static void thread_create(int idx)
 
   Threads.initializing = true;
 
-  // Initialize and explicitly set stack size to 256KB.
-  // This shields the recursive alpha-beta depth search execution from silently 
-  // overflowing the default 3DS thread stacks.
   pthread_attr_init(&attr);
+  // Stack size is safely handled inside our sf_pthread_create override
   pthread_attr_setstacksize(&attr, 256 * 1024);
   
   if (pthread_create(&thread, &attr, thread_init, (void *)(intptr_t)idx) != 0) {
@@ -164,13 +160,12 @@ static void thread_create(int idx)
     fflush(stdout);
   }
   
-  // Attributes can be immediately destroyed once the thread is safely registered
   pthread_attr_destroy(&attr);
   
   // Safe yield loop replacing POSIX condvars to prevent startup freezes
   while (Threads.initializing) {
-    __sync_synchronize();       // Force memory sync across cores
-    svcSleepThread(1000000ULL); // Yield 1ms to let the worker thread run
+    __sync_synchronize();       
+    svcSleepThread(1000000ULL); // Yield execution frame
   }
 
   Threads.pos[idx]->nativeThread = thread;
@@ -182,7 +177,7 @@ static void thread_destroy(Position *pos)
   pos->action = THREAD_EXIT;
   __sync_synchronize();
   
-  // Explicitly wait for thread termination
+  // Wait for cooperative thread termination (fixed to intercept and free stack allocations)
   pthread_join(pos->nativeThread, NULL);
 
 #ifndef NNUE_PURE
@@ -202,10 +197,10 @@ static void thread_destroy(Position *pos)
 // thread_wait_for_search_finished() waits until not searching.
 void thread_wait_until_sleeping(Position *pos)
 {
-  // High-performance cooperative yield loop with compile-time memory barriers
+  // High-performance cooperative yield loop
   while (pos->action != THREAD_SLEEP) {
-    __sync_synchronize();       // Force memory synchronization across CPU cores
-    svcSleepThread(1000000ULL); // Yield 1ms
+    __sync_synchronize();       
+    svcSleepThread(1000000ULL); 
   }
 
   if (pos->threadIdx == 0)
@@ -216,8 +211,8 @@ void thread_wait_until_sleeping(Position *pos)
 void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
-    __sync_synchronize();       // Force hardware memory coherence update
-    svcSleepThread(1000000ULL); // Yield 1ms
+    __sync_synchronize();       
+    svcSleepThread(1000000ULL); 
   }
 }
 
@@ -225,7 +220,7 @@ void thread_wake_up(Position *pos, int action)
 {
   if (action != THREAD_RESUME) {
     pos->action = action;
-    __sync_synchronize();       // Force instant cache line flush to ARM RAM
+    __sync_synchronize();       
   }
 }
 
@@ -235,8 +230,8 @@ static void thread_idle_loop(Position *pos)
   while (true) {
     // Cooperative park loop
     while (pos->action == THREAD_SLEEP) {
-      __sync_synchronize();       // Force core-to-core synchronicity checks
-      svcSleepThread(2000000ULL); // Sleep 2ms to prevent CPU starvation
+      __sync_synchronize();       
+      svcSleepThread(2000000ULL); // Sleep to prevent GUI starvation
     }
 
     if (pos->action == THREAD_EXIT) {
@@ -251,7 +246,7 @@ static void thread_idle_loop(Position *pos)
     }
 
     pos->action = THREAD_SLEEP;
-    __sync_synchronize();         // Commit the state change globally immediately
+    __sync_synchronize();         
   }
 }
 
