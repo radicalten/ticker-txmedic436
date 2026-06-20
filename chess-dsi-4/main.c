@@ -42,15 +42,15 @@ int cursor_r = 6;
 int cursor_c = 4;
 int selected_sq = -1;
 
-int board_orientation = 1; 
-int user_side = 1;         
+int board_orientation = 1;
+int user_side = 1;
 
-int time_control_type = 0; 
-int time_control_val = 1000;  // Default matched to 1000ms
+int time_control_type = 0;
+int time_control_val = 1000; // Default matched to 1000ms
 
 int engine_thinking = 0;
 long long engine_nps = 0;
-int engine_score_type = -1; 
+int engine_score_type = -1;
 int engine_score_val = 0;
 
 // Thinking Traces & Real-time Console Rolling Buffer
@@ -109,26 +109,26 @@ Move gui_uci_to_move(const char *str) {
     int t_col = str[2] - 'a';
     int t_row = 8 - (str[3] - '0');
     m.from = f_row * 8 + f_col;
-    m.to = t_row * 8 + t_col;
+    m.to   = t_row * 8 + t_col;
     if (strlen(str) == 5) {
         char p = str[4];
-        if (p == 'n') m.promo = 2;
+        if      (p == 'n') m.promo = 2;
         else if (p == 'b') m.promo = 3;
         else if (p == 'r') m.promo = 4;
-        else m.promo = 5;
+        else               m.promo = 5;
     }
     return m;
 }
 
 void move_to_san(const BoardState *state, Move m, char *buf) {
-    int p = abs(state->board[m.from]);
+    int p    = abs(state->board[m.from]);
     int turn = state->turn;
-    
+
     if (p == 6) {
-        if (m.from == 60 && m.to == 62 && turn == 1) { strcpy(buf, "O-O"); goto append_suffixes; }
-        if (m.from == 60 && m.to == 58 && turn == 1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
-        if (m.from == 4 && m.to == 6 && turn == -1) { strcpy(buf, "O-O"); goto append_suffixes; }
-        if (m.from == 4 && m.to == 2 && turn == -1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
+        if (m.from == 60 && m.to == 62 && turn ==  1) { strcpy(buf, "O-O");   goto append_suffixes; }
+        if (m.from == 60 && m.to == 58 && turn ==  1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
+        if (m.from ==  4 && m.to ==  6 && turn == -1) { strcpy(buf, "O-O");   goto append_suffixes; }
+        if (m.from ==  4 && m.to ==  2 && turn == -1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
     }
 
     char *ptr = buf;
@@ -186,10 +186,10 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
 append_suffixes:;
     BoardState next;
     make_move(state, &next, m);
-    int op_king = find_king(&next, next.turn);
+    int op_king  = find_king(&next, next.turn);
     int is_check = (op_king != -1) && is_square_attacked(&next, op_king, -next.turn);
     int has_moves = has_legal_moves(&next);
-    
+
     ptr = buf + strlen(buf);
     if (is_check) {
         if (!has_moves) {
@@ -203,7 +203,7 @@ append_suffixes:;
 
 void push_state(const BoardState *state, Move m) {
     if (history_count < MAX_HISTORY - 1) {
-        history[history_count] = *state;
+        history[history_count]      = *state;
         move_history[history_count] = m;
         history_count++;
     }
@@ -222,19 +222,19 @@ void push_raw_log(const char *line) {
         strncpy(raw_log[8], line, 31);
         raw_log[8][31] = '\0';
     }
-    redraw_needed = 1; // Mark UI as needing to be redrawn on the next frame
+    redraw_needed = 1;
 }
 
 void trigger_engine_move(void) {
-    engine_nps = 0;
+    engine_nps        = 0;
     engine_score_type = -1;
-    engine_score_val = 0;
-    engine_depth = 0;
-    engine_nodes = 0;
-    engine_pv[0] = '\0';
+    engine_score_val  = 0;
+    engine_depth      = 0;
+    engine_nodes      = 0;
+    engine_pv[0]      = '\0';
 
     static char cmd[8192];
-    
+
     if (history_count == 0) {
         strcpy(cmd, "position startpos");
     } else {
@@ -251,7 +251,7 @@ void trigger_engine_move(void) {
         }
         cmd[len] = '\0';
     }
-    
+
     sf_send_command(cmd);
 
     char go_cmd[128];
@@ -268,8 +268,8 @@ void trigger_engine_move(void) {
 
 void process_engine_output(char *line) {
     int len = strlen(line);
-    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' || line[len - 1] == ' ')) {
-        line[len - 1] = '\0';
+    while (len > 0 && (line[len-1] == '\r' || line[len-1] == '\n' || line[len-1] == ' ')) {
+        line[len-1] = '\0';
         len--;
     }
 
@@ -285,7 +285,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            sf_send_command("setoption name Hash value 1"); 
+            sf_send_command("setoption name Hash value 1");
             sf_send_command("setoption name Ponder value false");
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
@@ -330,15 +330,15 @@ void process_engine_output(char *line) {
 
         char *score_ptr = strstr(line, " score ");
         if (score_ptr) {
-            int score_val = 0;
+            int  score_val = 0;
             char score_type[16];
             if (sscanf(score_ptr, " score %15s %d", score_type, &score_val) == 2) {
                 if (strcmp(score_type, "cp") == 0) {
                     engine_score_type = 0;
-                    engine_score_val = score_val * current_state.turn;
+                    engine_score_val  = score_val * current_state.turn;
                 } else if (strcmp(score_type, "mate") == 0) {
                     engine_score_type = 1;
-                    engine_score_val = score_val * current_state.turn;
+                    engine_score_val  = score_val * current_state.turn;
                 }
                 redraw_needed = 1;
             }
@@ -350,10 +350,10 @@ void process_engine_output(char *line) {
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
-                redraw_needed = 1;
+                redraw_needed   = 1;
                 return;
             }
-            
+
             Move m = gui_uci_to_move(move_str);
             if (is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
@@ -362,7 +362,7 @@ void process_engine_output(char *line) {
                 current_state = next;
             }
             engine_thinking = 0;
-            redraw_needed = 1;
+            redraw_needed   = 1;
         }
     }
 }
@@ -370,14 +370,14 @@ void process_engine_output(char *line) {
 void read_from_engine(void) {
     char tmp[256];
     static char line_buf[512];
-    static int line_len = 0;
+    static int  line_len = 0;
     int bytes_read;
     int chunks_processed = 0;
 
     while (chunks_processed < 8 && (bytes_read = sf_get_output(tmp, sizeof(tmp) - 1)) > 0) {
         tmp[bytes_read] = '\0';
         chunks_processed++;
-        
+
         for (int i = 0; i < bytes_read; i++) {
             char c = tmp[i];
             if (c == '\n' || c == '\r') {
@@ -405,8 +405,9 @@ int find_king(const BoardState *state, int color) {
 int is_square_attacked(const BoardState *state, int sq, int attacker) {
     int r = sq / 8, c = sq % 8;
 
-    int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
-    int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
+    // Knight attacks
+    int k_r[] = {-2, -2, -1, -1,  1,  1,  2,  2};
+    int k_c[] = {-1,  1, -2,  2, -2,  2, -1,  1};
     for (int i = 0; i < 8; i++) {
         int nr = r + k_r[i], nc = c + k_c[i];
         if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
@@ -414,8 +415,9 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-    int kg_c[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+    // King attacks
+    int kg_r[] = {-1, -1, -1,  0,  0,  1,  1,  1};
+    int kg_c[] = {-1,  0,  1, -1,  1, -1,  0,  1};
     for (int i = 0; i < 8; i++) {
         int nr = r + kg_r[i], nc = c + kg_c[i];
         if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
@@ -423,6 +425,7 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
+    // Pawn attacks
     int p_offset = (attacker == 1) ? 1 : -1;
     for (int dc = -1; dc <= 1; dc += 2) {
         int nr = r + p_offset, nc = c + dc;
@@ -431,8 +434,9 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    int d_r[] = {-1, -1, 1, 1};
-    int d_c[] = {-1, 1, -1, 1};
+    // Diagonal (Bishop/Queen)
+    int d_r[] = {-1, -1,  1,  1};
+    int d_c[] = {-1,  1, -1,  1};
     for (int i = 0; i < 4; i++) {
         int nr = r + d_r[i], nc = c + d_c[i];
         while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
@@ -445,8 +449,9 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    int s_r[] = {-1, 1, 0, 0};
-    int s_c[] = {0, 0, -1, 1};
+    // Straight (Rook/Queen)
+    int s_r[] = {-1,  1,  0,  0};
+    int s_c[] = { 0,  0, -1,  1};
     for (int i = 0; i < 4; i++) {
         int nr = r + s_r[i], nc = c + s_c[i];
         while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
@@ -462,58 +467,58 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
 }
 
 int is_pseudo_legal_move(const BoardState *state, Move m) {
-    int p = state->board[m.from];
+    int p      = state->board[m.from];
     int target = state->board[m.to];
-    int turn = state->turn;
+    int turn   = state->turn;
 
     if (p == 0) return 0;
-    if ((turn == 1 && p < 0) || (turn == -1 && p > 0)) return 0;
+    if ((turn ==  1 && p < 0) || (turn == -1 && p > 0)) return 0;
     if (m.from == m.to) return 0;
     if (target != 0 && ((turn == 1 && target > 0) || (turn == -1 && target < 0))) return 0;
 
     int fr = m.from / 8, fc = m.from % 8;
-    int tr = m.to / 8, tc = m.to % 8;
-    int dr = tr - fr, dc = tc - fc;
+    int tr = m.to   / 8, tc = m.to   % 8;
+    int dr = tr - fr,    dc = tc - fc;
     int abs_dr = abs(dr), abs_dc = abs(dc);
 
     switch (abs(p)) {
-        case 1: { 
-            int dir = (turn == 1) ? -1 : 1;
+        case 1: {
+            int dir      = (turn == 1) ? -1 : 1;
+            int start_r  = (turn == 1) ?  6 :  1;
             if (dc == 0 && dr == dir && target == 0) return 1;
-            int start_r = (turn == 1) ? 6 : 1;
             if (dc == 0 && fr == start_r && dr == 2 * dir) {
                 if (state->board[(fr + dir) * 8 + fc] == 0 && target == 0) return 1;
             }
             if (abs_dc == 1 && dr == dir) {
-                if (target != 0) return 1;
-                if (m.to == state->ep) return 1;
+                if (target != 0)        return 1;
+                if (m.to == state->ep)  return 1;
             }
             return 0;
         }
-        case 2: 
+        case 2:
             return ((abs_dr == 2 && abs_dc == 1) || (abs_dr == 1 && abs_dc == 2));
-        case 3: { 
+        case 3: {
             if (abs_dr != abs_dc) return 0;
             int sr = (dr > 0) ? 1 : -1, sc = (dc > 0) ? 1 : -1;
-            int r = fr + sr, c = fc + sc;
+            int r  = fr + sr, c = fc + sc;
             while (r != tr && c != tc) {
                 if (state->board[r * 8 + c] != 0) return 0;
                 r += sr; c += sc;
             }
             return 1;
         }
-        case 4: { 
+        case 4: {
             if (dr != 0 && dc != 0) return 0;
             int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
             int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
-            int r = fr + sr, c = fc + sc;
+            int r  = fr + sr, c = fc + sc;
             while (r != tr || c != tc) {
                 if (state->board[r * 8 + c] != 0) return 0;
                 r += sr; c += sc;
             }
             return 1;
         }
-        case 5: { 
+        case 5: {
             if (abs_dr != abs_dc && dr != 0 && dc != 0) return 0;
             int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
             int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
@@ -528,7 +533,7 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
             }
             return 1;
         }
-        case 6: { 
+        case 6: {
             if (abs_dr <= 1 && abs_dc <= 1) return 1;
             if (dr == 0 && abs_dc == 2) {
                 if (turn == 1 && fr == 7 && fc == 4) {
@@ -597,9 +602,9 @@ int has_legal_moves(const BoardState *state) {
 int count_repetitions(const BoardState *state) {
     int count = 1;
     for (int i = 0; i < history_count; i++) {
-        if (state->turn == history[i].turn &&
+        if (state->turn   == history[i].turn   &&
             state->castle == history[i].castle &&
-            state->ep == history[i].ep &&
+            state->ep     == history[i].ep     &&
             memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
             count++;
         }
@@ -609,7 +614,7 @@ int count_repetitions(const BoardState *state) {
 
 void make_move(const BoardState *src, BoardState *dst, Move m) {
     *dst = *src;
-    int p = dst->board[m.from];
+    int p          = dst->board[m.from];
     int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
 
     dst->board[m.from] = 0;
@@ -619,6 +624,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
         dst->board[m.to] = p;
     }
 
+    // En-passant capture
     if (abs(p) == 1 && m.to == dst->ep) {
         int p_dir = (dst->turn == 1 ? 8 : -8);
         dst->board[m.to + p_dir] = 0;
@@ -629,37 +635,39 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
         dst->ep = m.from + (dst->turn == 1 ? -8 : 8);
     }
 
+    // Castling rook moves
     if (abs(p) == 6) {
-        if (m.from == 60 && m.to == 62) { dst->board[61] = dst->board[63]; dst->board[63] = 0; }
+        if      (m.from == 60 && m.to == 62) { dst->board[61] = dst->board[63]; dst->board[63] = 0; }
         else if (m.from == 60 && m.to == 58) { dst->board[59] = dst->board[56]; dst->board[56] = 0; }
-        else if (m.from == 4 && m.to == 6) { dst->board[5] = dst->board[7]; dst->board[7] = 0; }
-        else if (m.from == 4 && m.to == 2) { dst->board[3] = dst->board[0]; dst->board[0] = 0; }
+        else if (m.from ==  4 && m.to ==  6) { dst->board[5]  = dst->board[7];  dst->board[7]  = 0; }
+        else if (m.from ==  4 && m.to ==  2) { dst->board[3]  = dst->board[0];  dst->board[0]  = 0; }
     }
 
+    // Update castling rights
     if (m.from == 60) dst->castle &= ~1 & ~2;
-    if (m.from == 4)  dst->castle &= ~4 & ~8;
+    if (m.from ==  4) dst->castle &= ~4 & ~8;
     if (m.from == 63 || m.to == 63) dst->castle &= ~1;
     if (m.from == 56 || m.to == 56) dst->castle &= ~2;
-    if (m.from == 7  || m.to == 7)  dst->castle &= ~4;
-    if (m.from == 0  || m.to == 0)  dst->castle &= ~8;
+    if (m.from ==  7 || m.to ==  7) dst->castle &= ~4;
+    if (m.from ==  0 || m.to ==  0) dst->castle &= ~8;
 
     dst->turn = -dst->turn;
     if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
     else dst->halfmoves++;
-    
+
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw the Top Screen Board (Pristine, Centered vertically, double-height format)
+// ---------------------------------------------------------------------------
+// Draw the Top Screen Board
+// ---------------------------------------------------------------------------
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[1;1H");
-    printf("\n\n"); // Vertical Centering Padding
+    consoleClear();
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
-
+    // Find kings in check
     int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
+    int w_king = find_king(&current_state,  1);
     int b_king = find_king(&current_state, -1);
     if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
         king_in_check = w_king;
@@ -667,106 +675,99 @@ void draw_top_board(void) {
         king_in_check = b_king;
     }
 
+    // Row 0: top file labels
+    printf("\x1b[0;1H"); // row 0, col 0
+    printf("\x1b[1;37m     a b c d e f g h\x1b[0m\n");
+
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
 
-        for (int sub_r = 0; sub_r < 2; sub_r++) {
-            printf("    "); 
+        // Rank label (left)
+        printf("\x1b[1;37m  %d \x1b[0m", rank_lbl);
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m  %d \x1b[0m", rank_lbl); 
+        for (int c = 0; c < 8; c++) {
+            int sq = screen_to_board_sq(r, c);
+            int p  = current_state.board[sq];
+
+            int is_light     = ((sq / 8) + (sq % 8)) % 2 == 0;
+            int is_selected  = (sq == selected_sq);
+            int is_cursor    = (r == cursor_r && c == cursor_c);
+            int is_check_sq  = (sq == king_in_check);
+
+            int is_prev_move = 0;
+            if (history_count > 0) {
+                Move lm = move_history[history_count - 1];
+                if (sq == lm.from || sq == lm.to) is_prev_move = 1;
+            }
+
+            int is_legal_dest = 0;
+            if (selected_sq != -1) {
+                Move test_m = {selected_sq, sq, 0};
+                if (abs(current_state.board[selected_sq]) == 1 &&
+                    (sq / 8 == 0 || sq / 8 == 7)) {
+                    test_m.promo = 5;
+                }
+                if (is_legal_move(&current_state, test_m)) is_legal_dest = 1;
+            }
+
+            // Background colour
+            const char *bg;
+            if      (is_cursor)     bg = "\x1b[47m"; // White/grey  – cursor
+            else if (is_selected)   bg = "\x1b[42m"; // Green       – selected piece
+            else if (is_check_sq)   bg = "\x1b[41m"; // Red         – king in check
+            else if (is_prev_move)  bg = "\x1b[45m"; // Magenta     – last move path
+            else if (is_legal_dest) bg = "\x1b[46m"; // Cyan        – legal targets
+            else                    bg = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow / Black
+
+            // Foreground colour and piece letter
+            const char *fg;
+            const char *piece_str;
+            if (p > 0) {
+                fg = "\x1b[31;1m"; // Bright red  – White pieces
+            } else if (p < 0) {
+                fg = "\x1b[34;1m"; // Bright blue – Black pieces
             } else {
-                printf("    "); 
+                fg = "\x1b[37m";   // Grey        – empty
             }
 
-            for (int c = 0; c < 8; c++) {
-                int sq = screen_to_board_sq(r, c);
-                int p = current_state.board[sq];
-
-                int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-                const char *bg_color;
-
-                int is_selected = (sq == selected_sq);
-                int is_cursor = (r == cursor_r && c == cursor_c);
-
-                int is_prev_move = 0;
-                if (history_count > 0) {
-                    Move last_move = move_history[history_count - 1];
-                    if (sq == last_move.from || sq == last_move.to) {
-                        is_prev_move = 1;
-                    }
-                }
-
-                int is_legal_dest = 0;
-                if (selected_sq != -1) {
-                    Move test_m = {selected_sq, sq, 0};
-                    if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                        test_m.promo = 5;
-                    }
-                    if (is_legal_move(&current_state, test_m)) {
-                        is_legal_dest = 1;
-                    }
-                }
-
-                if (is_cursor) {
-                    bg_color = "\x1b[47m"; // White/Gray Cursor
-                } else if (is_selected) {
-                    bg_color = "\x1b[42m"; // Green Selection
-                } else if (sq == king_in_check) {
-                    bg_color = "\x1b[41m"; // Red King-in-Check
-                } else if (is_prev_move) {
-                    bg_color = "\x1b[45m"; // Magenta History Path
-                } else if (is_legal_dest) {
-                    bg_color = "\x1b[46m"; // Cyan Targets
-                } else {
-                    bg_color = is_light ? "\x1b[43m" : "\x1b[40m"; // Yellow/Black Board
-                }
-
-                if (sub_r == 0) {
-                    const char *piece_str = " ";
-                    const char *fg_color = "\x1b[34;1m"; // Blue Text for Black Pieces
-                    if (p != 0) {
-                        if (p > 0) {
-                            fg_color = "\x1b[31;1m"; // Bold Red for White Pieces
-                        }
-                        switch (abs(p)) {
-                            case 1: piece_str = "P"; break;
-                            case 2: piece_str = "N"; break;
-                            case 3: piece_str = "B"; break;
-                            case 4: piece_str = "R"; break;
-                            case 5: piece_str = "Q"; break;
-                            case 6: piece_str = "K"; break;
-                        }
-                    }
-                    printf("%s%s%s \x1b[0m", bg_color, fg_color, piece_str);
-                } else {
-                    printf("%s  \x1b[0m", bg_color);
-                }
+            switch (abs(p)) {
+                case 1:  piece_str = "P"; break;
+                case 2:  piece_str = "N"; break;
+                case 3:  piece_str = "B"; break;
+                case 4:  piece_str = "R"; break;
+                case 5:  piece_str = "Q"; break;
+                case 6:  piece_str = "K"; break;
+                default: piece_str = " "; break;
             }
 
-            if (sub_r == 0) {
-                printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl); 
-            } else {
-                printf("\n");
-            }
+            // Each square = piece char + trailing space, both on same background
+            printf("%s%s%s\x1b[0m", bg, fg, piece_str);
+            printf("%s \x1b[0m", bg);
         }
+
+        // Rank label (right) + newline
+        printf("\x1b[1;37m%d\x1b[0m\n", rank_lbl);
     }
 
-    printf("\x1b[1;37m        a b c d e f g h\x1b[0m\n");
+    // Bottom file labels
+    printf("\x1b[1;37m     a b c d e f g h\x1b[0m\n");
     fflush(stdout);
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
+// ---------------------------------------------------------------------------
+// Draw the Bottom Screen (stats + move list + UCI log)
+// ---------------------------------------------------------------------------
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
+    consoleClear();
+    printf("\x1b[0;0H"); // Reset to top-left
 
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
+    int king      = find_king(&current_state, current_state.turn);
+    int is_ch     = is_square_attacked(&current_state, king, -current_state.turn);
+    int has_mov   = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn Status ---
+    // --- LINE 1: Turn / game status ---
     if (engine_state != ENGINE_STATE_READY) {
         printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
@@ -793,11 +794,10 @@ void draw_bottom_stats(void) {
         }
     }
 
-    // --- LINE 2: Modes & Limits ---
+    // --- LINE 2: Modes & limits ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     printf("W:%s B:%s | ", w_play, b_play);
-
     if (time_control_type == 0) {
         printf("Lim: %dms\x1b[K\n", time_control_val);
     } else if (time_control_type == 1) {
@@ -806,91 +806,77 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed ---
+    // --- LINE 3: Engine status / eval / speed ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
-        char current_spin = spin_chars[spinner_frame % 4];
-        printf("Eng: [%c] | ", current_spin);
-
+        printf("Eng: [%c] | ", spin_chars[spinner_frame % 4]);
         if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            printf("Ev: %+.2f | ", eval);
+            printf("Ev: %+.2f | ", (double)engine_score_val / 100.0);
         } else if (engine_score_type == 1) {
             if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
-            else printf("Ev: -M%d | ", -engine_score_val);
+            else                      printf("Ev: -M%d | ", -engine_score_val);
         } else {
             printf("Ev: ---- | ");
         }
-
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000) {
-                printf("%lld knps\x1b[K\n", engine_nps / 1000);
-            } else {
-                printf("%lld nps\x1b[K\n", engine_nps);
-            }
-        } else {
-            printf("---- nps\x1b[K\n");
-        }
+        if (engine_nps >= 1000) printf("%lld knps\x1b[K\n", engine_nps / 1000);
+        else if (engine_nps > 0) printf("%lld nps\x1b[K\n", engine_nps);
+        else                     printf("---- nps\x1b[K\n");
     } else {
         printf("Eng: Idle | ");
         if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            printf("Ev: %+.2f | ", eval);
+            printf("Ev: %+.2f | ", (double)engine_score_val / 100.0);
         } else {
             printf("Ev: ---- | ");
         }
         printf("Offline\x1b[K\n");
     }
 
-    // --- LINE 4: Recent Moves Title ---
+    // --- LINE 4: Recent moves title ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
-    // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
+    // --- LINES 5-14: Move list (10 rows / 20 half-moves) ---
     int total_full_moves = (history_count + 1) / 2;
     int max_visible_moves = 20;
-    int half_visible = max_visible_moves / 2; // 10 rows total
-    int start_move = (total_full_moves > max_visible_moves) ? (total_full_moves - (max_visible_moves - 1)) : 1;
+    int half_visible = max_visible_moves / 2; // 10 rows
+    int start_move   = (total_full_moves > max_visible_moves)
+                       ? (total_full_moves - (max_visible_moves - 1)) : 1;
 
-    for (int r = 0; r < half_visible; r++) {
-        int left_display = start_move + r;
-        int right_display = start_move + half_visible + r;
+    for (int row = 0; row < half_visible; row++) {
+        int left_display  = start_move + row;
+        int right_display = start_move + half_visible + row;
 
-        char left_str[32] = "";
+        char left_str[32]  = "";
         char right_str[32] = "";
 
-        // Render Left Column Move Data
+        // Left column
         if (total_full_moves > 0 && left_display <= total_full_moves) {
             int w_idx = (left_display - 1) * 2;
             int b_idx = w_idx + 1;
             char w_str[10] = "-----";
             char b_str[10] = "-----";
-            if (w_idx < history_count) {
+            if (w_idx < history_count)
                 move_to_san(&history[w_idx], move_history[w_idx], w_str);
-            }
-            if (b_idx < history_count) {
+            if (b_idx < history_count)
                 move_to_san(&history[b_idx], move_history[b_idx], b_str);
-            } else if (w_idx < history_count) {
+            else if (w_idx < history_count)
                 strcpy(b_str, "...");
-            }
             sprintf(left_str, "%2d.%-5s%-5s", left_display, w_str, b_str);
         } else {
             sprintf(left_str, "%2d. ---  --- ", left_display);
         }
 
-        // Render Right Column Move Data
+        // Right column
         if (total_full_moves > 0 && right_display <= total_full_moves) {
             int w_idx = (right_display - 1) * 2;
             int b_idx = w_idx + 1;
             char w_str[10] = "-----";
             char b_str[10] = "-----";
-            if (w_idx < history_count) {
+            if (w_idx < history_count)
                 move_to_san(&history[w_idx], move_history[w_idx], w_str);
-            }
-            if (b_idx < history_count) {
+            if (b_idx < history_count)
                 move_to_san(&history[b_idx], move_history[b_idx], b_str);
-            } else if (w_idx < history_count) {
+            else if (w_idx < history_count)
                 strcpy(b_str, "...");
-            }
             sprintf(right_str, "%2d.%-5s%-5s", right_display, w_str, b_str);
         } else {
             sprintf(right_str, "%2d. ---  --- ", right_display);
@@ -899,27 +885,20 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
-    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
+    // --- LINES 15-23: Rolling raw UCI engine log ---
     for (int i = 0; i < 9; i++) {
         if (i < raw_log_count) {
-            // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
                 printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
             } else {
                 printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
-            printf("\x1b[K"); // Silently clear un-occupied terminal log space
+            printf("\x1b[K");
         }
-        
-        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
-        if (i < 8) {
-            printf("\n");
-        }
+        if (i < 8) printf("\n");
     }
-    printf("\x1b[J"); // Instantly clear any extra screen leftovers below index 23
-
+    printf("\x1b[J");
     fflush(stdout);
 }
 
@@ -930,11 +909,13 @@ void draw_ui(void) {
 
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
-    printf("\x1b[7;1H\x1b[J"); 
-    printf("\n\x1b[1;33mPROMOTION! Tap Key selection:\n");
-    printf(" [Y] Queen  [X] Rook\n [B] Bishop [A] Knight\x1b[0m\n");
+    consoleClear();
+    printf("\x1b[0;0H");
+    printf("\x1b[1;33mPROMOTION! Choose:\n");
+    printf(" [Y] Queen  [X] Rook\n");
+    printf(" [B] Bishop [A] Knight\x1b[0m\n");
     fflush(stdout);
-    
+
     int choice = 5;
     while (pmMainLoop()) {
         scanKeys();
@@ -950,58 +931,50 @@ int get_promo_choice(void) {
 }
 
 void handle_select(void) {
-    if (engine_thinking) {
-        return;
-    }
+    if (engine_thinking) return;
 
     int is_engine_turn = 0;
-    if (user_side == 2) {
-        is_engine_turn = 1; 
-    } else if (user_side == 1 && current_state.turn == -1) {
-        is_engine_turn = 1; 
-    } else if (user_side == -1 && current_state.turn == 1) {
-        is_engine_turn = 1; 
-    }
+    if (user_side == 2)                              is_engine_turn = 1;
+    else if (user_side ==  1 && current_state.turn == -1) is_engine_turn = 1;
+    else if (user_side == -1 && current_state.turn ==  1) is_engine_turn = 1;
+    if (is_engine_turn) return;
 
-    if (is_engine_turn) {
-        return; 
-    }
-
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
-        return;
-    }
+    if (!has_legal_moves(&current_state) ||
+        current_state.halfmoves >= 100   ||
+        count_repetitions(&current_state) >= 3) return;
 
     int sq = screen_to_board_sq(cursor_r, cursor_c);
+
     if (selected_sq == -1) {
         int p = current_state.board[sq];
-        if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
+        if (p != 0 && ((current_state.turn == 1 && p > 0) ||
+                       (current_state.turn == -1 && p < 0))) {
             selected_sq = sq;
         }
     } else {
-        Move m = {selected_sq, sq, 0};
-        int p = current_state.board[selected_sq];
+        Move m  = {selected_sq, sq, 0};
+        int p   = current_state.board[selected_sq];
         int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
         if (is_promo) m.promo = 5;
 
         if (is_legal_move(&current_state, m)) {
-            if (is_promo) {
-                m.promo = get_promo_choice();
-            }
+            if (is_promo) m.promo = get_promo_choice();
             push_state(&current_state, m);
             BoardState next;
             make_move(&current_state, &next, m);
             current_state = next;
-            selected_sq = -1;
-            
-            engine_nps = 0;
+            selected_sq   = -1;
+
+            engine_nps        = 0;
             engine_score_type = -1;
-            engine_score_val = 0;
-            engine_depth = 0;
-            engine_nodes = 0;
-            engine_pv[0] = '\0';
+            engine_score_val  = 0;
+            engine_depth      = 0;
+            engine_nodes      = 0;
+            engine_pv[0]      = '\0';
         } else {
             int target = current_state.board[sq];
-            if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
+            if (target != 0 && ((current_state.turn ==  1 && target > 0) ||
+                                 (current_state.turn == -1 && target < 0))) {
                 selected_sq = sq;
             } else {
                 selected_sq = -1;
@@ -1015,12 +988,13 @@ void handle_undo(void) {
         sf_send_command("stop");
         engine_thinking = 0;
     }
-    engine_nps = 0;
+    engine_nps        = 0;
     engine_score_type = -1;
-    engine_score_val = 0;
-    engine_depth = 0;
-    engine_nodes = 0;
-    engine_pv[0] = '\0';
+    engine_score_val  = 0;
+    engine_depth      = 0;
+    engine_nodes      = 0;
+    engine_pv[0]      = '\0';
+
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1035,17 +1009,18 @@ void handle_reset_board(void) {
         sf_send_command("stop");
         engine_thinking = 0;
     }
-    engine_nps = 0;
+    engine_nps        = 0;
     engine_score_type = -1;
-    engine_score_val = 0;
-    engine_depth = 0;
-    engine_nodes = 0;
-    engine_pv[0] = '\0';
+    engine_score_val  = 0;
+    engine_depth      = 0;
+    engine_nodes      = 0;
+    engine_pv[0]      = '\0';
+
     init_board(&current_state);
     history_count = 0;
-    selected_sq = -1;
-    cursor_r = 6;
-    cursor_c = 4;
+    selected_sq   = -1;
+    cursor_r      = 6;
+    cursor_c      = 4;
     sf_send_command("ucinewgame");
     sf_send_command("isready");
 }
@@ -1058,37 +1033,36 @@ void handle_switch_sides(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    if (user_side == 1) user_side = -1;
-    else if (user_side == -1) user_side = 0;
-    else if (user_side == 0) user_side = 2;
-    else user_side = 1;
+
+    if      (user_side ==  1) user_side = -1;
+    else if (user_side == -1) user_side =  0;
+    else if (user_side ==  0) user_side =  2;
+    else                      user_side =  1;
 }
 
 void adjust_time_control(void) {
-    if (time_control_type == 0) { 
-        int time_list[] = {1, 10, 50, 100, 500, 1000, 1500, 2000, 3000, 5000, 10000};
-        int time_count = sizeof(time_list) / sizeof(time_list[0]);
-        int found_idx = -1;
+    if (time_control_type == 0) {
+        int time_list[]  = {1, 10, 50, 100, 500, 1000, 1500, 2000, 3000, 5000, 10000};
+        int time_count   = sizeof(time_list) / sizeof(time_list[0]);
+        int found_idx    = -1;
         for (int i = 0; i < time_count; i++) {
-            if (time_control_val == time_list[i]) {
-                found_idx = i;
-                break;
-            }
+            if (time_control_val == time_list[i]) { found_idx = i; break; }
         }
-        time_control_val = (found_idx == -1 || found_idx == time_count - 1) ? time_list[0] : time_list[found_idx + 1];
-    } else if (time_control_type == 1) { 
-        time_control_val = (time_control_val % 20) + 1; // 1 to 20 range
-    } else { 
-        int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608};
-        int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
-        int found_idx = -1;
+        time_control_val = (found_idx == -1 || found_idx == time_count - 1)
+                           ? time_list[0] : time_list[found_idx + 1];
+    } else if (time_control_type == 1) {
+        time_control_val = (time_control_val % 20) + 1;
+    } else {
+        int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768,
+                            65536, 131072, 262144, 524288, 1048576,
+                            2097152, 4194304, 8388608};
+        int nodes_count  = sizeof(nodes_list) / sizeof(nodes_list[0]);
+        int found_idx    = -1;
         for (int i = 0; i < nodes_count; i++) {
-            if (time_control_val == nodes_list[i]) {
-                found_idx = i;
-                break;
-            }
+            if (time_control_val == nodes_list[i]) { found_idx = i; break; }
         }
-        time_control_val = (found_idx == -1 || found_idx == nodes_count - 1) ? nodes_list[0] : nodes_list[found_idx + 1];
+        time_control_val = (found_idx == -1 || found_idx == nodes_count - 1)
+                           ? nodes_list[0] : nodes_list[found_idx + 1];
     }
 }
 
@@ -1104,15 +1078,15 @@ void init_board(BoardState *state) {
          4,  2,  3,  5,  6,  3,  2,  4
     };
     memcpy(state->board, start, sizeof(start));
-    state->turn = 1;
-    state->castle = 15;
-    state->ep = -1;
+    state->turn      = 1;
+    state->castle    = 15;
+    state->ep        = -1;
     state->halfmoves = 0;
     state->fullmoves = 1;
 }
 
 extern int main_stockfish(int argc, char **argv);
-void stockfish_thread_func(void* arg) {
+void stockfish_thread_func(void *arg) {
     (void)arg;
     char *argv[] = {"stockfish", NULL};
     main_stockfish(1, argv);
@@ -1120,55 +1094,51 @@ void stockfish_thread_func(void* arg) {
 
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
-    
-    // Enable DS Interrupt System
+
+    // Enable DS interrupt system
     irqEnable(IRQ_VBLANK);
 
-    // Set 2D Text Modes on both displays
+    // Set 2D text modes on both displays
     videoSetMode(MODE_0_2D);
     videoSetModeSub(MODE_0_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankC(VRAM_C_SUB_BG);
 
-    // Initialize the console engines
-    consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
-    consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
+    // Initialize consoles on BG layer 0 with different map bases to avoid overlap
+    // Top screen:    map base 2, tile base 0
+    // Bottom screen: map base 4, tile base 0
+    consoleInit(&topConsole,    0, BgType_Text4bpp, BgSize_T_256x256, 2, 0, true,  true);
+    consoleInit(&bottomConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 4, 0, false, true);
 
     sf_bridge_init();
     init_board(&current_state);
 
-    // Initial Loading screen on Top Screen
+    // Clear both screens
     consoleSelect(&topConsole);
-    printf("\x1b[2J");
-    fflush(stdout);
-    
+    consoleClear();
+
     consoleSelect(&bottomConsole);
-    printf("\x1b[2J");
-    fflush(stdout);
-    
+    consoleClear();
+
     swiWaitForVBlank();
 
     pthread_t stockfish_thread;
-    int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
+    int thread_spawn = sf_pthread_create(&stockfish_thread, NULL,
+                                         (void *(*)(void *))stockfish_thread_func, NULL);
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
-        //printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread!\x1b[0m\n");
         fflush(stdout);
-        while(1) swiWaitForVBlank();
-    } else {
-        consoleSelect(&bottomConsole);
-        //printf("Background Engine Thread spawned successfully.\n\n");
-        fflush(stdout);
+        while (1) swiWaitForVBlank();
     }
 
-    // Yield control delay for engine initialization setup
+    // Yield briefly for engine initialisation
     for (int i = 0; i < 3; i++) {
         ds_yield();
         swiWaitForVBlank();
     }
 
-    // Initiate Phase 1 of Handshake
+    // Kick off UCI handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
@@ -1179,7 +1149,7 @@ int main(int argc, char **argv) {
         scanKeys();
         u32 kDown = keysDown();
 
-        if (kDown & KEY_START) break; 
+        if (kDown & KEY_START) break;
 
         int input_detected = 0;
 
@@ -1188,31 +1158,32 @@ int main(int argc, char **argv) {
         if (kDown & KEY_RIGHT) { if (cursor_c < 7) { cursor_c++; input_detected = 1; } }
         if (kDown & KEY_LEFT)  { if (cursor_c > 0) { cursor_c--; input_detected = 1; } }
 
-        if (kDown & KEY_A)      { handle_select(); input_detected = 1; }
-        if (kDown & KEY_B)      { handle_undo(); input_detected = 1; }
-        if (kDown & KEY_SELECT) { handle_reset_board(); input_detected = 1; }
-        if (kDown & KEY_X)      { board_orientation = -board_orientation; input_detected = 1; }
-        if (kDown & KEY_Y)      { handle_switch_sides(); input_detected = 1; }
+        if (kDown & KEY_A)      { handle_select();                          input_detected = 1; }
+        if (kDown & KEY_B)      { handle_undo();                            input_detected = 1; }
+        if (kDown & KEY_SELECT) { handle_reset_board();                     input_detected = 1; }
+        if (kDown & KEY_X)      { board_orientation = -board_orientation;   input_detected = 1; }
+        if (kDown & KEY_Y)      { handle_switch_sides();                    input_detected = 1; }
 
         if (kDown & KEY_L) {
             time_control_type = (time_control_type + 1) % 3;
-            time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+            time_control_val  = (time_control_type == 0) ? 1000
+                              : (time_control_type == 1) ? 1
+                              : 512;
             input_detected = 1;
         }
-        if (kDown & KEY_R) {
-            adjust_time_control();
-            input_detected = 1;
-        }
+        if (kDown & KEY_R) { adjust_time_control(); input_detected = 1; }
 
-        if (input_detected) {
-            redraw_needed = 1;
-        }
+        if (input_detected) redraw_needed = 1;
 
+        // Determine whether the engine should move
         int engine_active = 0;
-        if (engine_state == ENGINE_STATE_READY && has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
-            if (user_side == 2) engine_active = 1;
-            else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
-            else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
+        if (engine_state == ENGINE_STATE_READY &&
+            has_legal_moves(&current_state)    &&
+            current_state.halfmoves < 100      &&
+            count_repetitions(&current_state) < 3) {
+            if (user_side == 2)                               engine_active = 1;
+            else if (user_side ==  1 && current_state.turn == -1) engine_active = 1;
+            else if (user_side == -1 && current_state.turn ==  1) engine_active = 1;
         }
 
         if (engine_active && !engine_thinking) {
@@ -1223,15 +1194,11 @@ int main(int argc, char **argv) {
         read_from_engine();
 
         frame_counter++;
-        if (engine_thinking) {
-            // Animate thinking spinner and periodically refresh metrics (every 10 frames)
-            if (frame_counter % 10 == 0) {
-                spinner_frame++;
-                redraw_needed = 1;
-            }
+        if (engine_thinking && frame_counter % 10 == 0) {
+            spinner_frame++;
+            redraw_needed = 1;
         }
 
-        // Only redraw UI when needed
         if (redraw_needed) {
             draw_ui();
             redraw_needed = 0;
