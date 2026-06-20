@@ -650,15 +650,15 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Draw Interactive 256-Color ANSI Hardware Palette Inspector
+// Draw Interactive Palette spectrum showing Normal/Bold/Bright combinations of standard ANSI colors
 void draw_top_board(void) {
     consoleSelect(&topConsole);
-    printf("\x1b[2J"); // Clean Screen
+    printf("\x1b[2J"); // Direct full screen clear
 
     int max_cols = 32;
     int max_rows = 24;
 
-    // 1. Draw Perimeter Outer Border
+    // 1. Draw Perimeter Outer Borders
     for (int c = 1; c <= max_cols; c++) {
         printf("\x1b[1;%dH-", c);          // Top Line
         printf("\x1b[%d;%dH-", max_rows, c); // Bottom Line
@@ -670,106 +670,139 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // Map the bottom horizontal navigation cursor (0-7) to 3 separate tabs
-    int page = abs(cursor_c) % 3;
+    // Map horizontal D-pad movements to 3 tabs
+    int active_tab = abs(cursor_c) % 3;
+    // Map vertical D-pad movements to line inspections (0 to 3)
+    int inspect_row = abs(cursor_r) % 4;
 
-    if (page == 0) {
-        // --- PAGE 1: 256-COLOR BACKGROUNDS MATRIX ---
-        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR BACKGROUNDS (1/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
+    if (active_tab == 0) {
+        // --- PAGE 1: FOREGROUNDS SPECTRUM (30-37, 90-97) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
-        // Render a 16x16 color block grid centered on the screen
-        // Width: 16 columns (cols 9 to 24), Height: 16 rows (rows 5 to 20)
-        for (int r = 0; r < 16; r++) {
-            for (int c = 0; c < 16; c++) {
-                int color_idx = r * 16 + c;
-                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 5 + r, 9 + c, color_idx);
+        // Row offsets inside perimeter limits
+        int rendering_rows[] = {5, 8, 12, 15};
+        const char *row_labels[] = {
+            "S: Normal FG (30m-37m)   ",
+            "B: Bold FG   (1;30m-37m) ",
+            "S: Bright FG (90m-97m)   ",
+            "B: Bold Bri  (1;90m-97m) "
+        };
+
+        const char *ansi_codes[] = { "3%dm", "1;3%dm", "9%dm", "1;9%dm" };
+
+        for (int i = 0; i < 4; i++) {
+            int screen_row = rendering_rows[i];
+            int is_hovered = (i == inspect_row);
+
+            // Print hover indicator pointer
+            printf("\x1b[%d;3H%s%s\x1b[0m", screen_row, is_hovered ? "\x1b[1;36m> " : "  ", row_labels[i]);
+
+            // Draw color blocks (0-7 indices) on consecutive column spaces
+            for (int col = 0; col < 8; col++) {
+                printf("\x1b[%d;%dH", screen_row + 1, 6 + (col * 3));
+                
+                char esc_seq[32];
+                sprintf(esc_seq, ansi_codes[i], col);
+                
+                // Print block with standard value markers
+                printf("\x1b[%s##\x1b[0m", esc_seq);
             }
         }
 
-        // Map cursor Up/Down (0-7) & select axis to sample the 16x16 grid index
-        int hover_r = cursor_r * 2;
-        int hover_c = (cursor_c % 8) * 2;
-        int hover_idx = hover_r * 16 + hover_c;
+        // Live Inspector Footer Decoder (Decodes exactly what colors are being printed)
+        printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
+        printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
+        printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 1 of 3: Foregrounds Panel\x1b[0m");
 
-        // Draw an active asterisk indicator overlay at the hovered cell
-        printf("\x1b[%d;%dH\x1b[48;5;%dm\x1b[1;37m*\x1b[0m", 5 + hover_r, 9 + hover_c, hover_idx);
+    } else if (active_tab == 1) {
+        // --- PAGE 2: BACKGROUNDS SPECTRUM (40-47, 100-107) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
-        // Hover Index Decoded Parameters Output
-        printf("\x1b[21;3H\x1b[1;33mHover Color ID:  %d\x1b[0m", hover_idx);
-        printf("\x1b[22;3H\x1b[1;32mEscape Sequence: \\x1b[48;5;%dm\x1b[0m", hover_idx);
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+        int rendering_rows[] = {5, 8, 12, 15};
+        const char *row_labels[] = {
+            "S: Normal BG (40m-47m)   ",
+            "B: Bold BG   (1;40m-47m) ",
+            "S: Bright BG (100m-107m) ",
+            "B: Bold Bri  (1;100m-107m)"
+        };
 
-    } else if (page == 1) {
-        // --- PAGE 2: 256-COLOR FOREGROUNDS MATRIX ---
-        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR FOREGROUNDS (2/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mD-Pad: Move cursor to inspect\x1b[0m");
+        const char *ansi_codes[] = { "4%dm", "1;4%dm", "10%dm", "1;10%dm" };
 
-        // Render 16x16 grid utilizing foreground escape sequences
-        for (int r = 0; r < 16; r++) {
-            for (int c = 0; c < 16; c++) {
-                int color_idx = r * 16 + c;
-                printf("\x1b[%d;%dH\x1b[38;5;%dma\x1b[0m", 5 + r, 9 + c, color_idx);
+        for (int i = 0; i < 4; i++) {
+            int screen_row = rendering_rows[i];
+            int is_hovered = (i == inspect_row);
+
+            printf("\x1b[%d;3H%s%s\x1b[0m", screen_row, is_hovered ? "\x1b[1;36m> " : "  ", row_labels[i]);
+
+            for (int col = 0; col < 8; col++) {
+                printf("\x1b[%d;%dH", screen_row + 1, 6 + (col * 3));
+                
+                char esc_seq[32];
+                sprintf(esc_seq, ansi_codes[i], col);
+                
+                // Draw empty background block segment
+                printf("\x1b[%s  \x1b[0m", esc_seq);
             }
         }
 
-        int hover_r = cursor_r * 2;
-        int hover_c = (cursor_c % 8) * 2;
-        int hover_idx = hover_r * 16 + hover_c;
-
-        // Overlay sample index selection with reverse video attribute
-        printf("\x1b[%d;%dH\x1b[38;5;%d;7ma\x1b[0m", 5 + hover_r, 9 + hover_c, hover_idx);
-
-        printf("\x1b[21;3H\x1b[1;33mHover Color ID:  %d\x1b[0m", hover_idx);
-        printf("\x1b[22;3H\x1b[1;32mEscape Sequence: \\x1b[38;5;%dm\x1b[0m", hover_idx);
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+        printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
+        printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
+        printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 2 of 3: Backgrounds Panel\x1b[0m");
 
     } else {
-        // --- PAGE 3: CHESSBOARD THEME LOOKUP PAIRINGS ---
-        printf("\x1b[2;3H\x1b[1;37mDSi 256-COLOR CHESSBOARD THEMES (3/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mSample pairings for top-screen GUI\x1b[0m");
+        // --- PAGE 3: CHESSBOARD THEME SANDBOXES ---
+        printf("\x1b[2;3H\x1b[1;37mDSi DUAL-ATTRIBUTE CHESSBOARDS (3/3)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mComparing rendering combinations\x1b[0m");
 
-        // Stacks four custom 6x6 test boards built from 256-color cube indices
-        
-        // 1. Forest Green Theme (Colors 22 vs 121)
-        printf("\x1b[5;3H\x1b[1;32mForest (22/121)\x1b[0m");
+        // Draws four mini 6x6 boards comparing how Bold & Bright affect chessboard structures
+
+        // Board 1: Normal Video Theme (32/43 vs 30/40)
+        printf("\x1b[5;3H\x1b[1;32m1: Normal BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 121 : 22;
-                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 6 + r, 3 + c, col);
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[43m" : "\x1b[40m";
+                printf("\x1b[%d;%dH%s  \x1b[0m", 6 + r, 3 + c, esc);
             }
         }
 
-        // 2. Walnut Wood Theme (Colors 94 vs 222)
-        printf("\x1b[5;17H\x1b[1;33mWalnut (94/222)\x1b[0m");
+        // Board 2: Bold Video Theme (1;43 vs 1;40) - Tests if bold modifies backgrounds
+        printf("\x1b[5;17H\x1b[1;33m2: Bold BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 222 : 94;
-                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 6 + r, 17 + c, col);
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[1;43m" : "\x1b[1;40m";
+                printf("\x1b[%d;%dH%s  \x1b[0m", 6 + r, 17 + c, esc);
             }
         }
 
-        // 3. Ocean Blue Theme (Colors 18 vs 159)
-        printf("\x1b[13;3H\x1b[1;34mOcean (18/159)\x1b[0m");
+        // Board 3: High-Intensity Video Theme (103 vs 100)
+        printf("\x1b[13;3H\x1b[1;34m3: Bright BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 159 : 18;
-                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 14 + r, 3 + c, col);
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[103m" : "\x1b[100m";
+                printf("\x1b[%d;%dH%s  \x1b[0m", 14 + r, 3 + c, esc);
             }
         }
 
-        // 4. Monochrome Ice Theme (Colors 235 vs 250)
-        printf("\x1b[13;17H\x1b[1;37mIce Grey (235/250)\x1b[0m");
+        // Board 4: Bold High-Intensity Video Theme (1;103 vs 1;100)
+        printf("\x1b[13;17H\x1b[1;37m4: Bold Bright\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
-                int col = ((r + c) % 2 == 0) ? 250 : 235;
-                printf("\x1b[%d;%dH\x1b[48;5;%dm \x1b[0m", 14 + r, 17 + c, col);
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[1;103m" : "\x1b[1;100m";
+                printf("\x1b[%d;%dH%s  \x1b[0m", 14 + r, 17 + c, esc);
             }
         }
 
-        printf("\x1b[21;3H\x1b[1;30mPick the cleanest render pairing\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mto update your double-height UI!\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPress D-Pad Left/Right to change tab\x1b[0m");
+        printf("\x1b[21;3H\x1b[1;30mIdentify which board rendering mode\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mproduces the best visual contrast.\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 3 of 3: Sandbox Panels\x1b[0m");
     }
 
     fflush(stdout);
