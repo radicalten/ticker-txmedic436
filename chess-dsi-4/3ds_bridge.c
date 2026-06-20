@@ -10,8 +10,8 @@
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
-    volatile int head; // Volatile prevents compiler caching of register values across threads
-    volatile int tail; // Volatile prevents compiler caching of register values across threads
+    volatile int head; // Volatile prevents compiler caching of register values across context switches
+    volatile int tail; // Volatile prevents compiler caching of register values across context switches
     LightLock lock;
 } MsgQueue;
 
@@ -34,7 +34,8 @@ __attribute__((used)) __attribute__((noinline)) void thread_exit(void);
 void thread_launcher(void);
 
 // Naked assembly context switcher (ARM Mode)
-// Added: __attribute__((noinline)) to prevent stack frames being inlined during compiler optimizations
+// Fixed: Restores 10 registers (r3-r11, lr/pc) to keep stack 8-byte aligned at all times
+// Added: __attribute__((noinline)) to prevent stack corruption when compiled under -O2/-O3 optimization levels
 __attribute__((naked)) __attribute__((noinline)) __attribute__((target("arm")))
 void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
     __asm__ volatile (
@@ -89,10 +90,11 @@ void ds_yield(void) {
 #undef fputc
 #undef putc
 #undef fwrite
-#undef pthread_create
 #undef fgets
 #undef getchar
 #undef fgetc
+#undef pthread_create
+#undef pthread_join
 
 void sf_bridge_init(void) {
     q_gui_to_engine.head = q_gui_to_engine.tail = 0;
@@ -291,7 +293,7 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return nmemb;
 }
 
-// Redirect standard fgets to non-blocking engine receive
+// Redirect standard fgets to our cooperative non-blocking command line reader
 char *sf_fgets(char *str, int n, FILE *stream) {
     if (stream == stdin) {
         sf_recv_command(str, (size_t)n);
@@ -312,7 +314,7 @@ int sf_getchar(void) {
     return (int)buf[0];
 }
 
-// Redirect standard fgetc to handle stdin capture
+// Redirect standard fgetc to handle stdin stream mapping
 int sf_fgetc(FILE *stream) {
     if (stream == stdin) {
         return sf_getchar();
@@ -346,7 +348,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
 
-    // Recursive thread guard check
+    // Recursive search thread safety guard
     if (search_thread.active) {
         if (thread != NULL) {
             *thread = (pthread_t)999;
@@ -354,7 +356,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         return 0; // Return dummy success code
     }
 
-    // Upgraded search thread stack footprint to 128 KB for stable minimax/eval recursion depth
+    // Allocate 128 KB of stack memory to cleanly support recursive minimax evaluations
     size_t stacksize = 128 * 1024; 
 
     void* stack_alloc = malloc(stacksize);
@@ -368,7 +370,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     // Align the top stack limit
     uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
     
-    // Setup context frame alignment
+    // Build context frame mapping for assembly switcher
     *(--sp) = (uint32_t)thread_launcher; // pc
     *(--sp) = 0;                         // r11
     *(--sp) = 0;                         // r10
@@ -378,12 +380,31 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     *(--sp) = 0;                         // r6
     *(--sp) = (uint32_t)arg;             // r5 (arg passed to launcher)
     *(--sp) = (uint32_t)start_routine;   // r4 (start_routine passed to launcher)
-    *(--sp) = 0;                         // r3 (dummy register for stack-alignment padding)
+    *(--sp) = 0;                         // r3 (dummy padding register to keep stack 8-byte aligned)
 
     search_thread.sp = (uint32_t)sp;
     
     if (thread != NULL) {
         *thread = (pthread_t)1;
+    }
+
+    return 0;
+}
+
+// Intercept pthread_join to safely free stack memory allocation and prevent memory leaks
+int sf_pthread_join(pthread_t thread, void **retval) {
+    (void)thread;
+    (void)retval;
+
+    // Wait until the cooperative search thread has executed thread_exit
+    while (search_thread.active) {
+        ds_yield();
+    }
+
+    // Cleanly free allocated stack space
+    if (search_thread.stack_alloc != NULL) {
+        free(search_thread.stack_alloc);
+        search_thread.stack_alloc = NULL;
     }
 
     return 0;
