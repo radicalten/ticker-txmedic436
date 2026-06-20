@@ -670,14 +670,14 @@ void draw_top_board(void) {
     printf("\x1b[1;1H+"); printf("\x1b[1;%dH+", max_cols);
     printf("\x1b[%d;1H+", max_rows); printf("\x1b[%d;%dH+", max_rows, max_cols);
 
-    // Map horizontal D-pad movements to 3 tabs
-    int active_tab = abs(cursor_c) % 3;
+    // Map horizontal D-pad movements to 4 tabs
+    int active_tab = abs(cursor_c) % 4;
     // Map vertical D-pad movements to line inspections (0 to 3)
     int inspect_row = abs(cursor_r) % 4;
 
     if (active_tab == 0) {
         // --- PAGE 1: FOREGROUNDS SPECTRUM (30-37, 90-97) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/3)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi FOREGROUND SPECTRUM (1/4)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         // Row offsets inside perimeter limits
@@ -714,11 +714,11 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 1 of 3: Foregrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 1 of 4: Foregrounds Panel\x1b[0m");
 
     } else if (active_tab == 1) {
         // --- PAGE 2: BACKGROUNDS SPECTRUM (40-47, 100-107) ---
-        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/3)\x1b[0m");
+        printf("\x1b[2;3H\x1b[1;37mDSi BACKGROUND SPECTRUM (2/4)\x1b[0m");
         printf("\x1b[3;3H\x1b[1;30mD-Pad Up/Down: Hover  L/R: Page\x1b[0m");
 
         int rendering_rows[] = {5, 8, 12, 15};
@@ -751,16 +751,16 @@ void draw_top_board(void) {
         printf("\x1b[19;3H\x1b[1;33mCurrent Row Decoded:\x1b[0m");
         printf("\x1b[20;3H\x1b[1;32mFormat Rule: \\x1b[%s\x1b[0m", ansi_codes[inspect_row]);
         printf("\x1b[21;3H\x1b[1;30mColors: Blk Red Grn Yel Blu Mag Cyn Wht\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 2 of 3: Backgrounds Panel\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 2 of 4: Backgrounds Panel\x1b[0m");
 
-    } else {
-        // --- PAGE 3: CHESSBOARD THEME SANDBOXES ---
-        printf("\x1b[2;3H\x1b[1;37mDSi DUAL-ATTRIBUTE CHESSBOARDS (3/3)\x1b[0m");
-        printf("\x1b[3;3H\x1b[1;30mComparing rendering combinations\x1b[0m");
+    } else if (active_tab == 2) {
+        // --- PAGE 3: BG CHESSBOARD THEME SANDBOXES ---
+        printf("\x1b[2;3H\x1b[1;37mDSi BG-TILE CHESSBOARDS (3/4)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mComparing BG combinations\x1b[0m");
 
         // Draws four mini 6x6 boards comparing how Bold & Bright affect chessboard structures
 
-        // Board 1: Normal Video Theme (32/43 vs 30/40)
+        // Board 1: Normal Video Theme (43 vs 40)
         printf("\x1b[5;3H\x1b[1;32m1: Normal BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
@@ -770,7 +770,7 @@ void draw_top_board(void) {
             }
         }
 
-        // Board 2: Bold Video Theme (1;43 vs 1;40) - Tests if bold modifies backgrounds
+        // Board 2: Bold Video Theme (1;43 vs 1;40)
         printf("\x1b[5;17H\x1b[1;33m2: Bold BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
@@ -790,8 +790,8 @@ void draw_top_board(void) {
             }
         }
 
-        // Board 4: Bold High-Intensity Video Theme (1;103 vs 1;100)
-        printf("\x1b[13;17H\x1b[1;37m4: Bold Bright\x1b[0m");
+        // Board 4: Bold Bright Video Theme (1;103 vs 1;100)
+        printf("\x1b[13;17H\x1b[1;37m4: Bold Bright BG\x1b[0m");
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 int is_light = (r + c) % 2 == 0;
@@ -800,9 +800,60 @@ void draw_top_board(void) {
             }
         }
 
-        printf("\x1b[21;3H\x1b[1;30mIdentify which board rendering mode\x1b[0m");
-        printf("\x1b[22;3H\x1b[1;30mproduces the best visual contrast.\x1b[0m");
-        printf("\x1b[23;3H\x1b[1;35mPage 3 of 3: Sandbox Panels\x1b[0m");
+        printf("\x1b[21;3H\x1b[1;30mStandard background color test blocks\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mDetermining hardware limits...\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 3 of 4: BG Sandbox Panels\x1b[0m");
+
+    } else {
+        // --- PAGE 4: FG CHESSBOARD THEME SANDBOXES (NEW Fallback Method) ---
+        printf("\x1b[2;3H\x1b[1;37mDSi FG-TEXT CHESSBOARDS (4/4)\x1b[0m");
+        printf("\x1b[3;3H\x1b[1;30mComparing FG marker blocks\x1b[0m");
+
+        // Draws four mini 6x6 boards using foreground text rendering ("##") instead of backgrounds
+
+        // Board 1: Normal Foreground Chessboard (33m vs 30m)
+        printf("\x1b[5;3H\x1b[1;32m1: Normal FG (##)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[33m" : "\x1b[30m";
+                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 3 + (c * 2), esc);
+            }
+        }
+
+        // Board 2: Bold Foreground Chessboard (1;33m vs 1;30m)
+        printf("\x1b[5;17H\x1b[1;33m2: Bold FG (##)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[1;33m" : "\x1b[1;30m";
+                printf("\x1b[%d;%dH%s##\x1b[0m", 6 + r, 17 + (c * 2), esc);
+            }
+        }
+
+        // Board 3: Bright Foreground Chessboard (93m vs 90m)
+        printf("\x1b[13;3H\x1b[1;34m3: Bright FG (##)\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[93m" : "\x1b[90m";
+                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 3 + (c * 2), esc);
+            }
+        }
+
+        // Board 4: Bold Bright Foreground Chessboard (1;93m vs 1;90m)
+        printf("\x1b[13;17H\x1b[1;37m4: Bold Bright FG\x1b[0m");
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int is_light = (r + c) % 2 == 0;
+                const char *esc = is_light ? "\x1b[1;93m" : "\x1b[1;90m";
+                printf("\x1b[%d;%dH%s##\x1b[0m", 14 + r, 17 + (c * 2), esc);
+            }
+        }
+
+        printf("\x1b[21;3H\x1b[1;30mStandard character foreground test blocks\x1b[0m");
+        printf("\x1b[22;3H\x1b[1;30mGreat fallback if BG render is broken\x1b[0m");
+        printf("\x1b[23;3H\x1b[1;35mPage 4 of 4: FG Sandbox Panels\x1b[0m");
     }
 
     fflush(stdout);
