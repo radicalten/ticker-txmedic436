@@ -650,7 +650,7 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// Highly Condensed, Standard vs Bold Parallel Diagnostic Suite
+// Highly Condensed, Standard vs Bold Parallel Diagnostic Suite (using "a " instead of "##")
 void draw_top_board(void) {
     consoleSelect(&topConsole);
     printf("\x1b[2J"); // Clean Screen
@@ -680,9 +680,9 @@ void draw_top_board(void) {
         const char *label;
         const char *std_fmt;
         const char *bld_fmt;
-        int is_fg; // If non-zero, uses '##' marker instead of blank spaces
+        int is_fg; // If non-zero, uses character rendering instead of blank blocks
     } rows[] = {
-        {4,  "30-37:",  "\x1b[3%dm##\x1b[0m",   "\x1b[1;3%dm##\x1b[0m",   1},
+        {4,  "30-37:",  "\x1b[3%dma \x1b[0m",   "\x1b[1;3%dma \x1b[0m",   1},
         {5,  "40-47:",  "\x1b[4%dm  \x1b[0m",   "\x1b[1;4%dm  \x1b[0m",   0},
         {6,  "90-97:",  "\x1b[9%dm  \x1b[0m",   "\x1b[1;9%dm  \x1b[0m",   0},
         {7,  "100-7:",  "\x1b[10%dm  \x1b[0m",  "\x1b[1;10%dm  \x1b[0m",  0},
@@ -710,7 +710,7 @@ void draw_top_board(void) {
 
     // 4. Row 14-15: Aspect Ratio Test Block Matrix
     printf("\x1b[14;3H\x1b[1;33mAspect Ratio Blocks (2x1 cells):\x1b[0m");
-    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | BldBG: \x1b[103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33m##\x1b[0m");
+    printf("\x1b[15;3HStd: \x1b[43m  \x1b[0m | BldBG: \x1b[103m  \x1b[0m | Rev: \x1b[7;33m  \x1b[0m | FG: \x1b[33ma \x1b[0m");
 
     // 5. Rows 17-21: Multi-Protocol Checkerboard Analysis
     // Draws three 8x4 mini boards side-by-side inside the 32-column bounds
