@@ -7,4 +7,4 @@ p2v4 can we change this test suite to be more comprehensive: cycle through all t
 p2v5 nothing currently appears on the top screen. bottom screen is visible in white
 p2v6 ok the HSV sweeper works perfectly. can we now apply what we learned to the original chess gui file here. that is modify the current colors to utilize the hardware palettes the way this program does with HSV to draw the pieces and the chessboard, and everything else:
 
-p3v1 for main-chess-dsi-test2-v1: 
+p3v1 for main-chess-dsi-test2-v1: unfortunately, the chessboard squares do not appear. it is pure black next to the letters. any ideas?
