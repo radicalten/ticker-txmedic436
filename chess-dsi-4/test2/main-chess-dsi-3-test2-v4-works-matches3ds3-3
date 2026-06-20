@@ -682,29 +682,37 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
     }
 }
 
-// Configure DS Palette memory on main display for chess elements
+// Configure DS Palette memory on main display for chess elements matching 3DS color configurations
 void init_custom_palettes(void) {
-    // Solid background squares configurations (Color Index 1)
-    BG_PALETTE[0 * 16 + 1] = RGB15(26, 23, 18); // Palette 0: Light Board Square (Tan)
-    BG_PALETTE[1 * 16 + 1] = RGB15(11,  8,  5); // Palette 1: Dark Board Square (Brown)
-    BG_PALETTE[2 * 16 + 1] = RGB15(10, 24, 10); // Palette 2: Highlight Green Selection
-    BG_PALETTE[3 * 16 + 1] = RGB15(31, 31, 31); // Palette 3: White Cursor
-    BG_PALETTE[4 * 16 + 1] = RGB15(22, 10, 22); // Palette 4: Magenta Prev Move trace
-    BG_PALETTE[5 * 16 + 1] = RGB15( 5, 20, 25); // Palette 5: Cyan Legal Destinations
-    BG_PALETTE[6 * 16 + 1] = RGB15(28,  5,  5); // Palette 6: Red Alert (King in Check)
+    // Solid background squares configurations
+    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation)
+    BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0); // Palette 1: Walnut Wood Dark Square (Brown #48;5;94m representation)
+    BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0); // Palette 2: Forest Green Selected Square (#48;5;34m representation)
+    BG_PALETTE[3 * 16 + 1] = RGB15(31, 16,  0); // Palette 3: Vibrant Orange Cursor Selection (#48;5;208m representation)
+    
+    // Previous Move Tracer (Light/Dark paths)
+    BG_PALETTE[4 * 16 + 1] = RGB15(12, 22, 31); // Palette 4: Sky Blue Prev Move (Light square #48;5;75m)
+    BG_PALETTE[5 * 16 + 1] = RGB15(12, 17, 22); // Palette 5: Steel Blue Prev Move (Dark square #48;5;68m)
+
+    // Legal Destination Targets (Light/Dark targets)
+    BG_PALETTE[6 * 16 + 1] = RGB15(22, 27, 22); // Palette 6: Pale Sage Green target (Light square #48;5;151m)
+    BG_PALETTE[7 * 16 + 1] = RGB15(17, 22, 17); // Palette 7: Muted Sage Green target (Dark square #48;5;108m)
+
+    // King in Check Danger Warning
+    BG_PALETTE[8 * 16 + 1] = RGB15(31,  0,  0); // Palette 8: Threat warning red (#48;5;196m representation)
+
+    // Alphanumeric coordinate label text (Muted Slate Grey representation)
+    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20); 
+    BG_PALETTE[9 * 16 + 15] = RGB15(20, 20, 20);
 
     // Foreground piece overlay configurations (Color index 0 must be transparent)
-    BG_PALETTE[7 * 16 + 0] = 0;
-    BG_PALETTE[7 * 16 + 1] = RGB15(31, 30, 22);  // Palette 7, Color 1: White Pieces (Golden-Cream)
-    BG_PALETTE[7 * 16 + 15] = RGB15(31, 30, 22); // Palette 7, Color 15 (Matches font body pixels)
+    BG_PALETTE[10 * 16 + 0] = 0;
+    BG_PALETTE[10 * 16 + 1] = RGB15(31, 31, 31);  // Palette 10: Bright White Pieces (Bold #38;5;255m representation)
+    BG_PALETTE[10 * 16 + 15] = RGB15(31, 31, 31);
 
-    BG_PALETTE[8 * 16 + 0] = 0;
-    BG_PALETTE[8 * 16 + 1] = RGB15( 6,  6, 12);  // Palette 8, Color 1: Black Pieces (Slate/Midnight Blue)
-    BG_PALETTE[8 * 16 + 15] = RGB15( 6,  6, 12); // Palette 8, Color 15 (Matches font body pixels)
-
-    // Alphanumeric coordinate boundary texts
-    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20);  // Palette 9, Color 1: Muted Gray label
-    BG_PALETTE[9 * 16 + 15] = RGB15(20, 20, 20); // Palette 9, Color 15
+    BG_PALETTE[11 * 16 + 0] = 0;
+    BG_PALETTE[11 * 16 + 1] = RGB15(3,  3,  3);    // Palette 11: Deep Slate Black Pieces (#38;5;232m representation)
+    BG_PALETTE[11 * 16 + 15] = RGB15(3,  3,  3);
 }
 
 // Overwrite Sub Screen ANSI default console colors with custom palette
@@ -773,7 +781,7 @@ void draw_top_board(void) {
             int p = current_state.board[sq];
 
             int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-            int palette_idx = is_light ? 0 : 1; // Palette 0 or 1 for squares
+            int palette_idx = is_light ? 0 : 1; // Default Maple / Walnut Brown
 
             int is_selected = (sq == selected_sq);
             int is_cursor = (r == cursor_r && c == cursor_c);
@@ -797,17 +805,17 @@ void draw_top_board(void) {
                 }
             }
 
-            // Direct mapping logic to dedicated hardware palettes
+            // High-fidelity palette assignment mapping matching 3DS color layouts
             if (is_cursor) {
-                palette_idx = 3;
+                palette_idx = 3; // Bright Orange
             } else if (is_selected) {
-                palette_idx = 2;
+                palette_idx = 2; // Forest Green
             } else if (sq == king_in_check) {
-                palette_idx = 6;
+                palette_idx = 8; // Danger Warning Red
             } else if (is_prev_move) {
-                palette_idx = 4;
+                palette_idx = is_light ? 4 : 5; // Sky / Steel Blue
             } else if (is_legal_dest) {
-                palette_idx = 5;
+                palette_idx = is_light ? 6 : 7; // Sage Light / Dark Greens
             }
 
             // Render background square cells on BG2 (Tile index 255 is our solid block)
@@ -818,7 +826,7 @@ void draw_top_board(void) {
 
             // Render pieces on high-priority BG1 (transparency handles overlay properly)
             if (p != 0) {
-                u16 fg_palette = (p > 0) ? 7 : 8; // White is palette 7, Black is palette 8
+                u16 fg_palette = (p > 0) ? 10 : 11; // White is palette 10, Black is palette 11
                 char piece_str = ' ';
                 switch (abs(p)) {
                     case 1: piece_str = 'P'; break;
