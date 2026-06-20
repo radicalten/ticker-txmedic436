@@ -215,12 +215,14 @@ int main(int argc, char **argv) {
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankC(VRAM_C_SUB_BG);
 
-    // Initialize bottom diagnostic terminal console
+    // Initialize both standard consoles. 
+    // Initializing topConsole on BG3 forces VRAM Bank A to load the default font glyphs into Tile Base 0.
+    consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    // Initialize top backgrounds (Layer 2 behind Layer 1)
-    bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);  // Swatch layer
-    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // Overlay layer
+    // Initialize top custom backgrounds (Sharing Tile Base 0 with loaded console font)
+    bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);  // Low Priority: Swatches
+    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // High Priority: Cursor/Labels
 
     // Create a pure solid color glyph in tile index 1
     u32 solid_tile[8] = {
@@ -237,6 +239,16 @@ int main(int argc, char **argv) {
     dmaCopy(solid_tile, tile_memory + (1 * 32), sizeof(solid_tile));
 
     init_bottom_palette();
+
+    // Clear graphics and text screen banks before starting
+    u16* board_map = bgGetMapPtr(bg_board_id);
+    u16* pieces_map = bgGetMapPtr(bg_pieces_id);
+    memset(board_map, 0, 32 * 32 * sizeof(u16));
+    memset(pieces_map, 0, 32 * 32 * sizeof(u16));
+
+    consoleSelect(&topConsole);
+    printf("\x1b[2J");
+    fflush(stdout);
 
     consoleSelect(&bottomConsole);
     printf("\x1b[2J");
