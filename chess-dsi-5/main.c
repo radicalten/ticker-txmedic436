@@ -726,8 +726,8 @@ void init_custom_palettes(void) {
     BG_PALETTE[10 * 16 + 15] = RGB15(31, 31, 31);
 
     BG_PALETTE[11 * 16 + 0] = 0;
-    BG_PALETTE[11 * 16 + 1] = RGB15(3,  3,  3);    // Palette 11: Deep Slate Black Pieces (#38;5;232m representation)
-    BG_PALETTE[11 * 16 + 15] = RGB15(3,  3,  3);
+    BG_PALETTE[11 * 16 + 1] = RGB15(0,  0,  0);    // Palette 11: Deep Slate Black Pieces (#38;5;232m representation)
+    BG_PALETTE[11 * 16 + 15] = RGB15(0,  0,  0);  //change to pure black from 3,3,3
 }
 
 // Maps Sub display hardware registers to match custom palette banks 0 to 15 (guarantees perfect ANSI equivalents)
