@@ -9,3 +9,11 @@ prompt1: Here is my main.c file for a DSi chess gui. currently the bottom screen
 prompt2: Here is my main.c file for a DSi chess gui. Currently the nodes per second calculation lacks precision. Can you fix that?: 
 
 #starting a new chat once again with the updated file. 
+
+prompt3: Here is my main.c file for a DSi chess gui. can you update it so that the last known nodes per second calculation stays on the bottom screen instead of switching to the text "Offline": 
+
+p3v2: also the engine does not need to say the word "Idle" it can simply be blank when not thinking. furthermore you may condense that line so it takes less space. 
+p3v3: you may remove the spinning progress bar too. 
+p3v4: can you move the line 3 info up to line one. merge it with the White/Black turn info. 
+p3v5: instead can we put Eval:, nps, and lim: on line 2. and White/Black to play + W:Hum B:Eng on line 1 together. 
+p3v6: you can remove the word eval
