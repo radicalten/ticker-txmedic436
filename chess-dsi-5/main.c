@@ -964,7 +964,7 @@ void draw_bottom_stats(void) {
         }
         curr_x += 6;
     } else {
-        draw_string_sub(sub_map, curr_x, 1, "----", 15);
+        draw_string_sub(sub_map, curr_x, 1, "", 15);
         curr_x += 6;
     }
 
