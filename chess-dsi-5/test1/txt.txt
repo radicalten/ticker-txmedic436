@@ -1,1 +1,9 @@
+test1 prompts for  chess-dsi-5. chess-dsi-5 uses chess-dsi-4 as a base
+ai used: gemini 3.5 flash.
+Goal: fix all the gui bugs in main.c 
 
+prompt1: Here is my main.c file for a DSi chess gui. currently the bottom screen does not have a pure black (0,0,0) background. Can you fix that?: 
+
+#was able to do this myself, as was the ai, will start a new chat with the fixed file.
+
+prompt2: Here is my main.c file for a DSi chess gui. Currently the nodes per second calculation lacks precision. Can you fix that?: 
