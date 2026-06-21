@@ -18,65 +18,29 @@ typedef struct {
 static MsgQueue q_gui_to_engine;
 static MsgQueue q_engine_to_gui;
 
-// Cooperative Thread Scheduler Definitions
-typedef struct {
-    uint32_t sp;
-    int active;
-    void* stack_alloc;
-} DS_Thread;
+// Stack and Thread-Local Storage Configuration for Calico
+#define SF_THREAD_STACK_SIZE (64 * 1024) // 64 KB Stack (safe for heavy chess evaluation)
 
-static DS_Thread main_thread;
-static DS_Thread search_thread;
-static DS_Thread* current_thread = &main_thread;
+static Thread s_searchThread;
+static void* s_searchThreadStack = NULL;
+static void* s_searchThreadTls = NULL;
+static volatile bool s_searchThreadActive = false;
+static void* (*s_startRoutine)(void*) = NULL;
+static void* s_threadArg = NULL;
 
-// Forward declare to prevent LTO issues and keep compiler optimizations happy
-__attribute__((used)) __attribute__((noinline)) void thread_exit(void);
-void thread_launcher(void);
-void ds_switch_context(uint32_t* current_sp, uint32_t next_sp);
-
-// Naked assembly context switcher (ARM Mode)
-// Fixed: Restores 10 registers (r3-r11, lr/pc) to keep stack 8-byte aligned at all times
-__attribute__((naked)) __attribute__((target("arm")))
-void ds_switch_context(uint32_t* current_sp, uint32_t next_sp) {
-    __asm__ volatile (
-        "push {r3-r11, lr}\n\t"  // Save callee-saved registers (10 registers total)
-        "str sp, [r0]\n\t"       // Save old SP into *current_sp (r0)
-        "mov sp, r1\n\t"         // Load new SP (r1) into SP register
-        "pop {r3-r11, pc}\n\t"   // Restore callee-saved registers and jump to new context PC
-    );
-}
-
-// Naked assembly launcher for starting a thread (ARM Mode)
-__attribute__((naked)) __attribute__((target("arm")))
-void thread_launcher(void) {
-    __asm__ volatile (
-        "mov r0, r5\n\t"           // Setup arg (r5) as first argument in r0
-        "blx r4\n\t"               // Branch to start_routine (r4)
-        "ldr r1, =thread_exit\n\t" // Safely load pointer to thread_exit
-        "bx r1\n\t"                // Safe ARM-to-Thumb Branch and Exchange
-        ".ltorg\n\t"               // Dump literal pool for LDR instruction
-    );
-}
-
-// Thread destruction routine
-__attribute__((used)) __attribute__((noinline))
-void thread_exit(void) {
-    search_thread.active = 0;
-    current_thread = &main_thread;
-    ds_switch_context(&search_thread.sp, main_thread.sp);
-}
-
-// Yield CPU time between GUI and Engine
-void ds_yield(void) {
-    if (!search_thread.active) return; // Nothing to switch to
-
-    DS_Thread* old = current_thread;
-    if (current_thread == &main_thread) {
-        current_thread = &search_thread;
-    } else {
-        current_thread = &main_thread;
+// Adapt standard routine void* return to Calico's int return signature
+static int calico_thread_entry(void* arg) {
+    (void)arg;
+    if (s_startRoutine) {
+        s_startRoutine(s_threadArg);
     }
-    ds_switch_context(&old->sp, current_thread->sp);
+    s_searchThreadActive = false;
+    return 0;
+}
+
+// Yield CPU time
+void ds_yield(void) {
+    threadYield();
 }
 
 // Undefine target library macros to avoid infinite loops inside overrides
@@ -99,9 +63,7 @@ void sf_bridge_init(void) {
     q_engine_to_gui.head = q_engine_to_gui.tail = 0;
     LightLock_Init(&q_engine_to_gui.lock);
     
-    main_thread.active = 1;
-    search_thread.active = 0;
-    current_thread = &main_thread;
+    s_searchThreadActive = false;
 }
 
 static void queue_push_char(MsgQueue *q, char c) {
@@ -167,7 +129,10 @@ void sf_recv_command(char *buf, size_t max_len) {
         }
         
         LightLock_Unlock(&q_gui_to_engine.lock);
-        ds_yield(); // Yield CPU back to the GUI thread
+        
+        // Use active thread sleep (1 millisecond) instead of yielding continuously.
+        // This avoids running hot and chewing through battery when idle.
+        threadSleep(1000); 
     }
 }
 
@@ -184,7 +149,7 @@ int sf_printf(const char *format, ...) {
     }
     LightLock_Unlock(&q_engine_to_gui.lock);
     
-    ds_yield(); // Let GUI thread parse this immediately
+    ds_yield(); // Give GUI immediate priority to read this buffer
     return written;
 }
 
@@ -290,7 +255,7 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int sf_get_output(char *buf, size_t max_len) {
-    ds_yield(); // Give engine thread a turn to run and populate output
+    ds_yield(); // Give engine thread a turn to push outputs
 
     LightLock_Lock(&q_engine_to_gui.lock);
     if (q_engine_to_gui.head == q_engine_to_gui.tail) {
@@ -310,49 +275,62 @@ int sf_get_output(char *buf, size_t max_len) {
     return (int)i;
 }
 
-// Cooperative Thread Spawner for DSi
+// Preemptive Thread Spawner mapping POSIX definitions to libcalico
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg) {
     (void)attr;
 
-    // --- FIX FOR BUG 1: Recursive thread guard ---
-    // If the engine main thread is already running, satisfy internal thread spawns safely
-    if (search_thread.active) {
+    // Recursive thread guard (matches original design for single search engines)
+    if (s_searchThreadActive) {
         if (thread != NULL) {
             *thread = (pthread_t)999;
         }
-        return 0; // Return dummy success code
+        return 0; 
     }
 
-    size_t stacksize = 32 * 1024; // 32 KB Stack (optimized allocation size)
+    // Allocate Stack and TLS on the first creation run to prevent runtime fragmentation
+    if (!s_searchThreadStack) {
+        s_searchThreadStack = malloc(SF_THREAD_STACK_SIZE);
+        if (!s_searchThreadStack) {
+            return -1;
+        }
 
-    void* stack_alloc = malloc(stacksize);
-    if (!stack_alloc) {
-        return -1; // Out of memory
+        size_t tls_size = threadGetLocalStorageSize();
+        if (tls_size > 0) {
+            s_searchThreadTls = malloc(tls_size);
+            if (!s_searchThreadTls) {
+                free(s_searchThreadStack);
+                s_searchThreadStack = NULL;
+                return -1;
+            }
+        }
     }
 
-    search_thread.stack_alloc = stack_alloc;
-    search_thread.active = 1;
+    s_startRoutine = start_routine;
+    s_threadArg = arg;
+    s_searchThreadActive = true;
 
-    // Align the top stack limit
-    uint32_t* sp = (uint32_t*)((char*)stack_alloc + stacksize);
-    
-    // --- FIX FOR BUG 2: Setup 10-register alignment frame mapping ---
-    *(--sp) = (uint32_t)thread_launcher; // pc
-    *(--sp) = 0;                         // r11
-    *(--sp) = 0;                         // r10
-    *(--sp) = 0;                         // r9
-    *(--sp) = 0;                         // r8
-    *(--sp) = 0;                         // r7
-    *(--sp) = 0;                         // r6
-    *(--sp) = (uint32_t)arg;             // r5 (arg passed to launcher)
-    *(--sp) = (uint32_t)start_routine;   // r4 (start_routine passed to launcher)
-    *(--sp) = 0;                         // r3 (dummy padding register to keep 8-byte stack alignment)
+    // Align stack base boundary up 8-bytes
+    uintptr_t stack_base = (uintptr_t)s_searchThreadStack;
+    uintptr_t stack_top_aligned = (stack_base + SF_THREAD_STACK_SIZE) & ~7;
 
-    search_thread.sp = (uint32_t)sp;
-    
+    // Setup Calico thread metadata
+    threadPrepare(&s_searchThread, 
+                  calico_thread_entry, 
+                  NULL, 
+                  (void*)stack_top_aligned, 
+                  MAIN_THREAD_PRIO);
+
+    // Register C stdlib Thread-Local Storage pointer (essential to prevent crashes in sub-threads)
+    if (s_searchThreadTls) {
+        threadAttachLocalStorage(&s_searchThread, s_searchThreadTls);
+    }
+
+    // Launch execution context in the Calico scheduler
+    threadStart(&s_searchThread);
+
     if (thread != NULL) {
-        *thread = (pthread_t)1;
+        *thread = (pthread_t)&s_searchThread;
     }
 
     return 0;
