@@ -97,4 +97,4 @@ char *uci_move(char *str, Move m, int chess960);
 void print_pv(Position *pos, Depth depth, Value alpha, Value beta);
 Move uci_to_move(const Position *pos, char *str);
 
-#endif // UCI_H
+#endif
