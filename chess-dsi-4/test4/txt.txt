@@ -41,3 +41,12 @@ Instead of routing thread management through standard POSIX stubs, this implemen
 
 #believe it or not just changing the thread.c file worked, without touching the thread.h file at all. And the chess engine literally worked as intended. I am preserving this version of the emulator right here, and saved and added the files to chess-dsi-5, as I don't want to mess with a good thing. 
 #I think that I should next inquire about thread.h uci.h uci.c and ucioption.c to see if they are all in compliance. but since everything is currently working I do not want to mess with that at all. 
+
+#continuing here (now that chess-dsi-5 has the files from here up to this point: which consists of:
+#main-test4-v1
+#main_stockfish-test4-v1
+#thread.c-test4-v1-works
+#3ds_bridge.c-test4-v1-compiles
+#3ds_bridge.h-test4-v1-compiles)
+
+does thread.h need any changes? 
