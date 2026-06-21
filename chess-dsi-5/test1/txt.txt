@@ -17,3 +17,4 @@ p3v3: you may remove the spinning progress bar too.
 p3v4: can you move the line 3 info up to line one. merge it with the White/Black turn info. 
 p3v5: instead can we put Eval:, nps, and lim: on line 2. and White/Black to play + W:Hum B:Eng on line 1 together. 
 p3v6: you can remove the word eval
+p3v7: you can remove the word lim: too
