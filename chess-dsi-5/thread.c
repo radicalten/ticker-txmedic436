@@ -154,7 +154,7 @@ static void thread_create(int idx)
   s_calicoThreads[idx] = malloc(sizeof(Thread));
 
   // Stack Allocation (256 KB to protect search recursion from overflowing) 32kb was min for 3DS
-  size_t stack_size = 32 * 1024;
+  size_t stack_size = 256 * 1024;
   s_threadStacks[idx] = malloc(stack_size);
   if (!s_threadStacks[idx]) {
     printf("\x1b[1;31m[ERROR] Stack allocation failed for Thread %d!\x1b[0m\n", idx);
