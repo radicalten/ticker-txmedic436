@@ -914,9 +914,16 @@ void draw_bottom_stats(void) {
             printf("Ev: ---- | ");
         }
 
+        // Precise, Screen-Safe Adaptive NPS calculation
         if (engine_nps > 0) {
-            if (engine_nps >= 1000) {
+            if (engine_nps >= 1000000) {
+                printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 100000) {
                 printf("%lld knps\x1b[K\n", engine_nps / 1000);
+            } else if (engine_nps >= 10000) {
+                printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
+            } else if (engine_nps >= 1000) {
+                printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
             } else {
                 printf("%lld nps\x1b[K\n", engine_nps);
             }
