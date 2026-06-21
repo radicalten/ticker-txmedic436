@@ -23,37 +23,24 @@
 
 #include <assert.h>
 #include <stdio.h>
-#ifndef _WIN32
-#include <pthread.h>
-#endif
 #include <stdatomic.h>
 #include <sys/time.h>
 #include <unistd.h>
 
 #include "types.h"
+#include "3ds_bridge.h" // Includes Calico and defines our LightLock structure
 
 void print_engine_info(bool to_uci);
 void print_compiler_info(void);
 
-// prefetch() preloads the given address in L1/L2 cache. This is
-// a non-blocking function that doesn't stall the CPU waiting for data
-// to be loaded from memory, which can be quite slow.
+// Global IO Mutex powered by Calico's LightLock
+extern LightLock ioMutex;
 
+// prefetch() preloads the given address in L1/L2 cache.
 INLINE void prefetch(void *addr)
 {
 #ifndef NO_PREFETCH
-
-#if defined(__INTEL_COMPILER)
-// This hack prevents prefetches from being optimized away by
-// Intel compiler. Both MSVC and gcc seem not be affected by this.
-  __asm__ ("");
-#endif
-
-#if defined(__INTEL_COMPILER) || defined(_MSC_VER)
-  _mm_prefetch((char *)addr, _MM_HINT_T0);
-#else
   __builtin_prefetch(addr);
-#endif
 #else
   (void)addr;
 #endif
@@ -67,26 +54,10 @@ INLINE void prefetch2(void *addr)
 
 typedef int64_t TimePoint; // A value in milliseconds
 
-// FIX: Changed inline definition to a standard function declaration.
-// This forces all source files to use our hardware-native osGetTime() implementation inside misc.c
+// Returns the current time in milliseconds
 TimePoint now(void);
 
-#ifdef _WIN32
-bool large_pages_supported(void);
-extern size_t largePageMinimum;
-
-typedef HANDLE FD;
-#define FD_ERR INVALID_HANDLE_VALUE
-typedef HANDLE map_t;
-typedef struct {
-  void *ptr;
-} alloc_t;
-
-void flockfile(FILE *F);
-void funlockfile(FILE *F);
-
-#else /* Unix */
-
+// DSi Unix-like File System Types
 typedef int FD;
 #define FD_ERR -1
 typedef size_t map_t;
@@ -94,8 +65,6 @@ typedef struct {
   void *ptr;
   size_t size;
 } alloc_t;
-
-#endif
 
 ssize_t getline(char **lineptr, size_t *n, FILE *stream);
 
@@ -120,17 +89,12 @@ uint64_t prng_sparse_rand(PRNG *rng);
 
 INLINE uint64_t mul_hi64(uint64_t a, uint64_t b)
 {
-#if defined(__GNUC__) && defined(IS_64BIT)
-  __extension__ typedef unsigned __int128 uint128;
-  return ((uint128)a * (uint128)b) >> 64;
-#else
   uint64_t aL = (uint32_t)a, aH = a >> 32;
   uint64_t bL = (uint32_t)b, bH = b >> 32;
   uint64_t c1 = (aL * bL) >> 32;
   uint64_t c2 = aH * bL + c1;
   uint64_t c3 = aL * bH + (uint32_t)c2;
   return aH * bH + (c2 >> 32) + (c3 >> 32);
-#endif
 }
 
 INLINE bool is_little_endian(void)
@@ -186,4 +150,4 @@ INLINE uint16_t readu_le_u16(const void *p)
   return q[0] | (q[1] << 8);
 }
 
-#endif
+#endif // MISC_H
