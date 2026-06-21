@@ -191,7 +191,7 @@ static void thread_create(int idx)
   // Safe yield loop preventing startup freezes
   while (Threads.initializing) {
     __sync_synchronize();       // Force memory sync across cores
-    threadsleep(1000);          // Yield 1 millisecond using preemptive sleeps
+    threadSleep(1000);          // Yield 1 millisecond using preemptive sleeps
   }
 }
 
@@ -239,7 +239,7 @@ void thread_wait_until_sleeping(Position *pos)
   // High-performance cooperative yield loop with compile-time memory barriers
   while (pos->action != THREAD_SLEEP) {
     __sync_synchronize();       // Force memory synchronization across CPU cores
-    threadsleep(1000);          // Sleep 1ms to allow execution slots
+    threadSleep(1000);          // Sleep 1ms to allow execution slots
   }
 
   if (pos->threadIdx == 0)
@@ -251,7 +251,7 @@ void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
     __sync_synchronize();       // Force hardware memory coherence update
-    threadsleep(1000);          // Sleep 1ms
+    threadSleep(1000);          // Sleep 1ms
   }
 }
 
