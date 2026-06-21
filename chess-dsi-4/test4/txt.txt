@@ -1,1 +1,7 @@
 The winner from test3 is main-chess-dsi-3-test3-v1
+Will try to improve 3ds_bridge.c and 3ds_bridge.h by pasting include/calico/system/thread.h into the gemini 3.5 flash prompt. 
+
+prompt 1: I have a two C files I am porting to Nintendo DSi, I would like to change the current threading implementation to use devkitpro's libcalico thread implementation. First I will include calico's thread.h. Then I will add my currrent thread.h and thread.c implementations: 
+
+Ok here is my 3ds_bridge.h file, do not mind the name it is for DSi.
+here is 3ds_bridge.c:
