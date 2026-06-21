@@ -719,24 +719,38 @@ void init_custom_palettes(void) {
     BG_PALETTE[11 * 16 + 15] = RGB15(3,  3,  3);
 }
 
-// Overwrite Sub Screen ANSI default console colors with custom palette
+// Maps NDS console sub-screen multi-palette architecture dynamically to process color text formatting correctly
 void init_bottom_palette(void) {
-    BG_PALETTE_SUB[0]  = RGB15(0, 0, 0);       // Black Background
-    BG_PALETTE_SUB[1]  = RGB15(22, 4, 4);      // Dark Red
-    BG_PALETTE_SUB[2]  = RGB15(4, 22, 4);      // Dark Green
-    BG_PALETTE_SUB[3]  = RGB15(22, 22, 4);     // Dark Yellow
-    BG_PALETTE_SUB[4]  = RGB15(4, 4, 22);      // Dark Blue
-    BG_PALETTE_SUB[5]  = RGB15(22, 4, 22);     // Dark Magenta
-    BG_PALETTE_SUB[6]  = RGB15(4, 22, 22);     // Dark Cyan
-    BG_PALETTE_SUB[7]  = RGB15(24, 24, 24);    // Light Gray
-    BG_PALETTE_SUB[8]  = RGB15(12, 12, 12);    // Intense Dark Gray
-    BG_PALETTE_SUB[9]  = RGB15(31, 5, 5);      // High Red
-    BG_PALETTE_SUB[10] = RGB15(5, 31, 5);      // High Green
-    BG_PALETTE_SUB[11] = RGB15(31, 31, 5);     // High Yellow
-    BG_PALETTE_SUB[12] = RGB15(5, 5, 31);      // High Blue
-    BG_PALETTE_SUB[13] = RGB15(31, 5, 31);     // High Magenta
-    BG_PALETTE_SUB[14] = RGB15(5, 31, 31);     // High Cyan
-    BG_PALETTE_SUB[15] = RGB15(31, 31, 31);    // Bright White
+    // Populate transparent/black background colors at Index 0 of all 16 palettes
+    for (int p = 0; p < 16; p++) {
+        BG_PALETTE_SUB[p * 16 + 0] = RGB15(0, 0, 0); 
+    }
+
+    // Configure exact ANSI sequence definitions across standard & bold colors
+    u16 colors[16];
+    colors[0]  = RGB15(31, 31, 31);   // Palette 0: Standard White (Default text)
+    colors[1]  = RGB15(22, 4, 4);     // Palette 1: Dark Red (\x1b[31m)
+    colors[2]  = RGB15(4, 22, 4);     // Palette 2: Dark Green (\x1b[32m)
+    colors[3]  = RGB15(22, 22, 4);    // Palette 3: Dark Yellow (\x1b[33m)
+    colors[4]  = RGB15(4, 4, 22);     // Palette 4: Dark Blue (\x1b[34m)
+    colors[5]  = RGB15(22, 4, 22);    // Palette 5: Dark Magenta (\x1b[35m)
+    colors[6]  = RGB15(4, 22, 22);    // Palette 6: Dark Cyan (\x1b[36m)
+    colors[7]  = RGB15(24, 24, 24);   // Palette 7: Standard Gray (\x1b[37m)
+    colors[8]  = RGB15(12, 12, 12);   // Palette 8: Intense Dark Gray (\x1b[1;30m)
+    colors[9]  = RGB15(31, 5, 5);     // Palette 9: High Bright Red (\x1b[1;31m)
+    colors[10] = RGB15(5, 31, 5);     // Palette 10: High Bright Green (\x1b[1;32m)
+    colors[11] = RGB15(31, 31, 5);    // Palette 11: High Bright Yellow (\x1b[1;33m)
+    colors[12] = RGB15(5, 5, 31);     // Palette 12: High Bright Blue (\x1b[1;34m)
+    colors[13] = RGB15(31, 5, 31);    // Palette 13: High Bright Magenta (\x1b[1;35m)
+    colors[14] = RGB15(5, 31, 31);    // Palette 14: High Bright Cyan (\x1b[1;36m)
+    colors[15] = RGB15(31, 31, 31);   // Palette 15: High Bright White (\x1b[1;37m)
+
+    // Map colors to foreground positions (Indices 1-15) of every palette target
+    for (int p = 0; p < 16; p++) {
+        for (int c = 1; c < 16; c++) {
+            BG_PALETTE_SUB[p * 16 + c] = colors[p];
+        }
+    }
 }
 
 // Draw the Top Screen Board (Pristine, Direct Hardware Layering, double-height formats)
@@ -862,9 +876,9 @@ void draw_bottom_stats(void) {
     if (engine_state != ENGINE_STATE_READY) {
         strcpy(status_str, "Booting...");
     } else if (current_state.halfmoves >= 100) {
-        strcpy(status_str, "[DRAW (50m-rule)]");
+        strcpy(status_str, "\x1b[1;31m[DRAW (50m-rule)]\x1b[0m");
     } else if (repetitions >= 3) {
-        strcpy(status_str, "[DRAW (3-fold)]");
+        strcpy(status_str, "\x1b[1;31m[DRAW (3-fold)]\x1b[0m");
     } else if (!has_mov) {
         if (is_ch) {
             strcpy(status_str, "\x1b[1;31m[CHECKMATE!]\x1b[0m");
@@ -895,9 +909,9 @@ void draw_bottom_stats(void) {
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
         if (eval > 0.0) {
-            sprintf(eval_str, "\x1b[1;32m%+.2f\x1b[0m", eval); // Green when positive
+            sprintf(eval_str, "\x1b[1;32m%+.2f\x1b[0m", eval); // High Bright Green
         } else if (eval < 0.0) {
-            sprintf(eval_str, "\x1b[1;31m%+.2f\x1b[0m", eval); // Red when negative
+            sprintf(eval_str, "\x1b[1;31m%+.2f\x1b[0m", eval); // High Bright Red
         } else {
             sprintf(eval_str, "0.00");
         }
