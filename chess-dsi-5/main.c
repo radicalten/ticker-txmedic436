@@ -689,7 +689,7 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
 // Configure DS Palette memory on main display for chess elements matching 3DS color configurations
 void init_custom_palettes(void) {
     // Solid background squares configurations
-    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 12); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation) = RGB(215,175,135) -> convert to 15-bit  215/8 175/8 135/8 then round
+    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation) = RGB(215,175,135) -> convert to 15-bit  215/8 175/8 135/8 then round
     BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0); // Palette 1: Walnut Wood Dark Square (Brown #48;5;94m representation) = RGB(135,95,0) -> 135/8 95/8 0/8 = 17,12,0
     BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0); // Palette 2: Forest Green Selected Square (#48;5;34m representation) 
     BG_PALETTE[3 * 16 + 1] = RGB15(31, 16,  0); // Palette 3: Vibrant Orange Cursor Selection (#48;5;208m representation)
