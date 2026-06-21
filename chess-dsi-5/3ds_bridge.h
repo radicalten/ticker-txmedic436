@@ -12,7 +12,6 @@
 #ifdef __NDS__
 #include <sys/time.h>             // Required for gettimeofday
 #include <calico.h>
-//#include <calico/system/thread.h> // Calico preemptive threading engine
 
 // Real thread-blocking LightLock utilizing Calico queues
 typedef struct {
