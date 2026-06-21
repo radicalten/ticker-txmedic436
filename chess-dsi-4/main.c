@@ -1039,7 +1039,8 @@ int get_promo_choice(void) {
         if (kDown & KEY_X) { choice = 4; break; }
         if (kDown & KEY_B) { choice = 3; break; }
         if (kDown & KEY_A) { choice = 2; break; }
-        swiWaitForVBlank();
+        // Optimize loop waiting by yielding to other Calico threads on VBlank
+        threadWaitForVBlank();
     }
     redraw_needed = 1;
     return choice;
@@ -1264,7 +1265,8 @@ int main(int argc, char **argv) {
     printf("\x1b[2J");
     fflush(stdout);
     
-    swiWaitForVBlank();
+    // Perform early wait using preemptive VBlank engine
+    threadWaitForVBlank();
 
     pthread_t stockfish_thread;
     int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
@@ -1272,7 +1274,7 @@ int main(int argc, char **argv) {
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
         fflush(stdout);
-        while(1) swiWaitForVBlank();
+        while(1) threadWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
         fflush(stdout);
@@ -1281,7 +1283,7 @@ int main(int argc, char **argv) {
     // Yield control delay for engine initialization setup
     for (int i = 0; i < 3; i++) {
         ds_yield();
-        swiWaitForVBlank();
+        threadWaitForVBlank();
     }
 
     // Initiate Phase 1 of Handshake
@@ -1353,8 +1355,9 @@ int main(int argc, char **argv) {
             redraw_needed = 0;
         }
 
-        ds_yield();
-        swiWaitForVBlank();
+        // IMPORTANT OPTIMIZATION: threadWaitForVBlank() yields CPU back to Stockfish 
+        // asynchronously, giving the engine maximum processing power while the GUI is idle.
+        threadWaitForVBlank();
     }
 
     sf_send_command("quit");
