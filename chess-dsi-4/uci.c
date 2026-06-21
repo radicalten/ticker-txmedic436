@@ -63,7 +63,7 @@ void position(Position *pos, char *str)
     int ply = 0;
 
     for (moves = strtok(moves, " \t"); moves; moves = strtok(NULL, " \t")) {
-      // Yield CPU to the GUI during long, cycle-heavy historical move list parsing
+      // FIX: Yield CPU to the GUI during long, cycle-heavy historical move list parsing
       ds_yield(); 
 
       Move m = uci_to_move(pos, moves);
@@ -81,7 +81,7 @@ void position(Position *pos, char *str)
     if (pos->st->pliesFromNull > 99)
       pos->st->pliesFromNull = 99;
 
-    // Only slide the stack back if we actually exceeded 100 plies.
+    // FIX: Only slide the stack back if we actually exceeded 100 plies.
     // This prevents pulling uninitialized heap garbage into the history evaluation indices.
     if (ply >= 100) {
         int k = (pos->st - (pos->stack + 100)) - max(7, pos->st->pliesFromNull);
@@ -210,8 +210,8 @@ void uci_loop(int argc, char **argv)
   for (int i = 1; i < argc; i++)
     buf_size += strlen(argv[i]) + 1;
 
-  // Scale up command allocation limits to prevent late-game desynchronizations 
-  // when move history strings overflow smaller buffers
+  // FIX: Increased command allocation limit from 1024 bytes to 8192 bytes.
+  // This prevents late-game desynchronizations when move history strings overflow the buffer.
   if (buf_size < 8192) buf_size = 8192;
 
   char *cmd = malloc(buf_size);
@@ -230,8 +230,9 @@ void uci_loop(int argc, char **argv)
         sf_recv_command(cmd, buf_size);
     }
 
-    // Safely strip Windows carriage returns (\r), Unix newlines (\n), and trailing spaces 
-    // to keep the engine parsing robust.
+    // FIX: Safely strip Windows carriage returns (\r), Unix newlines (\n), and empty spaces 
+    // at the end of the line buffer. This stops the engine from rejecting the final move in
+    // a move list.
     size_t cmd_len = strlen(cmd);
     while (cmd_len > 0 && (cmd[cmd_len - 1] == '\n' || cmd[cmd_len - 1] == '\r' || cmd[cmd_len - 1] == ' ')) {
       cmd[cmd_len - 1] = 0;
@@ -245,7 +246,8 @@ void uci_loop(int argc, char **argv)
     while (isblank(*token))
       token++;
 
-    // If the command is empty, yield CPU to GUI immediately and fetch a new command.
+    // FIX: If the command is empty, yield CPU to GUI immediately and fetch a new command.
+    // This stops the engine from flooding the bridge with "Unknown command:  " prints.
     if (*token == '\0') {
       ds_yield();
       continue;
@@ -296,9 +298,12 @@ void uci_loop(int argc, char **argv)
       search_clear();
     } 
     else if (strcmp(token, "isready") == 0) {
+      // DIAGNOSTIC LOGS: Trace execution paths inside the isready command handler
       printf("[DIAGNOSTIC] Engine entering 'isready' execution block...\n");
+      
       printf("[DIAGNOSTIC] Resizing memory/threads via process_delayed_settings()...\n");
       process_delayed_settings();
+      
       printf("[DIAGNOSTIC] process_delayed_settings() successfully completed!\n");
       printf("readyok\n");
       fflush(stdout); // Ensure the handshake registers instantly in the GUI thread
