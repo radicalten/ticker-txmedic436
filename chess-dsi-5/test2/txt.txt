@@ -19,3 +19,8 @@ the bottomscreen text is still white. can you model your approach like the topsc
 
 #at this point everything works and is colored (somewhat) appropriately. now to fix colors to taste. 
 #make Draw cyan, make the final thinking text grey like everything else. remove ---- from eval, remove offline from nps and reduce its size
+#I did the rest of these changes myself.
+#all that's left is to see how high we can pick up the Hashvalue and run on the DSi currently its at 1MB
+#then if we can push it high enough, we may even be able to add an opening book?
+#on the other hand if we can optimize we may be able to get this to run on standard nds
+#current version is main-test2-v4-winner
