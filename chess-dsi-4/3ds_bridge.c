@@ -29,6 +29,29 @@ static volatile bool s_searchThreadActive = false;
 static void* (*s_startRoutine)(void*) = NULL;
 static void* s_threadArg = NULL;
 
+// Safely execute interrupt manipulations in ARM mode to prevent Thumb assembly syntax errors
+__attribute__((target("arm"), noinline)) u32 ds_disable_interrupts(void) {
+    u32 old;
+    __asm__ volatile(
+        "mrs %0, cpsr\n\t"
+        "orr r12, %0, #0x80\n\t"
+        "msr cpsr_c, r12" 
+        : "=r"(old) 
+        : 
+        : "r12", "cc", "memory"
+    );
+    return old;
+}
+
+__attribute__((target("arm"), noinline)) void ds_restore_interrupts(u32 old) {
+    __asm__ volatile(
+        "msr cpsr_c, %0" 
+        : 
+        : "r"(old) 
+        : "cc", "memory"
+    );
+}
+
 // Adapt standard routine void* return to Calico's int return signature
 static int calico_thread_entry(void* arg) {
     (void)arg;
