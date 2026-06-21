@@ -25,3 +25,5 @@ To fix this elegantly, we declare ds_disable_interrupts and ds_restore_interrupt
 Here are the corrected, compile-ready versions of both files.
 
 #unbelieveably this actually compiles! wow... 
+
+Now I will share two C files here to match these new implementations. main_stockfish.c and main.c.: 
