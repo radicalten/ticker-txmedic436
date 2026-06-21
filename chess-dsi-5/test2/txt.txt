@@ -16,3 +16,6 @@ main-test2-v1
 in order for the colors to display on the DS bottom screen it is necessary to utilize the DS palette. simply using ansi only produces regular white text. 
 
 the bottomscreen text is still white. can you model your approach like the topscreen's? the top screen shows color perfectly. 
+
+#at this point everything works and is colored (somewhat) appropriately. now to fix colors to taste. 
+#make Draw cyan, make the final thinking text grey like everything else. remove ---- from eval, remove offline from nps and reduce its size
