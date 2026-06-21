@@ -2,7 +2,7 @@ name: DSi-curl-v3
 on:
   push:
     branches:
-    - master
+    - main
 jobs:
   build-nds:
     runs-on: ubuntu-latest
@@ -12,7 +12,7 @@ jobs:
       uses: actions/checkout@v6
     - name: Compile
       run: |
-        make -f Makefile-chess-DSi-4
+        make -f Makefile-chess-DSi-5
     - name: Upload
       uses: actions/upload-artifact@v6
       with:
