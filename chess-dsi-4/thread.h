@@ -22,8 +22,7 @@
 #define THREAD_H
 
 #include <stdatomic.h>
-#include <pthread.h>
-#include <calico/types.h>
+#include <calico/system/thread.h> // Correct path to Calico preemptive thread API
 #include <nds.h>
 #include "3ds_bridge.h"
 
@@ -32,7 +31,7 @@
 // Max search threads scaled to 4 for optimal performance on New 3DS models
 #define MAX_THREADS 4
 
-// Redirect locks to highly-stable native 3DS LightLocks
+// Redirect locks to highly-stable native DSi Calico-powered LightLocks
 #define LOCK_T LightLock
 #define LOCK_INIT(x) LightLock_Init(&(x))
 #define LOCK_DESTROY(x) do {} while (0)
