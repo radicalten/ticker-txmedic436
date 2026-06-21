@@ -689,9 +689,9 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
 // Configure DS Palette memory on main display for chess elements matching 3DS color configurations
 void init_custom_palettes(void) {
     // Solid background squares configurations
-    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation) = RGB(215,175,135) -> convert to 15-bit  215/8 175/8 135/8 then round
-    BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0); // Palette 1: Walnut Wood Dark Square (Brown #48;5;94m representation) = RGB(135,95,0) -> 135/8 95/8 0/8 = 17,12,0
-    BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0); // Palette 2: Forest Green Selected Square (#48;5;34m representation) 
+    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation)
+    BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0); // Palette 1: Walnut Wood Dark Square (Brown #48;5;94m representation)
+    BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0); // Palette 2: Forest Green Selected Square (#48;5;34m representation)
     BG_PALETTE[3 * 16 + 1] = RGB15(31, 16,  0); // Palette 3: Vibrant Orange Cursor Selection (#48;5;208m representation)
     
     // Previous Move Tracer (Light/Dark paths)
@@ -741,7 +741,7 @@ void init_bottom_palette(void) {
 
 // Draw the Top Screen Board (Pristine, Direct Hardware Layering, double-height formats)
 void draw_top_board(void) {
-    // Late binding enforcement: Refresh our custom solid tile at index 255
+    // Late binding enforcement: Refresh our solid tile at index 255
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
 
@@ -862,26 +862,26 @@ void draw_bottom_stats(void) {
     if (engine_state != ENGINE_STATE_READY) {
         strcpy(status_str, "Booting...");
     } else if (current_state.halfmoves >= 100) {
-        strcpy(status_str, "\x1b[1;31mDraw (50m-rule)\x1b[0m");
+        strcpy(status_str, "[DRAW (50m-rule)]");
     } else if (repetitions >= 3) {
-        strcpy(status_str, "\x1b[1;31mDraw (3-fold)\x1b[0m");
+        strcpy(status_str, "[DRAW (3-fold)]");
     } else if (!has_mov) {
         if (is_ch) {
-            strcpy(status_str, "\x1b[1;31mCHECKMATE!\x1b[0m");
+            strcpy(status_str, "\x1b[1;31m[CHECKMATE!]\x1b[0m");
         } else {
-            strcpy(status_str, "\x1b[1;36mSTALEMATE!\x1b[0m");
+            strcpy(status_str, "\x1b[1;36m[STALEMATE!]\x1b[0m");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            strcpy(status_str, "\x1b[1;31mW-Check!\x1b[0m");
+            strcpy(status_str, "\x1b[1;32mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
         } else {
-            strcpy(status_str, "\x1b[1;31mB-Check!\x1b[0m");
+            strcpy(status_str, "\x1b[1;35mBlack\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
         }
     } else {
         if (current_state.turn == 1) {
-            strcpy(status_str, "\x1b[1;32mWhite's turn\x1b[0m");
+            strcpy(status_str, "\x1b[1;32mWhite\x1b[0m to play");
         } else {
-            strcpy(status_str, "\x1b[1;35mBlack's turn\x1b[0m");
+            strcpy(status_str, "\x1b[1;35mBlack\x1b[0m to play");
         }
     }
 
@@ -891,13 +891,24 @@ void draw_bottom_stats(void) {
     printf("%s | W:%s B:%s\x1b[K\n", status_str, w_play, b_play);
 
     // --- LINE 2: Score, NPS, and Time Limits (Prefix-free display) ---
-    char eval_str[16] = "";
+    char eval_str[48] = "";
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
-        sprintf(eval_str, "%+.2f", eval);
+        if (eval > 0.0) {
+            sprintf(eval_str, "\x1b[1;32m%+.2f\x1b[0m", eval); // Green when positive
+        } else if (eval < 0.0) {
+            sprintf(eval_str, "\x1b[1;31m%+.2f\x1b[0m", eval); // Red when negative
+        } else {
+            sprintf(eval_str, "0.00");
+        }
     } else if (engine_score_type == 1) {
-        if (engine_score_val > 0) sprintf(eval_str, "+M%d", engine_score_val);
-        else sprintf(eval_str, "-M%d", -engine_score_val);
+        if (engine_score_val > 0) {
+            sprintf(eval_str, "\x1b[1;32m+M%d\x1b[0m", engine_score_val);
+        } else if (engine_score_val < 0) {
+            sprintf(eval_str, "\x1b[1;31m-M%d\x1b[0m", -engine_score_val);
+        } else {
+            sprintf(eval_str, "M0");
+        }
     } else {
         strcpy(eval_str, "----");
     }
