@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <calico/system/thread.h> // Correct path to Calico thread header
 
 #define MSG_QUEUE_SIZE 65536
 
