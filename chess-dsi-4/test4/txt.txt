@@ -5,3 +5,14 @@ prompt 1: I have a two C files I am porting to Nintendo DSi, I would like to cha
 
 Ok here is my 3ds_bridge.h file, do not mind the name it is for DSi.
 here is 3ds_bridge.c:
+
+FYI: the #include is: #include <calico/system/thread.h>
+
+
+/tmp/cc5g5OKq.s: Assembler messages:
+/tmp/cc5g5OKq.s:131: Error: selected processor does not support `mrs r6,cpsr' in Thumb mode
+/tmp/cc5g5OKq.s:132: Error: unshifted register required -- `orr r12,r6,#0x80'
+/tmp/cc5g5OKq.s:133: Error: selected processor does not support `msr cpsr_c,r12' in Thumb mode
+/tmp/cc5g5OKq.s:153: Error: selected processor does not support `msr cpsr_c,r6' in Thumb mode
+/tmp/cc5g5OKq.s:156: Error: selected processor does not support `mrs r6,cpsr' in Thumb mode
+/tmp/cc5g5OKq.s:157: Error: unshifted register required -- `orr r12,r6,#0x80'
