@@ -890,7 +890,7 @@ void draw_bottom_stats(void) {
 
     printf("%s | W:%s B:%s\x1b[K\n", status_str, w_play, b_play);
 
-    // --- LINE 2: Score, NPS, and Time Limits ---
+    // --- LINE 2: Score, NPS, and Time Limits (Prefix-free display) ---
     char eval_str[16] = "";
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
@@ -925,11 +925,11 @@ void draw_bottom_stats(void) {
 
     char lim_str[24] = "";
     if (time_control_type == 0) {
-        sprintf(lim_str, "Lim: %dms", time_control_val);
+        sprintf(lim_str, "%dms", time_control_val);
     } else if (time_control_type == 1) {
-        sprintf(lim_str, "Lim: depth %d", time_control_val);
+        sprintf(lim_str, "depth %d", time_control_val);
     } else {
-        sprintf(lim_str, "Lim: %d nod", time_control_val);
+        sprintf(lim_str, "%d nod", time_control_val);
     }
 
     printf("%s | %s | %s\x1b[K\n", eval_str, nps_str, lim_str);
