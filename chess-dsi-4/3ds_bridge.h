@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: ZPL-2.1
+// SPDX-FileCopyrightText: Copyright fincs, devkitPro
 #ifndef THREEDS_BRIDGE_H
 #define THREEDS_BRIDGE_H
 
@@ -8,16 +10,78 @@
 
 // On Nintendo DS/DSi, define 3DS compatibility wrappers
 #ifdef __NDS__
-#include <sys/time.h> // Required for gettimeofday
+#include <sys/time.h>      // Required for gettimeofday
+#include <calico/thread.h> // Calico preemptive threading engine
 
+// Real thread-blocking LightLock utilizing Calico queues
 typedef struct {
-    int placeholder;
+    volatile int state;
+    ThrListNode queue;
 } LightLock;
 
-static inline void LightLock_Init(LightLock* lock) { (void)lock; }
-static inline void LightLock_Lock(LightLock* lock) { (void)lock; }
-static inline void LightLock_Unlock(LightLock* lock) { (void)lock; }
-static inline int LightLock_TryLock(LightLock* lock) { (void)lock; return 0; }
+// Safe assembly-level interrupt-disabling helpers for single-core ARM9 
+// to protect state checks and queue modifications atomically.
+static inline u32 ds_disable_interrupts(void) {
+    u32 old;
+    __asm__ volatile(
+        "mrs %0, cpsr\n\t"
+        "orr r12, %0, #0x80\n\t"
+        "msr cpsr_c, r12" 
+        : "=r"(old) 
+        : 
+        : "r12", "cc", "memory"
+    );
+    return old;
+}
+
+static inline void ds_restore_interrupts(u32 old) {
+    __asm__ volatile(
+        "msr cpsr_c, %0" 
+        : 
+        : "r"(old) 
+        : "cc", "memory"
+    );
+}
+
+static inline void LightLock_Init(LightLock* lock) {
+    lock->state = 0;
+    lock->queue.next = NULL;
+    lock->queue.prev = NULL;
+}
+
+static inline void LightLock_Lock(LightLock* lock) {
+    while (1) {
+        u32 irq_state = ds_disable_interrupts();
+        if (lock->state == 0) {
+            lock->state = 1;
+            ds_restore_interrupts(irq_state);
+            break;
+        }
+        // Blocks this thread on the lock's queue. 
+        // Calico will switch context and restore interrupts on the next thread.
+        threadBlock(&lock->queue, (u32)lock);
+        ds_restore_interrupts(irq_state);
+    }
+}
+
+static inline void LightLock_Unlock(LightLock* lock) {
+    u32 irq_state = ds_disable_interrupts();
+    lock->state = 0;
+    // Wake up one thread waiting on this lock queue
+    threadUnblockOneByValue(&lock->queue, (u32)lock);
+    ds_restore_interrupts(irq_state);
+}
+
+static inline int LightLock_TryLock(LightLock* lock) {
+    u32 irq_state = ds_disable_interrupts();
+    if (lock->state == 0) {
+        lock->state = 1;
+        ds_restore_interrupts(irq_state);
+        return 0; // Success (matches 3DS LightLock)
+    }
+    ds_restore_interrupts(irq_state);
+    return 1; // Failed to acquire
+}
 
 // Nintendo DS replacement for 3DS osGetTime() in milliseconds
 static inline unsigned long long osGetTime(void) {
@@ -26,21 +90,28 @@ static inline unsigned long long osGetTime(void) {
     return ((unsigned long long)tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL);
 }
 
-// Cooperative yield function for DS GUI integration
+// Cooperative yield function mapped to Calico's preemptive yield
 void ds_yield(void);
 
-// 3DS Kernel SVC Compatibility Stubs for Nintendo DS
+// 3DS Kernel SVC Compatibility Stubs mapped to Calico
 #define CUR_THREAD_HANDLE 0
 
 static inline void svcSetThreadPriority(int handle, int priority) {
     (void)handle;
-    (void)priority;
-    // DS is single-core and uses cooperative fibers, priority is a no-op
+    // Map priority safely within Calico's bounds (0x00 to 0x3F)
+    if (priority < THREAD_MAX_PRIO) priority = THREAD_MAX_PRIO;
+    if (priority > THREAD_MIN_PRIO) priority = THREAD_MIN_PRIO;
+    threadSetPrio(threadGetSelf(), (u8)priority);
 }
 
 static inline void svcSleepThread(unsigned long long ns) {
-    (void)ns;
-    ds_yield(); // Yield CPU time to let other fiber run (essential for cooperative thread syncing)
+    if (ns == 0) {
+        threadYield();
+    } else {
+        u32 usec = (u32)(ns / 1000ULL);
+        if (usec == 0) usec = 1;
+        threadSleep(usec);
+    }
 }
 #endif
 
