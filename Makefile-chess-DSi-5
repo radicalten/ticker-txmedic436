@@ -20,8 +20,8 @@ LDFLAGS := $(CFLAGS) \
 -L/opt/devkitpro/libnds/lib \
 -lnds9 -lcalico_ds9 -lm
 TARGET  := myapp
-EXCLUDE := chess-dsi-4/nnue.c chess-dsi-4/numa.c
-SRCDIR 	:= chess-dsi-4
+EXCLUDE := chess-dsi-5/nnue.c chess-dsi-5/numa.c
+SRCDIR 	:= chess-dsi-5
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
