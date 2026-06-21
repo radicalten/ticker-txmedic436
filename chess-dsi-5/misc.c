@@ -24,10 +24,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__3DS__) || defined(__NDS__)
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
-#include <nds.h>
+#include <nds.h> // FIX: Added native 3DS OS header for hardware timers
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#include <sys/time.h>
+#endif
 
 #include "misc.h"
 #include "thread.h"
@@ -36,13 +44,20 @@
 // DD-MM-YY and show in engine_info.
 char Version[] = "";
 
-// Statically initialize our global Calico-powered IO Mutex
-LightLock ioMutex = { 0, { NULL, NULL } };
+#ifndef _WIN32
+pthread_mutex_t ioMutex = PTHREAD_MUTEX_INITIALIZER;
+#else
+HANDLE ioMutex;
+#endif
 
 static char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 static char date[] = __DATE__;
 
 // print engine_info() prints the full name of the current Stockfish version.
+// This will be either "Stockfish <Tag> DD-MM-YY" (where DD-MM-YY is the
+// date when the program was compiled) or "Stockfish <Version>", depending
+// on whether Version is empty.
+
 void print_engine_info(bool to_uci)
 {
   char my_date[64];
@@ -90,6 +105,7 @@ void print_engine_info(bool to_uci)
 }
 
 // print compiler_info() prints a string trying to describe the compiler
+
 void print_compiler_info(void)
 {
 #define stringify2(x) #x
@@ -113,7 +129,25 @@ void print_compiler_info(void)
          "Unknown compiler (unknown version)"
 #endif
 
-         " on Nintendo DSi"
+#ifdef __APPLE__
+         " on Apple"
+#elif __CYGWIN__
+         " on Cygwin"
+#elif __MINGW64__
+         " on MinGW64"
+#elif __MINGW32__
+         " on MinGW32"
+#elif __ANDROID__
+         " on Android"
+#elif __linux__
+         " on Linux"
+#elif _WIN64
+         " on Microsoft Windows 64-bit"
+#elif _WIN32
+         " on Microsoft Windows 32-bit"
+#else
+         " on unknown system"
+#endif
 
          "\nCompilation settings include: "
 #ifdef IS_64BIT
@@ -169,6 +203,21 @@ void print_compiler_info(void)
          "\n\n");
 }
 
+// xorshift64star Pseudo-Random Number Generator
+// This class is based on original code written and dedicated
+// to the public domain by Sebastiano Vigna (2014).
+// It has the following characteristics:
+//
+//  -  Outputs 64-bit numbers
+//  -  Passes Dieharder and SmallCrush test batteries
+//  -  Does not require warm-up, no zeroland to escape
+//  -  Internal state is a single 64-bit integer
+//  -  Period is 2^64 - 1
+//  -  Speed: 1.60 ns/call (Core i7 @3.40GHz)
+//
+// For further analysis see
+//   <http://vigna.di.unimi.it/ftp/papers/xorshift.pdf>
+
 void prng_init(PRNG *rng, uint64_t seed)
 {
   rng->s = seed;
@@ -211,26 +260,111 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream)
   return i;
 }
 
+#ifdef _WIN32
+typedef SIZE_T (WINAPI *GLPM)(void);
+size_t largePageMinimum;
+
+bool large_pages_supported(void)
+{
+  GLPM impGetLargePageMinimum =
+    (GLPM)(void (*)(void))GetProcAddress(GetModuleHandle("kernel32.dll"),
+        "GetLargePageMinimum");
+  if (!impGetLargePageMinimum)
+    return 0;
+
+  if ((largePageMinimum = impGetLargePageMinimum()) == 0)
+    return 0;
+
+  LUID privLuid;
+  if (!LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, &privLuid))
+    return 0;
+
+  HANDLE token;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token))
+    return 0;
+
+  TOKEN_PRIVILEGES tokenPrivs;
+  tokenPrivs.PrivilegeCount = 1;
+  tokenPrivs.Privileges[0].Luid = privLuid;
+  tokenPrivs.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+  if (!AdjustTokenPrivileges(token, FALSE, &tokenPrivs, 0, NULL, NULL))
+    return 0;
+
+  return 1;
+}
+
+// The following two functions were taken from mingw_lock.c
+
+void __cdecl _lock(int locknum);
+void __cdecl _unlock(int locknum);
+#define _STREAM_LOCKS 16
+#define _IOLOCKED 0x8000
+typedef struct {
+  FILE f;
+  CRITICAL_SECTION lock;
+} _FILEX;
+
+void flockfile(FILE *F)
+{
+  if ((F >= (&__iob_func()[0])) && (F <= (&__iob_func()[_IOB_ENTRIES-1]))) {
+    _lock(_STREAM_LOCKS + (int)(F - (&__iob_func()[0])));
+    F->_flag |= _IOLOCKED;
+  } else
+    EnterCriticalSection(&(((_FILEX *)F)->lock));
+}
+
+void funlockfile(FILE *F)
+{
+  if ((F >= (&__iob_func()[0])) && (F <= (&__iob_func()[_IOB_ENTRIES-1]))) {
+    F->_flag &= ~_IOLOCKED;
+    _unlock(_STREAM_LOCKS + (int)(F - (&__iob_func()[0])));
+  } else
+    LeaveCriticalSection(&(((_FILEX *)F)->lock));
+}
+#endif
+
 FD open_file(const char *name)
 {
+#ifndef _WIN32
   return open(name, O_RDONLY);
+
+#else
+  return CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+      FILE_FLAG_RANDOM_ACCESS, NULL);
+
+#endif
 }
 
 void close_file(FD fd)
 {
+#ifndef _WIN32
   close(fd);
+
+#else
+  CloseHandle(fd);
+
+#endif
 }
 
 size_t file_size(FD fd)
 {
+#ifndef _WIN32
   struct stat statbuf;
   fstat(fd, &statbuf);
   return statbuf.st_size;
+
+#else
+  DWORD sizeLow, sizeHigh;
+  sizeLow = GetFileSize(fd, &sizeHigh);
+  return ((uint64_t)sizeHigh << 32) | sizeLow;
+
+#endif
 }
 
 const void *map_file(FD fd, map_t *map)
 {
-  // Allocate standard heap memory and read the file directly into it (mmap fallback)
+#if defined(__3DS__) || defined(__NDS__)
+  // 3DS Fallback: Allocate standard heap memory and read the file into it
   size_t size = file_size(fd);
   *map = (map_t)size;
   void *data = malloc(size);
@@ -241,35 +375,120 @@ const void *map_file(FD fd, map_t *map)
     return NULL;
   }
   return data;
+
+#elif !defined(_WIN32)
+  *map = file_size(fd);
+  void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
+#ifdef MADV_RANDOM
+  madvise(data, *map, MADV_RANDOM);
+#endif
+  return data == MAP_FAILED ? NULL : data;
+
+#else
+  DWORD sizeLow, sizeHigh;
+  sizeLow = GetFileSize(fd, &sizeHigh);
+  *map = CreateFileMapping(fd, NULL, PAGE_READONLY, sizeHigh, sizeLow, NULL);
+  if (*map == NULL)
+    return NULL;
+  return MapViewOfFile(*map, FILE_MAP_READ, 0, 0, 0);
+
+#endif
 }
 
 void unmap_file(const void *data, map_t map)
 {
-  (void)map;
-  if (data) {
-    free((void *)data);
-  }
+  if (!data) return;
+
+#if defined(__3DS__) || defined(__NDS__)
+  free((void *)data);
+
+#elif !defined(_WIN32)
+  munmap((void *)data, map);
+
+#else
+  UnmapViewOfFile(data);
+  CloseHandle(map);
+
+#endif
 }
 
 void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
 {
-  (void)lp; // Large pages are not supported on DS/DSi
-  
-  // Allocate memory aligned to 64 bytes (optimal for ARM cache-lines)
-  void *ptr = memalign(64, size);
+  void *ptr = NULL;
+
+#ifdef _WIN32
+  if (lp) {
+    size_t pageSize = largePageMinimum;
+    size_t lpSize = (size + pageSize - 1) & ~(pageSize - 1);
+    ptr = VirtualAlloc(NULL, lpSize,
+        MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE);
+  } else
+    ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  alloc->ptr = ptr;
+  return ptr;
+
+#elif defined(__3DS__) || defined(__NDS__)
+  // 3DS doesn't support Virtual/Large pages. 
+  // We use memalign with 64-byte alignment (optimal for ARM cache-lines).
+  ptr = memalign(64, size);
   alloc->ptr = ptr;
   alloc->size = size;
   return ptr;
+
+#else /* Unix */
+  size_t alignment = lp ? 1ULL << 21 : 1;
+  size_t allocSize = size + alignment - 1;
+
+#if defined(__APPLE__) && defined(VM_FLAGS_SUPERPAGE_SIZE_2MB)
+  if (lp)
+    ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, VM_FLAGS_SUPERPAGE_SIZE_2MB, 0);
+  else
+    ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+#else
+  ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#if defined(__linux__) && defined(MADV_HUGEPAGE)
+  // Advise the kernel to allocate large pages.
+  if (lp)
+    madvise(ptr, allocSize, MADV_HUGEPAGE);
+#endif
+
+#endif
+
+  alloc->ptr = ptr;
+  alloc->size = allocSize;
+  return (void *)(((uintptr_t)ptr + alignment - 1) & ~(alignment - 1));
+
+#endif
 }
 
 void free_memory(alloc_t *alloc)
 {
+#ifdef _WIN32
+  VirtualFree(alloc->ptr, 0, MEM_RELEASE);
+#elif defined(__3DS__) || defined(__NDS__)
   if (alloc->ptr) {
     free(alloc->ptr);
   }
+#else
+  munmap(alloc->ptr, alloc->size);
+#endif
 }
 
-// Hardware-accurate millisecond timer implementation utilizing our compatibility bridge
+// FIX: Hardware-accurate millisecond timer implementation for 3DS
+// This guarantees that search timeouts, time-controls, and iterative deep plies
+// function properly in Stockfish/Cfish under CTRU.
 int64_t now(void) {
+#if defined(__3DS__) || defined(__NDS__)
   return (int64_t)osGetTime();
+#elif !defined(_WIN32)
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+#else
+  return (int64_t)GetTickCount();
+#endif
 }
