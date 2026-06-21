@@ -3,3 +3,7 @@ p1: can you update this C file? currently it is using sys/time.h for the clock, 
 
 here is calico/system/tick.h
 https://github.com/devkitPro/calico/blob/master/include/calico/system/tick.h
+
+
+#this actaully worked! now the clocktime is correctly evalutated in high resolution/precision rather than using sys/time.h 
+#simply with the <calico.h> header. impressive
