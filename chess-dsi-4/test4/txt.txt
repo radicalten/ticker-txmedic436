@@ -27,3 +27,6 @@ Here are the corrected, compile-ready versions of both files.
 #unbelieveably this actually compiles! wow... 
 
 Now I will share two C files here to match these new implementations. main_stockfish.c and main.c.: 
+
+
+Allow me to share my current thread.h and thread.c files as well. they will need updating.: 
