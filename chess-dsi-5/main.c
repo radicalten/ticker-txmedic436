@@ -890,7 +890,7 @@ void draw_bottom_stats(void) {
 
     printf("%s | W:%s B:%s\x1b[K\n", status_str, w_play, b_play);
 
-    // --- LINE 2: Eval, NPS, and Time Limits ---
+    // --- LINE 2: Score, NPS, and Time Limits ---
     char eval_str[16] = "";
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
@@ -932,7 +932,7 @@ void draw_bottom_stats(void) {
         sprintf(lim_str, "Lim: %d nod", time_control_val);
     }
 
-    printf("Eval: %s | %s | %s\x1b[K\n", eval_str, nps_str, lim_str);
+    printf("%s | %s | %s\x1b[K\n", eval_str, nps_str, lim_str);
 
     // --- LINE 3: Recent Moves Title ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
