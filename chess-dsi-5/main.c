@@ -47,7 +47,7 @@ int board_orientation = 1;
 int user_side = 1;         
 
 int time_control_type = 0; 
-int time_control_val = 1;  
+int time_control_val = 1000;  // Default matched to 1000ms
 
 int engine_thinking = 0;
 long long engine_nps = 0;
@@ -722,7 +722,7 @@ void init_custom_palettes(void) {
 
 // Overwrite Sub Screen ANSI default console colors with custom palette
 void init_bottom_palette(void) {
-    BG_PALETTE_SUB[0]  = RGB15(0, 0, 0);       // Black Background
+    BG_PALETTE_SUB[0]  = RGB15(2, 2, 3);       // Black Background
     BG_PALETTE_SUB[1]  = RGB15(22, 4, 4);      // Dark Red
     BG_PALETTE_SUB[2]  = RGB15(4, 22, 4);      // Dark Green
     BG_PALETTE_SUB[3]  = RGB15(22, 22, 4);     // Dark Yellow
