@@ -64,7 +64,7 @@ static inline int LightLock_TryLock(LightLock* lock) {
 
 // Nintendo DS replacement for 3DS osGetTime() in milliseconds utilizing Calico ticks
 static inline unsigned long long osGetTime(void) {
-    return tickToMS(tickGet());
+    return (tickGetCount() * 1000ULL) / TICK_FREQ;
 }
 
 // Cooperative yield function mapped to Calico's preemptive yield
@@ -85,8 +85,11 @@ static inline void svcSleepThread(unsigned long long ns) {
     if (ns == 0) {
         threadYield();
     } else {
-        // Calico threadSleep() expects ticks, not microseconds or nanoseconds.
-        u64 ticks = tickFromNS(ns);
+        u32 us = (u32)(ns / 1000ULL);
+        if (us == 0) us = 1;
+        
+        // Calico threadSleep() expects ticks, calculated here using Calico's inline function
+        u32 ticks = ticksFromUsec(us);
         if (ticks == 0) ticks = 1; // Ensure we sleep for at least one hardware tick
         threadSleep(ticks);
     }
