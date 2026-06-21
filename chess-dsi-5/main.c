@@ -686,6 +686,17 @@ void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
     }
 }
 
+// Sub screen string drawing helper (Writes coordinates directly to Console Screen Map bypassing parser)
+void draw_string_sub(u16* map, int x, int y, const char* str, u16 palette) {
+    while (*str) {
+        if (x >= 0 && x < 32 && y >= 0 && y < 32) {
+            map[y * 32 + x] = (u16)(*str) | (palette << 12);
+        }
+        x++;
+        str++;
+    }
+}
+
 // Configure DS Palette memory on main display for chess elements matching 3DS color configurations
 void init_custom_palettes(void) {
     // Solid background squares configurations
@@ -719,33 +730,32 @@ void init_custom_palettes(void) {
     BG_PALETTE[11 * 16 + 15] = RGB15(3,  3,  3);
 }
 
-// Maps NDS console sub-screen multi-palette architecture dynamically to process color text formatting correctly
+// Maps Sub display hardware registers to match custom palette banks 0 to 15 (guarantees perfect ANSI equivalents)
 void init_bottom_palette(void) {
     // Populate transparent/black background colors at Index 0 of all 16 palettes
     for (int p = 0; p < 16; p++) {
         BG_PALETTE_SUB[p * 16 + 0] = RGB15(0, 0, 0); 
     }
 
-    // Configure exact ANSI sequence definitions across standard & bold colors
     u16 colors[16];
     colors[0]  = RGB15(31, 31, 31);   // Palette 0: Standard White (Default text)
-    colors[1]  = RGB15(22, 4, 4);     // Palette 1: Dark Red (\x1b[31m)
-    colors[2]  = RGB15(4, 22, 4);     // Palette 2: Dark Green (\x1b[32m)
-    colors[3]  = RGB15(22, 22, 4);    // Palette 3: Dark Yellow (\x1b[33m)
-    colors[4]  = RGB15(4, 4, 22);     // Palette 4: Dark Blue (\x1b[34m)
-    colors[5]  = RGB15(22, 4, 22);    // Palette 5: Dark Magenta (\x1b[35m)
-    colors[6]  = RGB15(4, 22, 22);    // Palette 6: Dark Cyan (\x1b[36m)
-    colors[7]  = RGB15(24, 24, 24);   // Palette 7: Standard Gray (\x1b[37m)
-    colors[8]  = RGB15(12, 12, 12);   // Palette 8: Intense Dark Gray (\x1b[1;30m)
-    colors[9]  = RGB15(31, 5, 5);     // Palette 9: High Bright Red (\x1b[1;31m)
-    colors[10] = RGB15(5, 31, 5);     // Palette 10: High Bright Green (\x1b[1;32m)
-    colors[11] = RGB15(31, 31, 5);    // Palette 11: High Bright Yellow (\x1b[1;33m)
-    colors[12] = RGB15(5, 5, 31);     // Palette 12: High Bright Blue (\x1b[1;34m)
-    colors[13] = RGB15(31, 5, 31);    // Palette 13: High Bright Magenta (\x1b[1;35m)
-    colors[14] = RGB15(5, 31, 31);    // Palette 14: High Bright Cyan (\x1b[1;36m)
-    colors[15] = RGB15(31, 31, 31);   // Palette 15: High Bright White (\x1b[1;37m)
+    colors[1]  = RGB15(22, 4, 4);     // Palette 1: Dark Red
+    colors[2]  = RGB15(4, 22, 4);     // Palette 2: Dark Green
+    colors[3]  = RGB15(22, 22, 4);    // Palette 3: Dark Yellow
+    colors[4]  = RGB15(4, 4, 22);     // Palette 4: Dark Blue
+    colors[5]  = RGB15(22, 4, 22);    // Palette 5: Dark Magenta
+    colors[6]  = RGB15(4, 22, 22);    // Palette 6: Dark Cyan
+    colors[7]  = RGB15(24, 24, 24);   // Palette 7: Standard Gray
+    colors[8]  = RGB15(12, 12, 12);   // Palette 8: Intense Dark Gray
+    colors[9]  = RGB15(31, 5, 5);     // Palette 9: High Bright Red
+    colors[10] = RGB15(5, 31, 5);     // Palette 10: High Bright Green
+    colors[11] = RGB15(31, 31, 5);    // Palette 11: High Bright Yellow
+    colors[12] = RGB15(5, 5, 31);     // Palette 12: High Bright Blue
+    colors[13] = RGB15(31, 5, 31);    // Palette 13: High Bright Magenta
+    colors[14] = RGB15(5, 31, 31);    // Palette 14: High Bright Cyan
+    colors[15] = RGB15(31, 31, 31);   // Palette 15: High Bright White
 
-    // Map colors to foreground positions (Indices 1-15) of every palette target
+    // Map color definitions to foreground target indices 1-15 inside each palette bank
     for (int p = 0; p < 16; p++) {
         for (int c = 1; c < 16; c++) {
             BG_PALETTE_SUB[p * 16 + c] = colors[p];
@@ -861,10 +871,12 @@ void draw_top_board(void) {
     }
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
+// Draw the Bottom Screen (Direct hardware rendering of text with full palette controls)
 void draw_bottom_stats(void) {
-    consoleSelect(&bottomConsole);
-    printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
+    u16* sub_map = bgGetMapPtr(bottomConsole.bgId);
+    
+    // Completely wipe screen map to prevent leftover layout trace artifacts
+    memset(sub_map, 0, 32 * 32 * sizeof(u16));
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -872,60 +884,92 @@ void draw_bottom_stats(void) {
     int repetitions = count_repetitions(&current_state);
 
     // --- LINE 1: Turn Status & Player Config (W:Hum B:Eng) ---
-    char status_str[64] = "";
+    int curr_x = 1;
     if (engine_state != ENGINE_STATE_READY) {
-        strcpy(status_str, "Booting...");
+        draw_string_sub(sub_map, curr_x, 0, "Booting...", 15);
+        curr_x += 10;
     } else if (current_state.halfmoves >= 100) {
-        strcpy(status_str, "\x1b[1;31m[DRAW (50m-rule)]\x1b[0m");
+        draw_string_sub(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 9); // High Red
+        curr_x += 17;
     } else if (repetitions >= 3) {
-        strcpy(status_str, "\x1b[1;31m[DRAW (3-fold)]\x1b[0m");
+        draw_string_sub(sub_map, curr_x, 0, "[DRAW (3-fold)]", 9); // High Red
+        curr_x += 15;
     } else if (!has_mov) {
         if (is_ch) {
-            strcpy(status_str, "\x1b[1;31m[CHECKMATE!]\x1b[0m");
+            draw_string_sub(sub_map, curr_x, 0, "[CHECKMATE!]", 9); // High Red
+            curr_x += 12;
         } else {
-            strcpy(status_str, "\x1b[1;36m[STALEMATE!]\x1b[0m");
+            draw_string_sub(sub_map, curr_x, 0, "[STALEMATE!]", 14); // High Cyan
+            curr_x += 12;
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            strcpy(status_str, "\x1b[1;32mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+            draw_string_sub(sub_map, curr_x, 0, "White", 10); // High Green
+            curr_x += 5;
+            draw_string_sub(sub_map, curr_x, 0, " (CHECK!)", 9); // High Red
+            curr_x += 9;
         } else {
-            strcpy(status_str, "\x1b[1;35mBlack\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
+            draw_string_sub(sub_map, curr_x, 0, "Black", 13); // High Magenta
+            curr_x += 5;
+            draw_string_sub(sub_map, curr_x, 0, " (CHECK!)", 9); // High Red
+            curr_x += 9;
         }
     } else {
         if (current_state.turn == 1) {
-            strcpy(status_str, "\x1b[1;32mWhite\x1b[0m to play");
+            draw_string_sub(sub_map, curr_x, 0, "White", 10); // High Green
+            curr_x += 5;
+            draw_string_sub(sub_map, curr_x, 0, " to play", 15); // High White
+            curr_x += 8;
         } else {
-            strcpy(status_str, "\x1b[1;35mBlack\x1b[0m to play");
+            draw_string_sub(sub_map, curr_x, 0, "Black", 13); // High Magenta
+            curr_x += 5;
+            draw_string_sub(sub_map, curr_x, 0, " to play", 15); // High White
+            curr_x += 8;
         }
     }
+
+    draw_string_sub(sub_map, curr_x, 0, " | ", 15);
+    curr_x += 3;
 
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-
-    printf("%s | W:%s B:%s\x1b[K\n", status_str, w_play, b_play);
+    char config_buf[16];
+    sprintf(config_buf, "W:%s B:%s", w_play, b_play);
+    draw_string_sub(sub_map, curr_x, 0, config_buf, 15);
 
     // --- LINE 2: Score, NPS, and Time Limits (Prefix-free display) ---
-    char eval_str[48] = "";
+    curr_x = 1;
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
+        char tmp_buf[16];
+        sprintf(tmp_buf, "%+.2f", eval);
         if (eval > 0.0) {
-            sprintf(eval_str, "\x1b[1;32m%+.2f\x1b[0m", eval); // High Bright Green
+            draw_string_sub(sub_map, curr_x, 1, tmp_buf, 10); // Positive green evaluation
         } else if (eval < 0.0) {
-            sprintf(eval_str, "\x1b[1;31m%+.2f\x1b[0m", eval); // High Bright Red
+            draw_string_sub(sub_map, curr_x, 1, tmp_buf, 9);  // Negative red evaluation
         } else {
-            sprintf(eval_str, "0.00");
+            draw_string_sub(sub_map, curr_x, 1, "0.00", 15);
         }
+        curr_x += 6;
     } else if (engine_score_type == 1) {
+        char tmp_buf[16];
         if (engine_score_val > 0) {
-            sprintf(eval_str, "\x1b[1;32m+M%d\x1b[0m", engine_score_val);
+            sprintf(tmp_buf, "+M%d", engine_score_val);
+            draw_string_sub(sub_map, curr_x, 1, tmp_buf, 10); // Winning green mate evaluation
         } else if (engine_score_val < 0) {
-            sprintf(eval_str, "\x1b[1;31m-M%d\x1b[0m", -engine_score_val);
+            sprintf(tmp_buf, "-M%d", -engine_score_val);
+            draw_string_sub(sub_map, curr_x, 1, tmp_buf, 9);  // Losing red mate evaluation
         } else {
-            sprintf(eval_str, "M0");
+            draw_string_sub(sub_map, curr_x, 1, "M0", 15);
         }
+        curr_x += 6;
     } else {
-        strcpy(eval_str, "----");
+        draw_string_sub(sub_map, curr_x, 1, "----", 15);
+        curr_x += 6;
     }
+
+    draw_string_sub(sub_map, curr_x, 1, " | ", 15);
+    curr_x += 3;
 
     char nps_str[24] = "";
     if (engine_nps > 0) {
@@ -941,12 +985,14 @@ void draw_bottom_stats(void) {
             sprintf(nps_str, "%lld nps", engine_nps);
         }
     } else {
-        if (engine_thinking) {
-            strcpy(nps_str, "---- nps");
-        } else {
-            strcpy(nps_str, "Offline");
-        }
+        if (engine_thinking) strcpy(nps_str, "---- nps");
+        else strcpy(nps_str, "Offline");
     }
+    draw_string_sub(sub_map, curr_x, 1, nps_str, 15);
+    curr_x += 12;
+
+    draw_string_sub(sub_map, curr_x, 1, " | ", 15);
+    curr_x += 3;
 
     char lim_str[24] = "";
     if (time_control_type == 0) {
@@ -956,11 +1002,10 @@ void draw_bottom_stats(void) {
     } else {
         sprintf(lim_str, "%d nod", time_control_val);
     }
-
-    printf("%s | %s | %s\x1b[K\n", eval_str, nps_str, lim_str);
+    draw_string_sub(sub_map, curr_x, 1, lim_str, 15);
 
     // --- LINE 3: Recent Moves Title ---
-    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
+    draw_string_sub(sub_map, 1, 2, "RECENT MOVES:", 11); // High Bright Yellow
 
     // --- LINES 4-13: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
@@ -982,11 +1027,9 @@ void draw_bottom_stats(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                // Instantly copy from the pre-calculated cache
                 strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
-                // Instantly copy from the pre-calculated cache
                 strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
@@ -1003,11 +1046,9 @@ void draw_bottom_stats(void) {
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
-                // Instantly copy from the pre-calculated cache
                 strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
-                // Instantly copy from the pre-calculated cache
                 strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
@@ -1017,31 +1058,21 @@ void draw_bottom_stats(void) {
             sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
+        draw_string_sub(sub_map, 1, 3 + r, left_str, 15);
+        draw_string_sub(sub_map, 15, 3 + r, "|", 8); // Intense dark gray dividing bar
+        draw_string_sub(sub_map, 16, 3 + r, right_str, 15);
     }
 
-    // --- LINES 14-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console (10 Rows) ---
-    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
+    // --- LINES 14-23: Real-Time Rolling UCI Engine Terminal Console (10 Rows) ---
     for (int i = 0; i < 10; i++) {
         if (i < raw_log_count) {
-            // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
-                printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
+                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 10); // Active live output trace in bright green
             } else {
-                printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
+                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 8);  // Inactive background traces in dark gray
             }
-        } else {
-            printf("\x1b[K"); // Silently clear unoccupied terminal log space
-        }
-        
-        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
-        if (i < 9) {
-            printf("\n");
         }
     }
-    printf("\x1b[J"); // Instantly clear any extra screen leftovers below index 23
-
-    fflush(stdout);
 }
 
 void draw_ui(void) {
