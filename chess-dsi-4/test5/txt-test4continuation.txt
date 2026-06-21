@@ -49,6 +49,12 @@ Instead of routing thread management through standard POSIX stubs, this implemen
 #3ds_bridge.c-test4-v1-compiles
 #3ds_bridge.h-test4-v1-compiles)
 
+#Next goals are to update thread.h, uci.c uci.h, and ucioption.c also timeman.c and timeman.h
+
 does thread.h need any changes? 
 
 #gemini3.5-flash successfully updated here adding the file to test5. 
+
+what about these timeman.c and timeman.h files: 
+
+ok I would like to keep the precision, so I will keep it the same. What about these uci.c and uci.h files?
