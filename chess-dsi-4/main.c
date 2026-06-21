@@ -58,7 +58,7 @@ int engine_score_val = 0;
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
-char raw_log[9][31] = { {0} }; // Width 31 stores exactly 30 characters + null terminator
+char raw_log[9][32] = { {0} };
 int raw_log_count = 0;
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
@@ -231,18 +231,17 @@ void push_state(const BoardState *state, Move m) {
 }
 
 void push_raw_log(const char *line) {
-    // Truncate Raw Logs safely at exactly 30 chars to strictly stay within 30-column bound
     if (raw_log_count < 9) {
-        strncpy(raw_log[raw_log_count], line, 30);
-        raw_log[raw_log_count][30] = '\0';
+        strncpy(raw_log[raw_log_count], line, 31);
+        raw_log[raw_log_count][31] = '\0';
         raw_log_count++;
     } else {
         // Scroll buffer items up
         for (int i = 0; i < 8; i++) {
             memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
         }
-        strncpy(raw_log[8], line, 30);
-        raw_log[8][30] = '\0';
+        strncpy(raw_log[8], line, 31);
+        raw_log[8][31] = '\0';
     }
     redraw_needed = 1; // Mark UI as needing to be redrawn on the next frame
 }
@@ -787,7 +786,7 @@ void draw_top_board(void) {
             int p = current_state.board[sq];
 
             int is_light = ((sq / 8) + (sq % 8)) % 2 == 0;
-            int palette_idx = is_light ? 0 : 1; // Default Maple / Walnut Wood
+            int palette_idx = is_light ? 0 : 1; // Default Maple / Walnut Brown
 
             int is_selected = (sq == selected_sq);
             int is_cursor = (r == cursor_r && c == cursor_c);
@@ -849,100 +848,96 @@ void draw_top_board(void) {
     }
 }
 
-// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console - strictly bounded within 30 Columns)
+// Draw the Bottom Screen (Hyper-Condensed Layout with Live UCI Console)
 void draw_bottom_stats(void) {
     consoleSelect(&bottomConsole);
+    printf("\x1b[1;1H"); // Reset printing cursor to top-left of screen
 
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn Status (Absolute Row 1) ---
-    printf("\x1b[1;1H");
+    // --- LINE 1: Turn Status ---
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[K");
+        printf("\x1b[K\n");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;31mDraw (50m-rule)\x1b[K");
+        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;31mDraw (3-fold)\x1b[K");
+        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[1;31mCHECKMATE!\x1b[K");
+            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
         } else {
-            printf("\x1b[1;36mSTALEMATE!\x1b[K");
+            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[1;31mWhite in CHECK!\x1b[K");
+            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
         } else {
-            printf("\x1b[1;31mBlack in CHECK!\x1b[K");
+            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[1;32mWhite's turn\x1b[K");
+            printf("\x1b[1;32mWhite's turn\x1b[K\n");
         } else {
-            printf("\x1b[1;35mBlack's turn\x1b[K");
+            printf("\x1b[1;35mBlack's turn\x1b[K\n");
         }
     }
 
-    // --- LINE 2: Modes & Limits (Absolute Row 2) ---
-    printf("\x1b[2;1H");
+    // --- LINE 2: Modes & Limits ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("W:%.3s B:%.3s | ", w_play, b_play);
+    printf("W:%s B:%s | ", w_play, b_play);
 
     if (time_control_type == 0) {
-        printf("Lim:%dms\x1b[K", time_control_val);
+        printf("Lim: %dms\x1b[K\n", time_control_val);
     } else if (time_control_type == 1) {
-        printf("Lim:depth %d\x1b[K", time_control_val);
+        printf("Lim: depth %d\x1b[K\n", time_control_val);
     } else {
-        printf("Lim:%dnod\x1b[K", time_control_val);
+        printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Stats & Eval (Absolute Row 3 - Strictly <= 30 Characters) ---
-    printf("\x1b[3;1H");
+    // --- LINE 3: Engine Status, Eval, and Speed ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
-        printf("Eng:[%c] ", current_spin);
+        printf("Eng: [%c] | ", current_spin);
 
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            printf("Ev:%+5.2f ", eval);
+            printf("Ev: %+.2f | ", eval);
         } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) printf("Ev:+M%-2d ", engine_score_val);
-            else printf("Ev:-M%-2d ", -engine_score_val);
+            if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
+            else printf("Ev: -M%d | ", -engine_score_val);
         } else {
-            printf("Ev:----  ");
+            printf("Ev: ---- | ");
         }
 
         if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                printf("%lldM nps\x1b[K", engine_nps / 1000000);
-            } else if (engine_nps >= 1000) {
-                printf("%lldk nps\x1b[K", engine_nps / 1000);
+            if (engine_nps >= 1000) {
+                printf("%lld knps\x1b[K\n", engine_nps / 1000);
             } else {
-                printf("%lld nps\x1b[K", engine_nps);
+                printf("%lld nps\x1b[K\n", engine_nps);
             }
         } else {
-            printf("0 nps\x1b[K");
+            printf("---- nps\x1b[K\n");
         }
     } else {
-        printf("Eng:Idle ");
+        printf("Eng: Idle | ");
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
-            printf("Ev:%+5.2f ", eval);
+            printf("Ev: %+.2f | ", eval);
         } else {
-            printf("Ev:----  ");
+            printf("Ev: ---- | ");
         }
-        printf("Offline\x1b[K");
+        printf("Offline\x1b[K\n");
     }
 
-    // --- LINE 4: Recent Moves Title (Absolute Row 4) ---
-    printf("\x1b[4;1H\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K");
+    // --- LINE 4: Recent Moves Title ---
+    printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
-    // --- LINES 5-14: Move List Display (Absolute Rows 5 to 14 - Total string is exactly 30 characters) ---
+    // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
     int max_visible_moves = 20;
     int half_visible = max_visible_moves / 2; // 10 rows total
@@ -952,56 +947,59 @@ void draw_bottom_stats(void) {
         int left_display = start_move + r;
         int right_display = start_move + half_visible + r;
 
-        char left_str[24] = "";
-        char right_str[24] = "";
+        char left_str[32] = "";
+        char right_str[32] = "";
 
-        // Render Left Column Move Data (Width 14 - e.g. " 1.e4    Nf6  ")
+        // Render Left Column Move Data
         if (total_full_moves > 0 && left_display <= total_full_moves) {
             int w_idx = (left_display - 1) * 2;
             int b_idx = w_idx + 1;
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
+                // Instantly copy from the pre-calculated cache
                 strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
+                // Instantly copy from the pre-calculated cache
                 strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            // Formatted string maps to exactly 14 characters: index(2) + '.' + white(5) + space(1) + black(5)
-            sprintf(left_str, "%2d.%-5.5s %-5.5s", left_display, w_str, b_str);
+            sprintf(left_str, "%2d.%-5s%-5s", left_display, w_str, b_str);
         } else {
-            sprintf(left_str, "%2d. ----- -----", left_display);
+            sprintf(left_str, "%2d. ---  --- ", left_display);
         }
 
-        // Render Right Column Move Data (Width 14)
+        // Render Right Column Move Data
         if (total_full_moves > 0 && right_display <= total_full_moves) {
             int w_idx = (right_display - 1) * 2;
             int b_idx = w_idx + 1;
             char w_str[10] = "-----";
             char b_str[10] = "-----";
             if (w_idx < history_count) {
+                // Instantly copy from the pre-calculated cache
                 strcpy(w_str, san_history[w_idx]);
             }
             if (b_idx < history_count) {
+                // Instantly copy from the pre-calculated cache
                 strcpy(b_str, san_history[b_idx]);
             } else if (w_idx < history_count) {
                 strcpy(b_str, "...");
             }
-            sprintf(right_str, "%2d.%-5.5s %-5.5s", right_display, w_str, b_str);
+            sprintf(right_str, "%2d.%-5s%-5s", right_display, w_str, b_str);
         } else {
-            sprintf(right_str, "%2d. ----- -----", right_display);
+            sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        // Output format: Space (1) + left (14) + divider (1) + right (14) = Exactly 30 character columns
-        printf("\x1b[%d;1H %s\x1b[1;30m|\x1b[0m%s\x1b[K", 5 + r, left_str, right_str);
+        printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- LINES 15-23: Rolling UCI Engine Console (Absolute Rows 15 to 23 - strictly limited to 30 chars) ---
+    // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
+    // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
     for (int i = 0; i < 9; i++) {
-        printf("\x1b[%d;1H", 15 + i);
         if (i < raw_log_count) {
+            // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
                 printf("\x1b[1;32m%s\x1b[0m\x1b[K", raw_log[i]);
             } else {
@@ -1010,10 +1008,13 @@ void draw_bottom_stats(void) {
         } else {
             printf("\x1b[K"); // Silently clear un-occupied terminal log space
         }
+        
+        // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
+        if (i < 8) {
+            printf("\n");
+        }
     }
-    
-    // Safety buffer row clear to prevent scroll register triggers on the 24th line
-    printf("\x1b[24;1H\x1b[K");
+    printf("\x1b[J"); // Instantly clear any extra screen leftovers below index 23
 
     fflush(stdout);
 }
@@ -1225,7 +1226,8 @@ int main(int argc, char **argv) {
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankC(VRAM_C_SUB_BG);
 
-    // Initialize both standard consoles
+    // Initialize both standard consoles. 
+    // Initializing topConsole on BG3 forces VRAM Bank A to load the default font glyphs into Tile Base 0.
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
