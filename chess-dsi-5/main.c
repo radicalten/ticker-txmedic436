@@ -47,7 +47,7 @@ int board_orientation = 1;
 int user_side = 1;         
 
 int time_control_type = 0; 
-int time_control_val = 1000;  // Default matched to 1000ms
+int time_control_val = 1;  
 
 int engine_thinking = 0;
 long long engine_nps = 0;
