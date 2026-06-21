@@ -1,1 +1,2 @@
-
+working on 3ds_bridge.h-dsi-5
+p1: can you update this C file? currently it is using sys/time.h for the clock, but I would like it to use Devkitpro's libcalico for DSi https://github.com/devkitPro/calico: 
