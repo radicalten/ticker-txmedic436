@@ -58,7 +58,7 @@ int engine_score_val = 0;
 int engine_depth = 0;
 long long engine_nodes = 0;
 char engine_pv[128] = "";
-char raw_log[9][32] = { {0} };
+char raw_log[10][32] = { {0} };
 int raw_log_count = 0;
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
@@ -230,17 +230,17 @@ void push_state(const BoardState *state, Move m) {
 }
 
 void push_raw_log(const char *line) {
-    if (raw_log_count < 9) {
+    if (raw_log_count < 10) {
         strncpy(raw_log[raw_log_count], line, 31);
         raw_log[raw_log_count][31] = '\0';
         raw_log_count++;
     } else {
         // Scroll buffer items up
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 9; i++) {
             memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
         }
-        strncpy(raw_log[8], line, 31);
-        raw_log[8][31] = '\0';
+        strncpy(raw_log[9], line, 31);
+        raw_log[9][31] = '\0';
     }
     redraw_needed = 1; // Mark UI as needing to be redrawn on the next frame
 }
@@ -857,32 +857,67 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn Status ---
+    // --- LINE 1: Turn, Eval & NPS (Merged Consolidated Display) ---
+    char status_str[64] = "";
     if (engine_state != ENGINE_STATE_READY) {
-        printf("\x1b[K\n");
+        strcpy(status_str, "Booting...");
     } else if (current_state.halfmoves >= 100) {
-        printf("\x1b[1;31mDraw (50m-rule)\x1b[K\n");
+        strcpy(status_str, "\x1b[1;31mDraw (50m-rule)\x1b[0m");
     } else if (repetitions >= 3) {
-        printf("\x1b[1;31mDraw (3-fold)\x1b[K\n");
+        strcpy(status_str, "\x1b[1;31mDraw (3-fold)\x1b[0m");
     } else if (!has_mov) {
         if (is_ch) {
-            printf("\x1b[1;31mCHECKMATE!\x1b[K\n");
+            strcpy(status_str, "\x1b[1;31mCHECKMATE!\x1b[0m");
         } else {
-            printf("\x1b[1;36mSTALEMATE!\x1b[K\n");
+            strcpy(status_str, "\x1b[1;36mSTALEMATE!\x1b[0m");
         }
     } else if (is_ch) {
         if (current_state.turn == 1) {
-            printf("\x1b[1;31mWhite in CHECK!\x1b[K\n");
+            strcpy(status_str, "\x1b[1;31mW-Check!\x1b[0m");
         } else {
-            printf("\x1b[1;31mBlack in CHECK!\x1b[K\n");
+            strcpy(status_str, "\x1b[1;31mB-Check!\x1b[0m");
         }
     } else {
         if (current_state.turn == 1) {
-            printf("\x1b[1;32mWhite's turn\x1b[K\n");
+            strcpy(status_str, "\x1b[1;32mWhite's turn\x1b[0m");
         } else {
-            printf("\x1b[1;35mBlack's turn\x1b[K\n");
+            strcpy(status_str, "\x1b[1;35mBlack's turn\x1b[0m");
         }
     }
+
+    char eval_str[16] = "";
+    if (engine_score_type == 0) {
+        double eval = (double)engine_score_val / 100.0;
+        sprintf(eval_str, "%+.2f", eval);
+    } else if (engine_score_type == 1) {
+        if (engine_score_val > 0) sprintf(eval_str, "+M%d", engine_score_val);
+        else sprintf(eval_str, "-M%d", -engine_score_val);
+    } else {
+        strcpy(eval_str, "----");
+    }
+
+    char nps_str[24] = "";
+    if (engine_nps > 0) {
+        if (engine_nps >= 1000000) {
+            sprintf(nps_str, "%.2f Mnps", (double)engine_nps / 1000000.0);
+        } else if (engine_nps >= 100000) {
+            sprintf(nps_str, "%lld knps", engine_nps / 1000);
+        } else if (engine_nps >= 10000) {
+            sprintf(nps_str, "%.1f knps", (double)engine_nps / 1000.0);
+        } else if (engine_nps >= 1000) {
+            sprintf(nps_str, "%.2f knps", (double)engine_nps / 1000.0);
+        } else {
+            sprintf(nps_str, "%lld nps", engine_nps);
+        }
+    } else {
+        if (engine_thinking) {
+            strcpy(nps_str, "---- nps");
+        } else {
+            strcpy(nps_str, "Offline");
+        }
+    }
+
+    printf("%s | %s | %s\x1b[K\n", status_str, eval_str, nps_str);
 
     // --- LINE 2: Modes & Limits ---
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
@@ -897,43 +932,10 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Condensed Engine score and NPS metrics ---
-    // Display evaluation score natively without prefix labels
-    if (engine_score_type == 0) {
-        double eval = (double)engine_score_val / 100.0;
-        printf("%+.2f | ", eval);
-    } else if (engine_score_type == 1) {
-        if (engine_score_val > 0) printf("+M%d | ", engine_score_val);
-        else printf("-M%d | ", -engine_score_val);
-    } else {
-        printf("---- | ");
-    }
-
-    // Direct adaptive NPS metric draw
-    if (engine_nps > 0) {
-        if (engine_nps >= 1000000) {
-            printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
-        } else if (engine_nps >= 100000) {
-            printf("%lld knps\x1b[K\n", engine_nps / 1000);
-        } else if (engine_nps >= 10000) {
-            printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
-        } else if (engine_nps >= 1000) {
-            printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
-        } else {
-            printf("%lld nps\x1b[K\n", engine_nps);
-        }
-    } else {
-        if (engine_thinking) {
-            printf("---- nps\x1b[K\n");
-        } else {
-            printf("Offline\x1b[K\n");
-        }
-    }
-
-    // --- LINE 4: Recent Moves Title ---
+    // --- LINE 3: Recent Moves Title ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
 
-    // --- LINES 5-14: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
+    // --- LINES 4-13: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
     int max_visible_moves = 20;
     int half_visible = max_visible_moves / 2; // 10 rows total
@@ -991,9 +993,9 @@ void draw_bottom_stats(void) {
         printf(" %s\x1b[1;30m|\x1b[0m%s\x1b[K\n", left_str, right_str);
     }
 
-    // --- LINES 15-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console ---
+    // --- LINES 14-23: Real-Time Dynamic Rolling Raw UCI Engine Terminal Console (10 Rows) ---
     // Prints immediately below the moves block, filling empty slots dynamically to keep alignment stable
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 10; i++) {
         if (i < raw_log_count) {
             // Newest incoming line of console traffic is colored in high-contrast Green
             if (i == raw_log_count - 1) {
@@ -1002,11 +1004,11 @@ void draw_bottom_stats(void) {
                 printf("\x1b[1;30m%s\x1b[0m\x1b[K", raw_log[i]);
             }
         } else {
-            printf("\x1b[K"); // Silently clear un-occupied terminal log space
+            printf("\x1b[K"); // Silently clear unoccupied terminal log space
         }
         
         // No trailing newline on the 24th line of the screen to prevent automatic terminal scroll register
-        if (i < 8) {
+        if (i < 9) {
             printf("\n");
         }
     }
