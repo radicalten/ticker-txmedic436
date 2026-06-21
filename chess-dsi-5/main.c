@@ -935,10 +935,29 @@ void draw_bottom_stats(void) {
         if (engine_score_type == 0) {
             double eval = (double)engine_score_val / 100.0;
             printf("Ev: %+.2f | ", eval);
+        } else if (engine_score_type == 1) {
+            if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
+            else printf("Ev: -M%d | ", -engine_score_val);
         } else {
             printf("Ev: ---- | ");
         }
-        printf("Offline\x1b[K\n");
+        
+        // Output the last known NPS calculation when idle, fallback to Offline if none
+        if (engine_nps > 0) {
+            if (engine_nps >= 1000000) {
+                printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
+            } else if (engine_nps >= 100000) {
+                printf("%lld knps\x1b[K\n", engine_nps / 1000);
+            } else if (engine_nps >= 10000) {
+                printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
+            } else if (engine_nps >= 1000) {
+                printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
+            } else {
+                printf("%lld nps\x1b[K\n", engine_nps);
+            }
+        } else {
+            printf("Offline\x1b[K\n");
+        }
     }
 
     // --- LINE 4: Recent Moves Title ---
@@ -1097,12 +1116,7 @@ void handle_select(void) {
             current_state = next;
             selected_sq = -1;
             
-            engine_nps = 0;
-            engine_score_type = -1;
-            engine_score_val = 0;
-            engine_depth = 0;
-            engine_nodes = 0;
-            engine_pv[0] = '\0';
+            // engine calculations are preserved on screen instead of being manually cleared here
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
