@@ -985,7 +985,7 @@ void draw_bottom_stats(void) {
             sprintf(nps_str, "%lld nps", engine_nps);
         }
     } else {
-        if (engine_thinking) strcpy(nps_str, " nps");
+        if (engine_thinking) strcpy(nps_str, "");
         else strcpy(nps_str, "");
     }
     draw_string_sub(sub_map, curr_x, 1, nps_str, 15);
