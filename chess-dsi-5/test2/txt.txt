@@ -12,3 +12,7 @@ working on main-test2-v1:
 I have two c files of chess guis. I will share the two files. I would like you to implement the colors for eval, checkmate, white to play, etc. from the first file to the second file. do not change the overall structure of the 2nd file, just add the contextual highlighting.: 
 3ds-chess-3 main
 main-test2-v1
+
+in order for the colors to display on the DS bottom screen it is necessary to utilize the DS palette. simply using ansi only produces regular white text. 
+
+the bottomscreen text is still white. can you model your approach like the topscreen's? the top screen shows color perfectly. 
