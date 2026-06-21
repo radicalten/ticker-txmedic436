@@ -10,7 +10,6 @@
 
 // On Nintendo DS/DSi, define 3DS compatibility wrappers
 #ifdef __NDS__
-#include <sys/time.h>             // Required for gettimeofday
 #include <calico.h>
 
 // Real thread-blocking LightLock utilizing Calico queues
@@ -63,11 +62,9 @@ static inline int LightLock_TryLock(LightLock* lock) {
     return 1; // Failed to acquire
 }
 
-// Nintendo DS replacement for 3DS osGetTime() in milliseconds
+// Nintendo DS replacement for 3DS osGetTime() in milliseconds utilizing Calico ticks
 static inline unsigned long long osGetTime(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return ((unsigned long long)tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL);
+    return tickToMS(tickGet());
 }
 
 // Cooperative yield function mapped to Calico's preemptive yield
@@ -88,9 +85,10 @@ static inline void svcSleepThread(unsigned long long ns) {
     if (ns == 0) {
         threadYield();
     } else {
-        u32 usec = (u32)(ns / 1000ULL);
-        if (usec == 0) usec = 1;
-        threadSleep(usec);
+        // Calico threadSleep() expects ticks, not microseconds or nanoseconds.
+        u64 ticks = tickFromNS(ns);
+        if (ticks == 0) ticks = 1; // Ensure we sleep for at least one hardware tick
+        threadSleep(ticks);
     }
 }
 #endif
