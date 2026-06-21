@@ -58,3 +58,10 @@ does thread.h need any changes?
 what about these timeman.c and timeman.h files: 
 
 ok I would like to keep the precision, so I will keep it the same. What about these uci.c and uci.h files?
+
+and what about ucioption.c?: 
+
+#summary: none of these changes were needed to thread.h, uci.c uci.h, and ucioption.c also timeman.c and timeman.h
+#At best could remove the extra include from thread.h but that’s not strictly necessary. The other changes are cosmetic in nature, and for #timeman.c and timeman.h it wanted to reduce precision from 64-bit to 32-bit, that goes against the stockfish program entirely which is to #be 32-bit compatible but to use the full precision
+
+#Will now revert everything to the test4 status, and work on main.c on its own, perfecting the gui. 
