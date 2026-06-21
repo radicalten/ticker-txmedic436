@@ -7,3 +7,5 @@ prompt1: Here is my main.c file for a DSi chess gui. currently the bottom screen
 #was able to do this myself, as was the ai, will start a new chat with the fixed file.
 
 prompt2: Here is my main.c file for a DSi chess gui. Currently the nodes per second calculation lacks precision. Can you fix that?: 
+
+#starting a new chat once again with the updated file. 
