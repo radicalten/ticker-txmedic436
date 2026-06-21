@@ -30,3 +30,14 @@ Now I will share two C files here to match these new implementations. main_stock
 
 
 Allow me to share my current thread.h and thread.c files as well. they will need updating.: 
+
+A: Gemini 3.5 flash:  Here is your updated and fully refactored thread.c file.
+
+Instead of routing thread management through standard POSIX stubs, this implementation directly integrates with Calico’s native APIs. This is a massive improvement because it allows us to:
+
+    Allocate custom 256 KB deep stacks specifically for worker search threads (preventing recursive alpha-beta depth search overflows).
+    Attach individual C standard library Thread-Local Storage (TLS) buffers to each worker thread to guarantee standard library operations (malloc, calloc, etc.) never crash.
+    Completely eliminate <pthread.h> overhead inside this engine file.
+
+#believe it or not just changing the thread.c file worked, without touching the thread.h file at all. And the chess engine literally worked as intended. I am preserving this version of the emulator right here, and saved and added the files to chess-dsi-5, as I don't want to mess with a good thing. 
+#I think that I should next inquire about thread.h uci.h uci.c and ucioption.c to see if they are all in compliance. but since everything is currently working I do not want to mess with that at all. 
