@@ -938,7 +938,7 @@ void draw_bottom_stats(void) {
     draw_string_sub(sub_map, curr_x, 0, config_buf, 15);
 
     // --- LINE 2: Score, NPS, and Time Limits (Prefix-free display) ---
-    curr_x = 1;
+    curr_x = 0;
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
         char tmp_buf[16];
@@ -1005,7 +1005,7 @@ void draw_bottom_stats(void) {
     draw_string_sub(sub_map, curr_x, 1, lim_str, 15);
 
     // --- LINE 3: Recent Moves Title ---
-    draw_string_sub(sub_map, 1, 2, "RECENT MOVES:", 11); // High Bright Yellow
+    draw_string_sub(sub_map, 0, 2, "RECENT MOVES:", 11); // High Bright Yellow
 
     // --- LINES 4-13: Move List Display (Scaled to strictly 10 rows / 20 moves) ---
     int total_full_moves = (history_count + 1) / 2;
@@ -1058,18 +1058,18 @@ void draw_bottom_stats(void) {
             sprintf(right_str, "%2d. ---  --- ", right_display);
         }
 
-        draw_string_sub(sub_map, 1, 3 + r, left_str, 15);
-        draw_string_sub(sub_map, 15, 3 + r, "|", 8); // Intense dark gray dividing bar
-        draw_string_sub(sub_map, 16, 3 + r, right_str, 15);
+        draw_string_sub(sub_map, 0, 3 + r, left_str, 15);
+        draw_string_sub(sub_map, 14, 3 + r, "|", 8); // Intense dark gray dividing bar
+        draw_string_sub(sub_map, 15, 3 + r, right_str, 15);
     }
 
     // --- LINES 14-23: Real-Time Rolling UCI Engine Terminal Console (10 Rows) ---
     for (int i = 0; i < 10; i++) {
         if (i < raw_log_count) {
             if (i == raw_log_count - 1) {
-                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 15); // Active live output trace in bright white
+                draw_string_sub(sub_map, 0, 13 + i, raw_log[i], 15); // Active live output trace in bright white
             } else {
-                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 8);  // Inactive background traces in dark gray
+                draw_string_sub(sub_map, 0, 13 + i, raw_log[i], 8);  // Inactive background traces in dark gray
             }
         }
     }
