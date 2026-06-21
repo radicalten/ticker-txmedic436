@@ -898,63 +898,42 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Engine Status, Eval, and Speed ---
+    // --- LINE 3: Condensed Engine thinking state, score and NPS metrics ---
     if (engine_thinking) {
         char spin_chars[] = {'/', '-', '\\', '|'};
         char current_spin = spin_chars[spinner_frame % 4];
-        printf("Eng: [%c] | ", current_spin);
+        printf("[%c] ", current_spin);
+    } else {
+        printf("    "); // Omit 'Idle' text, printing blank spaces instead to preserve alignment
+    }
 
-        if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            printf("Ev: %+.2f | ", eval);
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
-            else printf("Ev: -M%d | ", -engine_score_val);
-        } else {
-            printf("Ev: ---- | ");
-        }
+    // Display evaluation score natively without prefix label
+    if (engine_score_type == 0) {
+        double eval = (double)engine_score_val / 100.0;
+        printf("%+.2f | ", eval);
+    } else if (engine_score_type == 1) {
+        if (engine_score_val > 0) printf("+M%d | ", engine_score_val);
+        else printf("-M%d | ", -engine_score_val);
+    } else {
+        printf("---- | ");
+    }
 
-        // Precise, Screen-Safe Adaptive NPS calculation
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
-            } else if (engine_nps >= 100000) {
-                printf("%lld knps\x1b[K\n", engine_nps / 1000);
-            } else if (engine_nps >= 10000) {
-                printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
-            } else if (engine_nps >= 1000) {
-                printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
-            } else {
-                printf("%lld nps\x1b[K\n", engine_nps);
-            }
+    // Direct adaptive NPS metric draw
+    if (engine_nps > 0) {
+        if (engine_nps >= 1000000) {
+            printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
+        } else if (engine_nps >= 100000) {
+            printf("%lld knps\x1b[K\n", engine_nps / 1000);
+        } else if (engine_nps >= 10000) {
+            printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
+        } else if (engine_nps >= 1000) {
+            printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
         } else {
-            printf("---- nps\x1b[K\n");
+            printf("%lld nps\x1b[K\n", engine_nps);
         }
     } else {
-        printf("Eng: Idle | ");
-        if (engine_score_type == 0) {
-            double eval = (double)engine_score_val / 100.0;
-            printf("Ev: %+.2f | ", eval);
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) printf("Ev: +M%d | ", engine_score_val);
-            else printf("Ev: -M%d | ", -engine_score_val);
-        } else {
-            printf("Ev: ---- | ");
-        }
-        
-        // Output the last known NPS calculation when idle, fallback to Offline if none
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000) {
-                printf("%.2f Mnps\x1b[K\n", (double)engine_nps / 1000000.0);
-            } else if (engine_nps >= 100000) {
-                printf("%lld knps\x1b[K\n", engine_nps / 1000);
-            } else if (engine_nps >= 10000) {
-                printf("%.1f knps\x1b[K\n", (double)engine_nps / 1000.0);
-            } else if (engine_nps >= 1000) {
-                printf("%.2f knps\x1b[K\n", (double)engine_nps / 1000.0);
-            } else {
-                printf("%lld nps\x1b[K\n", engine_nps);
-            }
+        if (engine_thinking) {
+            printf("---- nps\x1b[K\n");
         } else {
             printf("Offline\x1b[K\n");
         }
