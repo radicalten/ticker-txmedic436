@@ -65,3 +65,7 @@ and what about ucioption.c?:
 #At best could remove the extra include from thread.h but that’s not strictly necessary. The other changes are cosmetic in nature, and for #timeman.c and timeman.h it wanted to reduce precision from 64-bit to 32-bit, that goes against the stockfish program entirely which is to #be 32-bit compatible but to use the full precision
 
 #Will now revert everything to the test4 status, and work on main.c on its own, perfecting the gui. 
+
+#update! forgot to inquire about misc.h since that has the time. will do that now. 
+
+and what about these misc.h and misc.c files? 
