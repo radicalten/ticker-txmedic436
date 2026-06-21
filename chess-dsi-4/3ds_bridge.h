@@ -10,7 +10,7 @@
 
 // On Nintendo DS/DSi, define 3DS compatibility wrappers
 #ifdef __NDS__
-#include <sys/time.h>      // Required for gettimeofday
+#include <sys/time.h>             // Required for gettimeofday
 #include <calico/system/thread.h> // Calico preemptive threading engine
 
 // Real thread-blocking LightLock utilizing Calico queues
@@ -19,29 +19,9 @@ typedef struct {
     ThrListNode queue;
 } LightLock;
 
-// Safe assembly-level interrupt-disabling helpers for single-core ARM9 
-// to protect state checks and queue modifications atomically.
-static inline u32 ds_disable_interrupts(void) {
-    u32 old;
-    __asm__ volatile(
-        "mrs %0, cpsr\n\t"
-        "orr r12, %0, #0x80\n\t"
-        "msr cpsr_c, r12" 
-        : "=r"(old) 
-        : 
-        : "r12", "cc", "memory"
-    );
-    return old;
-}
-
-static inline void ds_restore_interrupts(u32 old) {
-    __asm__ volatile(
-        "msr cpsr_c, %0" 
-        : 
-        : "r"(old) 
-        : "cc", "memory"
-    );
-}
+// Non-inlined ARM-state interrupt controllers (implemented in 3ds_bridge.c)
+u32 ds_disable_interrupts(void);
+void ds_restore_interrupts(u32 old);
 
 static inline void LightLock_Init(LightLock* lock) {
     lock->state = 0;
@@ -57,7 +37,7 @@ static inline void LightLock_Lock(LightLock* lock) {
             ds_restore_interrupts(irq_state);
             break;
         }
-        // Blocks this thread on the lock's queue. 
+        // Blocks this thread on the lock's queue.
         // Calico will switch context and restore interrupts on the next thread.
         threadBlock(&lock->queue, (u32)lock);
         ds_restore_interrupts(irq_state);
