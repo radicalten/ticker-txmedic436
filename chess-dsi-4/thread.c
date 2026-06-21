@@ -21,8 +21,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>  // Enforced inclusion for explicit attribute handling
-#include <calico/types.h>
+#include <calico/system/thread.h> // Correct path to Calico preemptive thread API
 #include <nds.h>
 
 #include "material.h"
@@ -40,25 +39,27 @@
 
 static void thread_idle_loop(Position *pos);
 
-#define THREAD_FUNC void *
-
 // Global objects
 ThreadPool Threads;
 MainThread mainThread;
 CounterMoveHistoryStat **cmhTables = NULL;
 int numCmhTables = 0;
 
+// Track native Calico thread allocations
+static Thread* s_calicoThreads[MAX_THREADS] = { NULL };
+static void* s_threadStacks[MAX_THREADS] = { NULL };
+static void* s_threadTls[MAX_THREADS] = { NULL };
+
 // thread_init() is where a search thread starts and initializes itself.
-static THREAD_FUNC thread_init(void *arg)
+static int thread_init(void *arg)
 {
   int idx = (intptr_t)arg;
 
-  // Use native 3DS system call to assign worker calculations to lower priority layers.
-  // Thread 0 gets 0x3D, Thread 1 gets 0x3E, etc.
-  // This keeps the master thread (at 0x3B) highly responsive to check timer structures.
+  // Use Calico priority limits to assign worker calculations to lower priority layers.
+  // This keeps the master main thread highly responsive to check timers.
   svcSetThreadPriority(CUR_THREAD_HANDLE, 0x3D + idx);
 
-  int t = 0; // NUMA disabled for 3DS
+  int t = 0; // NUMA disabled for DS/DSi
   if (t >= numCmhTables) {
     int old = numCmhTables;
     numCmhTables = t + 16;
@@ -133,11 +134,10 @@ static THREAD_FUNC thread_init(void *arg)
   // Store the initialized Position structural handle
   Threads.pos[idx] = pos;
 
-  // GCC Hardware Barrier: Force Thread 0 to finish mapping and writing memory addresses
-  // before the parent execution flow wakes up from its yield sleep block.
+  // GCC Hardware Barrier: Force Thread mapping completions
   __sync_synchronize();
 
-  // Signal completion
+  // Signal completion to parent thread
   Threads.initializing = false;
 
   thread_idle_loop(pos);
@@ -145,45 +145,79 @@ static THREAD_FUNC thread_init(void *arg)
   return 0;
 }
 
-// thread_create() launches a new thread.
+// thread_create() launches a new Calico preemptive thread.
 static void thread_create(int idx)
 {
-  pthread_t thread;
-  pthread_attr_t attr;
-
   Threads.initializing = true;
 
-  // Initialize and explicitly set stack size to 256KB.
-  // This shields the recursive alpha-beta depth search execution from silently 
-  // overflowing the default 3DS thread stacks.
-  pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 256 * 1024);
-  
-  if (pthread_create(&thread, &attr, thread_init, (void *)(intptr_t)idx) != 0) {
-    printf("\x1b[1;31m[ERROR] Failed to spawn pthread for Thread %d!\x1b[0m\n", idx);
-    fflush(stdout);
-  }
-  
-  // Attributes can be immediately destroyed once the thread is safely registered
-  pthread_attr_destroy(&attr);
-  
-  // Safe yield loop replacing POSIX condvars to prevent startup freezes
-  while (Threads.initializing) {
-    __sync_synchronize();       // Force memory sync across cores
-    svcSleepThread(1000000ULL); // Yield 1ms to let the worker thread run
+  // Allocate Calico thread handle
+  s_calicoThreads[idx] = malloc(sizeof(Thread));
+
+  // Stack Allocation (256 KB to protect search recursion from overflowing)
+  size_t stack_size = 256 * 1024;
+  s_threadStacks[idx] = malloc(stack_size);
+  if (!s_threadStacks[idx]) {
+    printf("\x1b[1;31m[ERROR] Stack allocation failed for Thread %d!\x1b[0m\n", idx);
+    return;
   }
 
-  Threads.pos[idx]->nativeThread = thread;
+  // Calculate 8-byte aligned stack top pointer
+  uintptr_t stack_base = (uintptr_t)s_threadStacks[idx];
+  uintptr_t stack_top_aligned = (stack_base + stack_size) & ~7;
+
+  // Allocate C Standard library TLS to support memory safety
+  size_t tls_size = threadGetLocalStorageSize();
+  if (tls_size > 0) {
+    s_threadTls[idx] = malloc(tls_size);
+  } else {
+    s_threadTls[idx] = NULL;
+  }
+
+  // Bind thread configurations inside the Calico scheduler context
+  threadPrepare(s_calicoThreads[idx], 
+                thread_init, 
+                (void *)(intptr_t)idx, 
+                (void*)stack_top_aligned, 
+                MAIN_THREAD_PRIO);
+
+  // Bind Standard Library local states to bypass race crashes
+  if (s_threadTls[idx]) {
+    threadAttachLocalStorage(s_calicoThreads[idx], s_threadTls[idx]);
+  }
+
+  // Wake up thread execution immediately
+  threadStart(s_calicoThreads[idx]);
+  
+  // Safe yield loop preventing startup freezes
+  while (Threads.initializing) {
+    __sync_synchronize();       // Force memory sync across cores
+    threadSleep(1000);          // Yield 1 millisecond using preemptive sleeps
+  }
 }
 
 // thread_destroy() waits for thread termination before returning.
 static void thread_destroy(Position *pos)
 {
+  int idx = pos->threadIdx;
   pos->action = THREAD_EXIT;
   __sync_synchronize();
   
   // Explicitly wait for thread termination
-  pthread_join(pos->nativeThread, NULL);
+  if (s_calicoThreads[idx]) {
+    threadJoin(s_calicoThreads[idx]);
+    free(s_calicoThreads[idx]);
+    s_calicoThreads[idx] = NULL;
+  }
+
+  // Free stack and TLS heap segments
+  if (s_threadStacks[idx]) {
+    free(s_threadStacks[idx]);
+    s_threadStacks[idx] = NULL;
+  }
+  if (s_threadTls[idx]) {
+    free(s_threadTls[idx]);
+    s_threadTls[idx] = NULL;
+  }
 
 #ifndef NNUE_PURE
   free(pos->pawnTable);
@@ -205,7 +239,7 @@ void thread_wait_until_sleeping(Position *pos)
   // High-performance cooperative yield loop with compile-time memory barriers
   while (pos->action != THREAD_SLEEP) {
     __sync_synchronize();       // Force memory synchronization across CPU cores
-    svcSleepThread(1000000ULL); // Yield 1ms
+    threadSleep(1000);          // Sleep 1ms to allow execution slots
   }
 
   if (pos->threadIdx == 0)
@@ -217,7 +251,7 @@ void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
     __sync_synchronize();       // Force hardware memory coherence update
-    svcSleepThread(1000000ULL); // Yield 1ms
+    threadSleep(1000);          // Sleep 1ms
   }
 }
 
@@ -225,7 +259,7 @@ void thread_wake_up(Position *pos, int action)
 {
   if (action != THREAD_RESUME) {
     pos->action = action;
-    __sync_synchronize();       // Force instant cache line flush to ARM RAM
+    __sync_synchronize();       // Force instant cache line flush
   }
 }
 
@@ -236,7 +270,7 @@ static void thread_idle_loop(Position *pos)
     // Cooperative park loop
     while (pos->action == THREAD_SLEEP) {
       __sync_synchronize();       // Force core-to-core synchronicity checks
-      svcSleepThread(2000000ULL); // Sleep 2ms to prevent CPU starvation
+      threadSleep(2000);          // Sleep 2ms to prevent CPU starvation
     }
 
     if (pos->action == THREAD_EXIT) {
