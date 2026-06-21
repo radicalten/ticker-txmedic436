@@ -884,7 +884,7 @@ void draw_bottom_stats(void) {
     int repetitions = count_repetitions(&current_state);
 
     // --- LINE 1: Turn Status & Player Config (W:Hum B:Eng) ---
-    int curr_x = 1;
+    int curr_x = 0;
     if (engine_state != ENGINE_STATE_READY) {
         draw_string_sub(sub_map, curr_x, 0, "Booting...", 15);
         curr_x += 10;
@@ -989,7 +989,7 @@ void draw_bottom_stats(void) {
         else strcpy(nps_str, "");
     }
     draw_string_sub(sub_map, curr_x, 1, nps_str, 15);
-    curr_x += 12;
+    curr_x += 6;
 
     draw_string_sub(sub_map, curr_x, 1, " | ", 15);
     curr_x += 3;
