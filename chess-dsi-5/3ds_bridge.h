@@ -11,7 +11,7 @@
 // On Nintendo DS/DSi, define 3DS compatibility wrappers
 #ifdef __NDS__
 //#include <sys/time.h>             // Required for gettimeofday
-#include <calico/calico.h>
+#include <calico.h>
 //#include <calico/system/thread.h> // Calico preemptive threading engine
 
 // Real thread-blocking LightLock utilizing Calico queues
