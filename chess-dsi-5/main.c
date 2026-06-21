@@ -889,10 +889,10 @@ void draw_bottom_stats(void) {
         draw_string_sub(sub_map, curr_x, 0, "Booting...", 15);
         curr_x += 10;
     } else if (current_state.halfmoves >= 100) {
-        draw_string_sub(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 9); // High Red
+        draw_string_sub(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 14); // High Cyan
         curr_x += 17;
     } else if (repetitions >= 3) {
-        draw_string_sub(sub_map, curr_x, 0, "[DRAW (3-fold)]", 9); // High Red
+        draw_string_sub(sub_map, curr_x, 0, "[DRAW (3-fold)]", 14); // High Cyan
         curr_x += 15;
     } else if (!has_mov) {
         if (is_ch) {
@@ -985,8 +985,8 @@ void draw_bottom_stats(void) {
             sprintf(nps_str, "%lld nps", engine_nps);
         }
     } else {
-        if (engine_thinking) strcpy(nps_str, "---- nps");
-        else strcpy(nps_str, "Offline");
+        if (engine_thinking) strcpy(nps_str, " nps");
+        else strcpy(nps_str, "");
     }
     draw_string_sub(sub_map, curr_x, 1, nps_str, 15);
     curr_x += 12;
@@ -1067,7 +1067,7 @@ void draw_bottom_stats(void) {
     for (int i = 0; i < 10; i++) {
         if (i < raw_log_count) {
             if (i == raw_log_count - 1) {
-                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 10); // Active live output trace in bright green
+                draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 15); // Active live output trace in bright white
             } else {
                 draw_string_sub(sub_map, 1, 13 + i, raw_log[i], 8);  // Inactive background traces in dark gray
             }
