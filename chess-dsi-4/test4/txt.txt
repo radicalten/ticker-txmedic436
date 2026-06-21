@@ -16,3 +16,12 @@ FYI: the #include is: #include <calico/system/thread.h>
 /tmp/cc5g5OKq.s:153: Error: selected processor does not support `msr cpsr_c,r6' in Thumb mode
 /tmp/cc5g5OKq.s:156: Error: selected processor does not support `mrs r6,cpsr' in Thumb mode
 /tmp/cc5g5OKq.s:157: Error: unshifted register required -- `orr r12,r6,#0x80'
+
+
+A: The assembler error occurs because the DSi ARM9 is compiled in Thumb mode (which reduces binary size), but CPU CPSR register operations (mrs and msr instructions) are strictly ARM mode instructions on the ARMv5TE architecture.
+
+To fix this elegantly, we declare ds_disable_interrupts and ds_restore_interrupts as non-inlined functions in 3ds_bridge.c and tag them with __attribute__((target("arm"), noinline)). The compiler will compile them as ARM instructions and automatically generate Thumb-ARM interworking (blx) calls when accessed from Thumb code.
+
+Here are the corrected, compile-ready versions of both files.
+
+#unbelieveably this actually compiles! wow... 
