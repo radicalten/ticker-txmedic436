@@ -857,7 +857,7 @@ void draw_bottom_stats(void) {
     int has_mov = has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
-    // --- LINE 1: Turn, Eval & NPS (Merged Consolidated Display) ---
+    // --- LINE 1: Turn Status & Player Config (W:Hum B:Eng) ---
     char status_str[64] = "";
     if (engine_state != ENGINE_STATE_READY) {
         strcpy(status_str, "Booting...");
@@ -885,6 +885,12 @@ void draw_bottom_stats(void) {
         }
     }
 
+    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
+    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
+
+    printf("%s | W:%s B:%s\x1b[K\n", status_str, w_play, b_play);
+
+    // --- LINE 2: Eval, NPS, and Time Limits ---
     char eval_str[16] = "";
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
@@ -917,20 +923,16 @@ void draw_bottom_stats(void) {
         }
     }
 
-    printf("%s | %s | %s\x1b[K\n", status_str, eval_str, nps_str);
-
-    // --- LINE 2: Modes & Limits ---
-    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
-    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
-    printf("W:%s B:%s | ", w_play, b_play);
-
+    char lim_str[24] = "";
     if (time_control_type == 0) {
-        printf("Lim: %dms\x1b[K\n", time_control_val);
+        sprintf(lim_str, "Lim: %dms", time_control_val);
     } else if (time_control_type == 1) {
-        printf("Lim: depth %d\x1b[K\n", time_control_val);
+        sprintf(lim_str, "Lim: depth %d", time_control_val);
     } else {
-        printf("Lim: %d nod\x1b[K\n", time_control_val);
+        sprintf(lim_str, "Lim: %d nod", time_control_val);
     }
+
+    printf("Eval: %s | %s | %s\x1b[K\n", eval_str, nps_str, lim_str);
 
     // --- LINE 3: Recent Moves Title ---
     printf("\x1b[1;33mRECENT MOVES:\x1b[0m\x1b[K\n");
