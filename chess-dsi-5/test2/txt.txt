@@ -7,3 +7,8 @@ https://github.com/devkitPro/calico/blob/master/include/calico/system/tick.h
 
 #this actaully worked! now the clocktime is correctly evalutated in high resolution/precision rather than using sys/time.h 
 #simply with the <calico.h> header. impressive
+tc. 
+working on main-test2-v1:
+I have two c files of chess guis. I will share the two files. I would like you to implement the colors for eval, checkmate, white to play, etc. from the first file to the second file. do not change the overall structure of the 2nd file, just add the contextual highlighting.: 
+3ds-chess-3 main
+main-test2-v1
