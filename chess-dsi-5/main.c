@@ -63,7 +63,6 @@ int raw_log_count = 0;
 
 // Optimization Flag: Only redraw when the board state changes, cursor moves, or engine outputs
 int redraw_needed = 1;
-int spinner_frame = 0;
 
 PrintConsole topConsole, bottomConsole;
 
@@ -898,16 +897,8 @@ void draw_bottom_stats(void) {
         printf("Lim: %d nod\x1b[K\n", time_control_val);
     }
 
-    // --- LINE 3: Condensed Engine thinking state, score and NPS metrics ---
-    if (engine_thinking) {
-        char spin_chars[] = {'/', '-', '\\', '|'};
-        char current_spin = spin_chars[spinner_frame % 4];
-        printf("[%c] ", current_spin);
-    } else {
-        printf("    "); // Omit 'Idle' text, printing blank spaces instead to preserve alignment
-    }
-
-    // Display evaluation score natively without prefix label
+    // --- LINE 3: Condensed Engine score and NPS metrics ---
+    // Display evaluation score natively without prefix labels
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
         printf("%+.2f | ", eval);
@@ -1291,7 +1282,6 @@ int main(int argc, char **argv) {
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
     redraw_needed = 1;
-    int frame_counter = 0;
 
     while (pmMainLoop()) {
         scanKeys();
@@ -1339,15 +1329,6 @@ int main(int argc, char **argv) {
         }
 
         read_from_engine();
-
-        frame_counter++;
-        if (engine_thinking) {
-            // Animate thinking spinner and periodically refresh metrics (every 10 frames)
-            if (frame_counter % 10 == 0) {
-                spinner_frame++;
-                redraw_needed = 1;
-            }
-        }
 
         // Only redraw UI when needed
         if (redraw_needed) {
