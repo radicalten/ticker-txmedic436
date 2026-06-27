@@ -31,4 +31,7 @@ ok now here is my main.c file for the cfish chess engine. it was originally writ
 can you also share the other update files?: types.h thread.h, thread.c, misc.h, misc.c
 
 ok I have updated all the files, and here is my compiler error: 
-\
+...
+
+
+Everything compiles but when launching in dolphin the screen is blank black. any ideas?
