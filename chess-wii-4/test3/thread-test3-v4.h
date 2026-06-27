@@ -29,7 +29,7 @@
 #include "types.h"
 
 #if defined(__wii__) || defined(GEKKO)
-#include <tick.h>
+#include <tuxedo/tick.h>
 #include <tuxedo/thread.h>
 #endif
 
