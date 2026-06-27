@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdarg.h>
-#include <malloc.h> 
+#include <malloc.h>
 
 // Nintendo Wii DevkitPro Hardware Headers
 #include <gccore.h>
@@ -41,14 +41,10 @@
 #include "uci.h"
 #include "tbprobe.h"
 
-// --- ADD THESE TWO LINES HERE ---
+// Restore standard printing and file operations inside the GUI's main thread
 #undef printf
 #undef fgets
-// --------------------------------
-
-// Redirection hooks to keep engine IO completely in-process
-char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
-int (*engine_printf_hook)(const char *format, ...) = NULL;
+#undef getline
 
 #define MAX_HISTORY 2048
 
@@ -74,15 +70,15 @@ BoardState history[MAX_HISTORY];
 GuiMove move_history[MAX_HISTORY];
 int history_count = 0;
 
-int cursor_r = 6;  // Screen row (0-7)
-int cursor_c = 4;  // Screen col (0-7)
+int cursor_r = 6;  
+int cursor_c = 4;  
 int selected_sq = -1;
 
-int board_orientation = 1; // 1 = White on bottom, -1 = Black on bottom
-int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
+int board_orientation = 1; 
+int user_side = 1;         
 
-int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1;    // Default: 1 ms
+int time_control_type = 0;   
+int time_control_val = 1;    
 
 int engine_thinking = 0;
 bool gui_mode_active = false;
@@ -101,7 +97,7 @@ long long engine_nodes = 0;
 int engine_hashfull = 0;       
 long long engine_tbhits = 0;   
 
-int engine_score_type = -1;  // -1 = None, 0 = cp, 1 = mate
+int engine_score_type = -1;  
 int engine_score_val = 0;    
 
 char engine_pv[1024] = "";   
@@ -113,7 +109,7 @@ typedef struct {
     int head;
     int tail;
     LOCK_T lock;
-} SimpleFIFO; // Changed from InProcessFIFO to SimpleFIFO
+} SimpleFIFO;
 
 SimpleFIFO gui_to_eng_pipe;
 SimpleFIFO eng_to_gui_pipe;
@@ -166,7 +162,7 @@ int engine_printf(const char *format, ...) {
     return ret;
 }
 
-// Redirected standard input reader for Cfish UCI thread
+// Redirected standard input reader for Cfish UCI thread (fgets)
 char* engine_fgets(char* str, int num, FILE* stream) {
     (void)stream;
     int bytes_read = 0;
@@ -182,6 +178,35 @@ char* engine_fgets(char* str, int num, FILE* stream) {
     if (bytes_read == 0) return NULL;
     str[bytes_read] = '\0';
     return str;
+}
+
+// Redirected standard input reader for Cfish UCI thread (getline)
+ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
+    (void)stream;
+    if (*lineptr == NULL || *n == 0) {
+        *n = 128;
+        *lineptr = malloc(*n);
+        if (*lineptr == NULL) return -1;
+    }
+
+    int i = 0;
+    while (1) {
+        char c;
+        if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
+            if (i >= (int)*n - 1) {
+                *n *= 2;
+                char *new_ptr = realloc(*lineptr, *n);
+                if (new_ptr == NULL) return -1;
+                *lineptr = new_ptr;
+            }
+            (*lineptr)[i++] = c;
+            if (c == '\n') break;
+        } else {
+            KThreadYield(); 
+        }
+    }
+    (*lineptr)[i] = '\0';
+    return i;
 }
 
 void init_board(BoardState *state);
@@ -204,7 +229,6 @@ void gui_cleanup() {
     fflush(stdout);
 }
 
-// Wii Video Initializer (Sets up terminal screen display)
 void init_wii_console() {
     VIDEO_Init();
     WPAD_Init();
@@ -220,7 +244,6 @@ void init_wii_console() {
     if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
 }
 
-// In-Process entry-point for Engine thread
 static sptr engine_thread_main(void *arg) {
     (void)arg;
     
@@ -235,7 +258,6 @@ static sptr engine_thread_main(void *arg) {
     options_init();
     search_clear();
 
-    // Call standard UCI command parser loop
     char *engine_argv[] = {"ucichess", NULL};
     uci_loop(1, engine_argv);
 
@@ -253,12 +275,13 @@ void start_engine() {
     // Setup redirect hooks
     engine_fgets_hook = engine_fgets;
     engine_printf_hook = engine_printf;
+    engine_getline_hook = engine_getline;
 
-    // Allocate stack and start the engine in a background Tuxedo thread
     engine_thread_stack = memalign(32, 128 * 1024);
     void* stack_top = (char*)engine_thread_stack + (128 * 1024);
     
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x40);
+    // Create the background engine context sharing identical scheduler slices (0x3f)
+    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x3f);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
@@ -966,7 +989,7 @@ void draw_ui() {
             if (p != 0) {
                 if (p > 0) fg_color = "\033[38;5;255m\033[1m"; 
                 switch (abs(p)) {
-                    case 1: piece_str = "P"; break; // Redefined text to safe ASCII mapping for Wii Console limits
+                    case 1: piece_str = "P"; break; 
                     case 2: piece_str = "N"; break;
                     case 3: piece_str = "B"; break;
                     case 4: piece_str = "R"; break;
@@ -991,7 +1014,6 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // Wiimote controls layout display
     printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [1] Undo | [2] Flip | [+] Sides | [-] Time | [HOME] Quit\033[0m\033[K\r\n");
     
     printf(" ");
@@ -1266,7 +1288,6 @@ void adjust_time_control() {
     }
 }
 
-// Maps Wiimote Buttons to Chess Actions
 void handle_wii_input() {
     WPAD_ScanPads();
     u32 pressed = WPAD_ButtonsDown(0);
@@ -1340,9 +1361,8 @@ int run_gui_mode() {
         draw_ui();
         handle_wii_input();
         read_from_engine();
-
-        KThreadSleepMs(16); // Wakes up GUI every 16ms, yielding CPU to the engine thread
-        //VIDEO_WaitVSync(); // Locks execution securely to standard 60Hz TV frame rates
+        
+        KThreadSleepMs(16); 
     }
     return 0;
 }
@@ -1350,7 +1370,7 @@ int run_gui_mode() {
 int main(int argc, char **argv)
 {
     init_wii_console();
-    bool force_gui = true; // Default to interactive GUI mode on Wii console output
+    bool force_gui = true; 
     bool force_cli = false;
 
     for (int i = 1; i < argc; i++) {
