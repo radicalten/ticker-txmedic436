@@ -1,10 +1,3 @@
-Here is the completely updated and rewritten standard C main file. 
-
-This version integrates with devkitPPC’s **Tuxedo scheduler** using proper **interrupt-safe blocking thread primitives (`KThrQueue`)**. Instead of wasting CPU cycles with active thread yielding or spin-polling, the engine input virtual pipe blocks the engine thread when empty using `KThrQueueBlock`. It wakes up instantly when the GUI writes command strings using `KThrQueueUnblockAllByValue`.
-
-### Pure C Wii Stockfish Main (`main.c`)
-
-```c
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
@@ -1491,4 +1484,3 @@ int main(int argc, char **argv)
 
     return run_gui_mode();
 }
-```
