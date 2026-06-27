@@ -217,7 +217,40 @@ uint64_t prng_sparse_rand(PRNG *rng)
   return r1 & r2 & r3;
 }
 
-#if !defined(__wii__) && !defined(GEKKO)
+#if defined(__wii__) || defined(GEKKO)
+// Custom robust cfish_getline implementation for Nintendo Wii
+ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
+{
+  if (*lineptr == NULL || *n == 0) {
+    *n = 128;
+    *lineptr = malloc(*n);
+    if (*lineptr == NULL) return -1;
+  }
+
+  int c;
+  size_t i = 0;
+  while ((c = getc(stream)) != EOF) {
+    // Ensure space for character and trailing null terminator
+    if (i >= *n - 1) {
+      *n *= 2;
+      char *new_ptr = realloc(*lineptr, *n);
+      if (new_ptr == NULL) return -1;
+      *lineptr = new_ptr;
+    }
+    (*lineptr)[i++] = c;
+    if (c == '\n') break;
+  }
+
+  if (i == 0 && c == EOF) {
+    return -1; // Standard EOF sentinel
+  }
+
+  (*lineptr)[i] = '\0';
+  return i;
+}
+#else
+// For non-Wii platforms, undefine the macro to prevent preprocessor expansion during definition
+#undef getline
 ssize_t getline(char **lineptr, size_t *n, FILE *stream)
 {
   if (*n == 0)
