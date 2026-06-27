@@ -38,3 +38,5 @@ chess5-timeman.h
 
 and what about devkitpro's tuxedo thread.h does this need to be applied anywhere?: 
 https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/thread.h
+
+and now what about my current thread.h and thread.c files? shall we update them? here is thread.h 
