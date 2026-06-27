@@ -27,7 +27,7 @@
 #include "thread.h"
 
 #if defined(__wii__) || defined(GEKKO)
-#include <tick.h> // devkitPro Tuxedo timer tasks header
+#include <tuxedo/tick.h> // devkitPro Tuxedo timer tasks header
 
 static KTickTask search_timer_task;
 static bool timer_running = false;
