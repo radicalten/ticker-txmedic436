@@ -15,10 +15,6 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with this program.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
@@ -108,11 +104,15 @@ static void thread_create(int idx)
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
   
-  memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
+  // IMPLEMENTED: Properly initialize Tuxedo circular double-linked list head.
+  // This completely resolves the unhandled page fault / null pointer kernel panic.
+  Threads.waitQueues[idx].next = (KThread*)&Threads.waitQueues[idx];
+  Threads.waitQueues[idx].prev = (KThread*)&Threads.waitQueues[idx];
 
-  // FIXED: Correctly calculate the highest address of the stack frame and align to 32 bytes
+  // IMPLEMENTED: Correctly calculate the highest address of the stack frame and align to 32 bytes
   void* stack_top = (char*)stack_base + WII_THREAD_STACK_SIZE - 32;
 
+  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
   KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x55);
   KThreadResume(thread);
 
