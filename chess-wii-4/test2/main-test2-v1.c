@@ -253,7 +253,7 @@ void start_engine() {
     engine_thread_stack = memalign(32, 128 * 1024);
     void* stack_top = (char*)engine_thread_stack + (128 * 1024);
     
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x40);
+    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x3f);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
