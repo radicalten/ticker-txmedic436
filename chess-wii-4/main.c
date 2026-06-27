@@ -1,3 +1,10 @@
+Here is the completely updated and rewritten standard C main file. 
+
+This version integrates with devkitPPC’s **Tuxedo scheduler** using proper **interrupt-safe blocking thread primitives (`KThrQueue`)**. Instead of wasting CPU cycles with active thread yielding or spin-polling, the engine input virtual pipe blocks the engine thread when empty using `KThrQueueBlock`. It wakes up instantly when the GUI writes command strings using `KThrQueueUnblockAllByValue`.
+
+### Pure C Wii Stockfish Main (`main.c`)
+
+```c
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
@@ -22,13 +29,67 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <termios.h>
-#include <fcntl.h>
-#include <sys/select.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
 #include <stdbool.h>
+#include <fcntl.h>
+#include <sys/reent.h>
+#include <sys/iosupport.h>
+
+/* Wii Standard libogc libraries */
+#include <gccore.h>
+#include <wiiuse/wpad.h>
+#include <fat.h>
+
+/* devkitPPC Tuxedo Threading System */
+#include "types.h"
+#include "ppc/context.h"
+#include "ppc/intrinsics.h"
+#include "tick.h"
+
+#define KTHR_MAX_PRIO  0
+#define KTHR_MAIN_PRIO 0x3f
+#define KTHR_MIN_PRIO  0x7f
+
+typedef struct KThread KThread;
+
+typedef struct KThrQueue {
+    KThread* next;
+    KThread* prev;
+} KThrQueue;
+
+struct KThread {
+    PPCContext ctx;
+    KThread* next;
+    u16 state;
+    u16 suspend;
+    u16 prio;
+    u16 baseprio;
+    KThrQueue waiters;
+    union {
+        struct {
+            KThrQueue link;
+            KThrQueue* queue;
+            uptr token;
+        } wait;
+        struct {
+            sptr rc;
+        } finish;
+    };
+    struct _reent r;
+};
+
+/* External declarations for Tuxedo scheduling primitives */
+extern void KThreadPrepare(KThread* t, sptr (*entrypoint)(void*), void* arg, void* stack_top, u16 prio);
+extern void KThreadResume(KThread* t);
+extern void KThreadSuspend(KThread* t);
+extern void KThreadSetPrio(KThread* t, u16 prio);
+extern sptr KThreadJoin(KThread* t);
+extern void KThreadYield(void);
+extern void KThreadSleepTicks(u64 ticks);
+extern void KThreadExit(sptr rc);
+extern KThread* KThreadGetSelf(void);
+
+extern uptr KThrQueueBlock(KThrQueue* q, uptr token);
+extern void KThrQueueUnblockAllByValue(KThrQueue* q, uptr ref);
 
 #include "bitboard.h"
 #include "endgame.h"
@@ -43,69 +104,155 @@
 
 #define MAX_HISTORY 2048
 
-// Board representation
+/* Interrupt-safe, scheduler-blocking C circular queue (FIFO) */
 typedef struct {
-    int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
-    int turn;      // 1 = White, -1 = Black
-    int castle;    // Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ
-    int ep;        // En-passant square (0-63), -1 if none
-    int halfmoves; // For 50-move rule
+    char data[32768];
+    volatile int head;
+    volatile int tail;
+    KThrQueue queue;
+} BlockingFIFO;
+
+BlockingFIFO engine_input_fifo;
+BlockingFIFO engine_output_fifo;
+
+void fifo_init(BlockingFIFO *f) {
+    f->head = 0;
+    f->tail = 0;
+    f->queue.next = NULL;
+    f->queue.prev = NULL;
+}
+
+void fifo_write(BlockingFIFO *f, const char *buf, int len) {
+    PPCIrqState st = PPCIrqLockByMsr();
+    for (int i = 0; i < len; i++) {
+        int next = (f->head + 1) % sizeof(f->data);
+        if (next == f->tail) {
+            break; /* Buffer full; prevent memory overwrite */
+        }
+        f->data[f->head] = buf[i];
+        f->head = next;
+    }
+    /* Wake up any background threads suspended waiting on this FIFO */
+    KThrQueueUnblockAllByValue(&f->queue, 0);
+    PPCIrqUnlockByMsr(st);
+}
+
+int fifo_read(BlockingFIFO *f, char *buf, int max_len, int block) {
+    PPCIrqState st = PPCIrqLockByMsr();
+    while (f->tail == f->head) {
+        if (!block) {
+            PPCIrqUnlockByMsr(st);
+            return 0;
+        }
+        /* Put the calling thread to sleep using the Tuxedo scheduler queue */
+        KThrQueueBlock(&f->queue, 0);
+    }
+    
+    int read_bytes = 0;
+    while (f->tail != f->head && read_bytes < max_len) {
+        buf[read_bytes++] = f->data[f->tail];
+        f->tail = (f->tail + 1) % sizeof(f->data);
+    }
+    PPCIrqUnlockByMsr(st);
+    return read_bytes;
+}
+
+/* Virtual devoptab device driver to route C standard streams through the FIFOs */
+static int dev_pipe_open(struct _reent *r, void *fileStruct, const char *path, int flags, int mode) {
+    return 0;
+}
+
+static int dev_pipe_close(struct _reent *r, void *fileStruct) {
+    return 0;
+}
+
+static int dev_pipe_write(struct _reent *r, void *fileStruct, const char *ptr, int len) {
+    fifo_write(&engine_output_fifo, ptr, len);
+    return len;
+}
+
+static int dev_pipe_read(struct _reent *r, void *fileStruct, char *ptr, int len) {
+    /* Blocks natively using the Tuxedo Scheduler when the buffer is empty */
+    return fifo_read(&engine_input_fifo, ptr, len, 1);
+}
+
+static const devoptab_t dev_pipe_devoptab = {
+    "engine_pipe",
+    0,
+    dev_pipe_open,
+    dev_pipe_close,
+    dev_pipe_write,
+    dev_pipe_read,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    0,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+};
+
+/* Board representation */
+typedef struct {
+    int board[64]; /* P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black) */
+    int turn;      /* 1 = White, -1 = Black */
+    int castle;    /* Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ */
+    int ep;        /* En-passant square (0-63), -1 if none */
+    int halfmoves; /* For 50-move rule */
     int fullmoves;
 } BoardState;
 
-// Renamed to GuiMove to prevent namespace clashes with Stockfish's Move
 typedef struct {
     int from;
     int to;
-    int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
+    int promo; /* 0=None, 2=N, 3=B, 4=R, 5=Q */
 } GuiMove;
 
-// Global GUI state
+/* Global GUI state */
 BoardState current_state;
 BoardState history[MAX_HISTORY];
 GuiMove move_history[MAX_HISTORY];
 int history_count = 0;
 
-int cursor_r = 6;  // Screen row (0-7)
-int cursor_c = 4;  // Screen col (0-7)
+int cursor_r = 6;  /* Screen row (0-7) */
+int cursor_c = 4;  /* Screen col (0-7) */
 int selected_sq = -1;
 
-int board_orientation = 1; // 1 = White on bottom, -1 = Black on bottom
-int user_side = 1;         // 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI)
+int board_orientation = 1; /* 1 = White on bottom, -1 = Black on bottom */
+int user_side = 1;         /* 1 = White, -1 = Black, 0 = Hotseat, 2 = Watch (AI vs AI) */
 
-int time_control_type = 0;   // 0 = Time (ms), 1 = Depth, 2 = Nodes
-int time_control_val = 1;    // Default: 1 ms
+int time_control_type = 0;   /* 0 = Time (ms), 1 = Depth, 2 = Nodes */
+int time_control_val = 1;    /* Default: 1 ms */
 
-int engine_in[2] = {-1, -1};
-int engine_out[2] = {-1, -1};
-pid_t engine_pid = -1;
+/* Tuxedo Thread State configuration */
+static KThread engine_thread;
+static u8 engine_stack[256 * 1024] __attribute__((aligned(32)));
+volatile bool engine_running = false;
 int engine_thinking = 0;
 
-// Handshake Tracking
+/* Handshake Tracking */
 bool engine_recvd_uciok = false;
 bool engine_recvd_readyok = false;
-char engine_console_log[3][128] = { "", "", "" }; // Last 3 engine UCI signals (excluding verbose info lines)
+char engine_console_log[3][128] = { "", "", "" }; 
 
-// Engine live performance metrics
-long long engine_nps = 0;      // Tracks current/last search nodes per second
-int engine_depth = 0;          // Search depth
-int engine_seldepth = 0;       // Selective depth
-int engine_time_ms = 0;        // Thinking time elapsed in ms
-long long engine_nodes = 0;    // Absolute total nodes searched
-int engine_hashfull = 0;       // Hash table saturation (permille from UCI)
-long long engine_tbhits = 0;   // Tablebase hits
+/* Engine live performance metrics */
+long long engine_nps = 0;      
+int engine_depth = 0;          
+int engine_seldepth = 0;       
+int engine_time_ms = 0;        
+long long engine_nodes = 0;    
+int engine_hashfull = 0;       
+long long engine_tbhits = 0;   
 
-// Tracks evaluation point values from UCI engine
-int engine_score_type = -1;  // -1 = None, 0 = cp (centipawns), 1 = mate
-int engine_score_val = 0;    // Evaluation score from White's perspective
+int engine_score_type = -1;  
+int engine_score_val = 0;    
 
-char engine_pv[1024] = "";   // Holds the engine's current thinking/principal variation line
+char engine_pv[1024] = "";   
 
 char engine_buffer[8192];
 int engine_buf_len = 0;
-struct termios orig_termios;
 
-// Forward declarations of GUI functions
+/* Wii Screen Video Framebuffer configurations */
+static void *xfb = NULL;
+static GXRModeObj *rmode = NULL;
+
+/* Forward declarations */
 void init_board(BoardState *state);
 int is_legal_gui_move(const BoardState *state, GuiMove m);
 int has_legal_moves(const BoardState *state);
@@ -116,97 +263,93 @@ void print_recent_moves(int row);
 void send_to_engine(const char *cmd);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
-int get_promo_choice();
+int get_promo_choice(void);
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
-void reset_engine_metrics();
+void reset_engine_metrics(void);
 void log_engine_line(const char *line);
 
-// Clean up termios and terminate engine processes
-void gui_cleanup() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-    printf("\033[?25h\033[2J\033[H"); // Show cursor, clear screen
+void gui_cleanup(void) {
+    printf("\033[?25h\033[2J\033[H");
     fflush(stdout);
-    if (engine_pid > 0) {
-        kill(engine_pid, SIGKILL);
+    if (engine_running) {
+        send_to_engine("quit\n");
+        KThreadJoin(&engine_thread);
+        engine_running = false;
     }
 }
 
-void gui_handle_signal(int sig) {
-    (void)sig;
-    exit(0);
+/* Engine thread entrypoint */
+sptr engine_thread_func(void* arg) {
+    (void)arg;
+    engine_running = true;
+
+    /* Initialize Thread-Local storage and reentrancy structures */
+    struct _reent* r = &KThreadGetSelf()->r;
+    _REENT_INIT_PTR(r);
+
+    /* Open file structures routed through our custom pipe channels */
+    FILE* pipe_in = fopen("engine_pipe:/io", "r");
+    FILE* pipe_out = fopen("engine_pipe:/io", "w");
+
+    /* Bind standard stream mappings to use the thread-local pipeline descriptors */
+    r->_stdin = pipe_in;
+    r->_stdout = pipe_out;
+    r->_stderr = pipe_out;
+
+    print_engine_info(false);
+    psqt_init();
+    bitboards_init();
+    zob_init();
+    bitbases_init();
+#ifndef NNUE_PURE
+    endgames_init();
+#endif
+    threads_init();
+    options_init();
+    search_clear();
+
+    char *engine_argv[] = {"ucichess", NULL};
+    uci_loop(1, engine_argv);
+
+    threads_exit();
+    TB_free();
+    options_free();
+    tt_free();
+    pb_free();
+#ifdef NNUE
+    nnue_free();
+#endif
+
+    fclose(pipe_in);
+    fclose(pipe_out);
+
+    engine_running = false;
+    KThreadExit(0);
+    return 0;
 }
 
-void enable_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    raw.c_oflag &= ~(OPOST);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1; // 100ms timeout
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    printf("\033[?25l"); // Hide cursor
-}
-
-// Spawns the integrated UCI Engine in a child process
-void start_engine() {
+void start_engine(void) {
     engine_recvd_uciok = false;
     engine_recvd_readyok = false;
     memset(engine_console_log, 0, sizeof(engine_console_log));
 
-    if (pipe(engine_in) < 0 || pipe(engine_out) < 0) return;
-    engine_pid = fork();
-    if (engine_pid == 0) { // Child
-        dup2(engine_in[0], STDIN_FILENO);
-        dup2(engine_out[1], STDOUT_FILENO);
-        close(engine_in[1]);
-        close(engine_out[0]);
-        // Silence stderr
-        int fd_err = open("/dev/null", O_WRONLY);
-        dup2(fd_err, STDERR_FILENO);
+    fifo_init(&engine_input_fifo);
+    fifo_init(&engine_output_fifo);
 
-        // Run the engine setup in-process
-        print_engine_info(false);
-        psqt_init();
-        bitboards_init();
-        zob_init();
-        bitbases_init();
-#ifndef NNUE_PURE
-        endgames_init();
-#endif
-        threads_init();
-        options_init();
-        search_clear();
+    /* Register Devoptab driver for Virtual Stdio streams redirection */
+    AddDevice(&dev_pipe_devoptab);
 
-        // Run the UCI command loop on standard input
-        char *engine_argv[] = {"ucichess", NULL};
-        uci_loop(1, engine_argv);
+    /* Spawn Tuxedo background worker thread at standard system priority level */
+    KThreadPrepare(&engine_thread, engine_thread_func, NULL, engine_stack + sizeof(engine_stack), KTHR_MAIN_PRIO);
+    KThreadResume(&engine_thread);
 
-        // Clean up when UCI loop terminates
-        threads_exit();
-        TB_free();
-        options_free();
-        tt_free();
-        pb_free();
-#ifdef NNUE
-        nnue_free();
-#endif
-        exit(0); 
-    } else if (engine_pid > 0) { // Parent
-        close(engine_in[0]);
-        close(engine_out[1]);
-        fcntl(engine_out[0], F_SETFL, O_NONBLOCK);
-        
-        // Begin handshakes
-        log_engine_line("GUI -> uci");
-        log_engine_line("GUI -> isready");
-        write(engine_in[1], "uci\nisready\n", 12);
-    }
+    log_engine_line("GUI -> uci");
+    log_engine_line("GUI -> isready");
+    send_to_engine("uci\nisready\n");
 }
 
 void send_to_engine(const char *cmd) {
-    if (engine_pid > 0) {
-        // Output sent commands to the live console view
+    if (engine_running) {
         char clean_cmd[128];
         strncpy(clean_cmd, cmd, sizeof(clean_cmd) - 1);
         clean_cmd[sizeof(clean_cmd) - 1] = '\0';
@@ -218,12 +361,10 @@ void send_to_engine(const char *cmd) {
         snprintf(log_buf, sizeof(log_buf), "GUI -> %s", clean_cmd);
         log_engine_line(log_buf);
 
-        int ignored = write(engine_in[1], cmd, strlen(cmd));
-        (void)ignored;
+        fifo_write(&engine_input_fifo, cmd, strlen(cmd));
     }
 }
 
-// Push a line onto our console log shifting existing entries back
 void log_engine_line(const char *line) {
     strncpy(engine_console_log[2], engine_console_log[1], sizeof(engine_console_log[2]) - 1);
     engine_console_log[2][sizeof(engine_console_log[2]) - 1] = '\0';
@@ -235,7 +376,6 @@ void log_engine_line(const char *line) {
     engine_console_log[0][sizeof(engine_console_log[0]) - 1] = '\0';
 }
 
-// Maps board array index to GUI screen rows/cols based on orientation
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
         return r * 8 + c;
@@ -244,7 +384,6 @@ int screen_to_board_sq(int r, int c) {
     }
 }
 
-// Move encoding/decoding
 void move_to_uci(GuiMove m, char *buf) {
     int f_col = m.from % 8;
     int f_row = 8 - (m.from / 8);
@@ -260,14 +399,12 @@ void move_to_uci(GuiMove m, char *buf) {
     }
 }
 
-// Translates a GUI board position and raw move parameters into standardized PGN notation
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
     int p = state->board[m.from];
     int abs_p = abs(p);
     int target = state->board[m.to];
     int is_cap = (target != 0) || (abs_p == 1 && m.to == state->ep);
 
-    // Castling Detection
     if (abs_p == 6 && abs(m.from - m.to) == 2) {
         if (m.to > m.from) {
             strcpy(buf, "O-O");
@@ -276,7 +413,6 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
         }
     } else {
         char *ptr = buf;
-        // Piece Type Prefixes
         if (abs_p == 1) {
             if (is_cap) {
                 *ptr++ = 'a' + (m.from % 8);
@@ -289,14 +425,13 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
             else if (abs_p == 5) *ptr++ = 'Q';
             else if (abs_p == 6) *ptr++ = 'K';
 
-            // Disambiguate identical pieces capable of arriving at the same destination
             if (abs_p >= 2 && abs_p <= 5) {
                 int file_conflict = 0;
                 int rank_conflict = 0;
                 int conflict_exists = 0;
                 for (int sq = 0; sq < 64; sq++) {
                     if (sq == m.from) continue;
-                    if (state->board[sq] == p) { // Same piece type & color
+                    if (state->board[sq] == p) {
                         GuiMove test_m = {sq, m.to, 0};
                         if (is_legal_gui_move(state, test_m)) {
                             conflict_exists = 1;
@@ -322,11 +457,9 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
             }
         }
 
-        // Destination Square coordinates
         *ptr++ = 'a' + (m.to % 8);
         *ptr++ = '8' - (m.to / 8);
 
-        // Promotions Suffix
         if (abs_p == 1 && m.promo != 0) {
             *ptr++ = '=';
             if (m.promo == 5) *ptr++ = 'Q';
@@ -337,7 +470,6 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf) {
         *ptr = '\0';
     }
 
-    // Check & Checkmate Evaluations
     BoardState next;
     make_gui_move(state, &next, m);
     int opp_king = find_king(&next, next.turn);
@@ -364,12 +496,11 @@ GuiMove uci_to_gui_move(const char *str) {
         if (p == 'n') m.promo = 2;
         else if (p == 'b') m.promo = 3;
         else if (p == 'r') m.promo = 4;
-        else m.promo = 5; // Default promo to Queen
+        else m.promo = 5;
     }
     return m;
 }
 
-// Saves board history
 void push_state(const BoardState *state, GuiMove m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
@@ -378,8 +509,7 @@ void push_state(const BoardState *state, GuiMove m) {
     }
 }
 
-// Resets internal metric variables on new calculations
-void reset_engine_metrics() {
+void reset_engine_metrics(void) {
     engine_nps = 0;
     engine_score_type = -1;
     engine_score_val = 0;
@@ -392,11 +522,10 @@ void reset_engine_metrics() {
     engine_tbhits = 0;
 }
 
-// UCI Position Command Builder (With overflow prevention)
-void trigger_engine_move() {
+void trigger_engine_move(void) {
     reset_engine_metrics();
 
-    static char cmd[32768]; // Allocate statically to prevent stack overflows
+    static char cmd[32768];
     cmd[0] = '\0';
     strcpy(cmd, "position startpos moves");
     
@@ -406,7 +535,6 @@ void trigger_engine_move() {
         move_to_uci(move_history[i], uci_m);
         int move_len = strlen(uci_m);
         
-        // Ensure we don't write outside the static buffer boundary
         if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) {
             break; 
         }
@@ -430,16 +558,13 @@ void trigger_engine_move() {
     send_to_engine(go_cmd);
 }
 
-// Parsing incoming engine text
 void process_engine_output(char *line) {
-    // Sanitize carriage returns and trailing spaces
     int len = strlen(line);
     while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
         line[len - 1] = '\0';
         len--;
     }
 
-    // Capture standard handshake states
     if (strcmp(line, "uciok") == 0) {
         engine_recvd_uciok = true;
     }
@@ -447,24 +572,20 @@ void process_engine_output(char *line) {
         engine_recvd_readyok = true;
     }
 
-    // Exclude verbose search logs ("info ") from our readable Console log
     if (strncmp(line, "info", 4) != 0 && strlen(line) > 0) {
         char clean_line[140];
         snprintf(clean_line, sizeof(clean_line), "ENG -> %s", line);
         log_engine_line(clean_line);
     }
 
-    // Capture nodes per second (nps) and scores from engine update lines
     if (strncmp(line, "info", 4) == 0) {
         char *ptr;
 
-        // NPS
         if ((ptr = strstr(line, " nps "))) {
             long long val;
             if (sscanf(ptr, " nps %lld", &val) == 1) engine_nps = val;
         }
 
-        // Search evaluations
         if ((ptr = strstr(line, " score "))) {
             int score_val = 0;
             char score_type[16];
@@ -479,43 +600,36 @@ void process_engine_output(char *line) {
             }
         }
 
-        // Depth
         if ((ptr = strstr(line, " depth "))) {
             int d = 0;
             if (sscanf(ptr, " depth %d", &d) == 1) engine_depth = d;
         }
 
-        // Seldepth
         if ((ptr = strstr(line, " seldepth "))) {
             int sd = 0;
             if (sscanf(ptr, " seldepth %d", &sd) == 1) engine_seldepth = sd;
         }
 
-        // Time
         if ((ptr = strstr(line, " time "))) {
             int t = 0;
             if (sscanf(ptr, " time %d", &t) == 1) engine_time_ms = t;
         }
 
-        // Nodes
         if ((ptr = strstr(line, " nodes "))) {
             long long n = 0;
             if (sscanf(ptr, " nodes %lld", &n) == 1) engine_nodes = n;
         }
 
-        // Hashfull
         if ((ptr = strstr(line, " hashfull "))) {
             int h = 0;
             if (sscanf(ptr, " hashfull %d", &h) == 1) engine_hashfull = h;
         }
 
-        // Tablebase Hits
         if ((ptr = strstr(line, " tbhits "))) {
             long long tb = 0;
             if (sscanf(ptr, " tbhits %lld", &tb) == 1) engine_tbhits = tb;
         }
 
-        // Parse the Principal Variation (PV) string
         if ((ptr = strstr(line, " pv "))) {
             strncpy(engine_pv, ptr + 4, sizeof(engine_pv) - 1);
             engine_pv[sizeof(engine_pv) - 1] = '\0';
@@ -541,11 +655,11 @@ void process_engine_output(char *line) {
     }
 }
 
-// Dynamic stream parser ensures stdout pipes never clog
-void read_from_engine() {
+void read_from_engine(void) {
     char tmp[4096];
     int n;
-    while ((n = read(engine_out[0], tmp, sizeof(tmp) - 1)) > 0) {
+    /* Reads non-blocking from the internal output FIFO buffer */
+    while ((n = fifo_read(&engine_output_fifo, tmp, sizeof(tmp) - 1, 0)) > 0) {
         tmp[n] = '\0';
         for (int i = 0; i < n; i++) {
             if (tmp[i] == '\n') {
@@ -568,7 +682,6 @@ void read_from_engine() {
     }
 }
 
-// Game Rules Validation Logic
 int find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
@@ -579,7 +692,6 @@ int find_king(const BoardState *state, int color) {
 int is_square_attacked(const BoardState *state, int sq, int attacker) {
     int r = sq / 8, c = sq % 8;
 
-    // Knight attacks
     int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
     int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
     for (int i = 0; i < 8; i++) {
@@ -589,7 +701,6 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    // King attacks
     int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
     int kg_c[] = {-1, 0, 1, -1, 1, -1, 0, 1};
     for (int i = 0; i < 8; i++) {
@@ -599,7 +710,6 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    // Pawn attacks
     int p_offset = (attacker == 1) ? 1 : -1;
     for (int dc = -1; dc <= 1; dc += 2) {
         int nr = r + p_offset, nc = c + dc;
@@ -608,7 +718,6 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    // Bishop / Queen diagonals
     int d_r[] = {-1, -1, 1, 1};
     int d_c[] = {-1, 1, -1, 1};
     for (int i = 0; i < 4; i++) {
@@ -623,7 +732,6 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
         }
     }
 
-    // Rook / Queen slide
     int s_r[] = {-1, 1, 0, 0};
     int s_c[] = {0, 0, -1, 1};
     for (int i = 0; i < 4; i++) {
@@ -656,7 +764,7 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
     int abs_dr = abs(dr), abs_dc = abs(dc);
 
     switch (abs(p)) {
-        case 1: { // Pawn
+        case 1: { 
             int dir = (turn == 1) ? -1 : 1;
             if (dc == 0 && dr == dir && target == 0) return 1;
             int start_r = (turn == 1) ? 6 : 1;
@@ -669,9 +777,9 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
             }
             return 0;
         }
-        case 2: // Knight
+        case 2: 
             return ((abs_dr == 2 && abs_dc == 1) || (abs_dr == 1 && abs_dc == 2));
-        case 3: { // Bishop
+        case 3: { 
             if (abs_dr != abs_dc) return 0;
             int sr = (dr > 0) ? 1 : -1, sc = (dc > 0) ? 1 : -1;
             int r = fr + sr, c = fc + sc;
@@ -681,7 +789,7 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
             }
             return 1;
         }
-        case 4: { // Rook
+        case 4: { 
             if (dr != 0 && dc != 0) return 0;
             int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
             int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
@@ -692,7 +800,7 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
             }
             return 1;
         }
-        case 5: { // Queen
+        case 5: { 
             if (abs_dr != abs_dc && dr != 0 && dc != 0) return 0;
             int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
             int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
@@ -707,9 +815,8 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m) {
             }
             return 1;
         }
-        case 6: { // King
+        case 6: { 
             if (abs_dr <= 1 && abs_dc <= 1) return 1;
-            // Castling
             if (dr == 0 && abs_dc == 2) {
                 if (turn == 1 && fr == 7 && fc == 4) {
                     if (m.to == 62 && (state->castle & 1)) {
@@ -766,7 +873,7 @@ int has_legal_moves(const BoardState *state) {
         for (int t = 0; t < 64; t++) {
             GuiMove m = {f, t, 0};
             if (abs(state->board[f]) == 1 && (t / 8 == 0 || t / 8 == 7)) {
-                m.promo = 5; // Validate via auto-Queen promo simulation
+                m.promo = 5; 
             }
             if (is_legal_gui_move(state, m)) return 1;
         }
@@ -775,7 +882,7 @@ int has_legal_moves(const BoardState *state) {
 }
 
 int count_repetitions(const BoardState *state) {
-    int count = 1; // Count current active position
+    int count = 1; 
     for (int i = 0; i < history_count; i++) {
         if (state->turn == history[i].turn &&
             state->castle == history[i].castle &&
@@ -834,11 +941,9 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Drawing and Terminal ANSI Output
-void draw_ui() {
-    printf("\033[H\r\n"); // Place cursor top-left (no full clear to prevent flickering)
+void draw_ui(void) {
+    printf("\033[H\r\n"); 
 
-    // 1. Unified Game Header (Status, Player Modes & Time-Control combined)
     const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
     int king = find_king(&current_state, current_state.turn);
     int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
@@ -873,7 +978,6 @@ void draw_ui() {
     }
     printf("\033[K\r\n\r\n");
 
-    // 2. Column Coordinates Header (Padded to 31 characters to align side panel perfectly)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
@@ -882,7 +986,6 @@ void draw_ui() {
     print_side_panel_line(0);
     printf("\033[K\r\n");
 
-    // Determine if either king is in check
     int king_in_check = -1;
     int w_king = find_king(&current_state, 1);
     int b_king = find_king(&current_state, -1);
@@ -892,7 +995,6 @@ void draw_ui() {
         king_in_check = b_king;
     }
 
-    // 3. Render 8 Board Rows (Side panel index 1 to 8)
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -907,7 +1009,6 @@ void draw_ui() {
             int is_selected = (sq == selected_sq);
             int is_cursor = (r == cursor_r && c == cursor_c);
 
-            // Highlight previous move
             int is_prev_move = 0;
             if (history_count > 0) {
                 GuiMove last_move = move_history[history_count - 1];
@@ -927,31 +1028,34 @@ void draw_ui() {
                 }
             }
 
+            /* Map styles to standard ANSI 8 colors supported natively by Wii terminals */
             if (is_cursor) {
-                bg_color = "\033[48;5;208m"; // Bright orange for active cursor
+                bg_color = "\033[43m"; 
             } else if (is_selected) {
-                bg_color = "\033[48;5;34m";  // Green highlight for selected piece
+                bg_color = "\033[42m"; 
             } else if (sq == king_in_check) {
-                bg_color = "\033[48;5;196m"; // Bright red highlight for king in check
+                bg_color = "\033[41m"; 
             } else if (is_prev_move) {
-                bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; // Sky/Steel Blue for previous moves
+                bg_color = "\033[46m"; 
             } else if (is_legal_dest) {
-                bg_color = is_light ? "\033[48;5;151m" : "\033[48;5;108m"; // Soft greens for legal destinations
+                bg_color = "\033[45m"; 
             } else {
-                bg_color = is_light ? "\033[48;5;180m" : "\033[48;5;94m"; // Wood tones (Light Maple vs Dark Walnut)
+                bg_color = is_light ? "\033[47m" : "\033[40m"; 
             }
 
             const char *piece_str = " ";
-            const char *fg_color = "\033[38;5;232m"; // Black Pieces
+            const char *fg_color = "\033[30m"; 
             if (p != 0) {
-                if (p > 0) fg_color = "\033[38;5;255m\033[1m"; // Bold white Pieces
+                if (p > 0) fg_color = "\033[1;37m"; 
+                else       fg_color = "\033[1;35m"; 
+                
                 switch (abs(p)) {
-                    case 1: piece_str = "♟"; break;
-                    case 2: piece_str = "♞"; break;
-                    case 3: piece_str = "♝"; break;
-                    case 4: piece_str = "♜"; break;
-                    case 5: piece_str = "♛"; break;
-                    case 6: piece_str = "♚"; break;
+                    case 1: piece_str = (p > 0) ? "P" : "p"; break;
+                    case 2: piece_str = (p > 0) ? "N" : "n"; break;
+                    case 3: piece_str = (p > 0) ? "B" : "b"; break;
+                    case 4: piece_str = (p > 0) ? "R" : "r"; break;
+                    case 5: piece_str = (p > 0) ? "Q" : "q"; break;
+                    case 6: piece_str = (p > 0) ? "K" : "k"; break;
                 }
             }
 
@@ -960,10 +1064,9 @@ void draw_ui() {
 
         printf(" %d ", rank_lbl);
         print_side_panel_line(r + 1);
-        printf("\033[K\r\n"); // Wipe leftover characters to prevent screen residue
+        printf("\033[K\r\n"); 
     }
 
-    // 4. Column Coordinates Footer (Padded to 31 characters, side panel index 9)
     if (board_orientation == 1) {
         printf("     a  b  c  d  e  f  g  h    ");
     } else {
@@ -972,12 +1075,10 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // Unified single-line controls bar
-    printf(" \033[38;5;245m[U] Undo | [R] Reset | [O] Flip | [S] Sides | [T] Time | [V] Value | [Q] Quit\033[0m\033[K\r\n");
+    printf(" \033[37m[B] Undo | [+] Reset | [-] Switch Sides | [1] Time Type | [2] Change Val\033[0m\033[K\r\n");
     
-    // 5. Shortened Unified Engine Status & performance Reports row
     printf(" ");
-    if (engine_pid > 0) {
+    if (engine_running) {
         if (engine_recvd_readyok) {
             printf("\033[1;32mReady\033[0m");
         } else if (engine_recvd_uciok) {
@@ -986,16 +1087,13 @@ void draw_ui() {
             printf("\033[1;34mConnecting...\033[0m");
         }
 
-        // Live calculation report metrics
         if (engine_thinking) {
-            // Nps
             if (engine_nps > 0) {
                 if (engine_nps >= 1000000)      printf(" | Nps: %.2fM", (double)engine_nps / 1000000.0);
                 else if (engine_nps >= 1000)    printf(" | Nps: %.1fk", (double)engine_nps / 1000.0);
                 else                            printf(" | Nps: %lld", engine_nps);
             }
 
-            // Eval Point Display (White's Perspective)
             if (engine_score_type == 0) {
                 if (engine_score_val > 0) {
                     printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
@@ -1014,35 +1112,29 @@ void draw_ui() {
                 }
             }
 
-            // Depth (D)
             if (engine_depth > 0) {
                 if (engine_seldepth > 0) printf(" | D: %d/%d", engine_depth, engine_seldepth);
                 else                     printf(" | D: %d", engine_depth);
             }
 
-            // Absolute Nodes count (N)
             if (engine_nodes > 0) {
                 if (engine_nodes >= 1000000)    printf(" | N: %.2fM", (double)engine_nodes / 1000000.0);
                 else if (engine_nodes >= 1000)  printf(" | N: %.1fk", (double)engine_nodes / 1000.0);
                 else                            printf(" | N: %lld", engine_nodes);
             }
 
-            // Time elapsed (T)
             if (engine_time_ms > 0) {
                 printf(" | T: %.2fs", (double)engine_time_ms / 1000.0);
             }
 
-            // Hash saturation metrics (H)
             if (engine_hashfull > 0) {
                 printf(" | H: %.1f%%", (double)engine_hashfull / 10.0);
             }
 
-            // Tablebase probe metrics (TB)
             if (engine_tbhits > 0) {
                 printf(" | TB: %lld", engine_tbhits);
             }
         } else {
-            // Render evaluation static value if available while idle
             if (engine_score_type == 0) {
                 if (engine_score_val > 0) {
                     printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
@@ -1060,30 +1152,28 @@ void draw_ui() {
                     printf(" | Eval: M0");
                 }
             }
-            printf(" | \033[38;5;243mIdle\033[0m");
+            printf(" | \033[37mIdle\033[0m");
         }
     } else {
         printf("\033[1;31mOffline\033[0m");
     }
     printf("\033[K\r\n");
 
-    // 6. Prints raw, clean console logs directly (Reserved space layout)
-    if (engine_pid > 0) {
+    if (engine_running) {
         for (int i = 2; i >= 0; i--) {
             if (strlen(engine_console_log[i]) > 0) {
-                printf(" \033[38;5;244m%s\033[0m\033[K\r\n", engine_console_log[i]);
+                printf(" \033[37m%s\033[0m\033[K\r\n", engine_console_log[i]);
             } else {
-                printf("\033[K\r\n"); // Print space-holding empty line to prevent layout jitter
+                printf("\033[K\r\n"); 
             }
         }
     }
 
-    // 7. Prints the dynamic PV thinking line from the engine right at the bottom
-    if (engine_pid > 0 && strlen(engine_pv) > 0) {
-        printf(" \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K\r\n", engine_depth, engine_pv);
+    if (engine_running && strlen(engine_pv) > 0) {
+        printf(" \033[37mPV (Depth %d):\033[0m \033[37m%s\033[0m\033[K\r\n", engine_depth, engine_pv);
     }
     
-    printf("\033[J"); // Clears everything below the active boundaries to avoid visual trails
+    printf("\033[J"); 
     fflush(stdout);
 }
 
@@ -1095,7 +1185,7 @@ void print_side_panel_line(int panel_row) {
 void print_recent_moves(int row) {
     int total_full_moves = (history_count + 1) / 2;
     if (total_full_moves == 0) {
-        return; // Render completely blank rows when history is cleared
+        return; 
     }
     int start_move = 1;
     if (total_full_moves > 10) {
@@ -1103,7 +1193,7 @@ void print_recent_moves(int row) {
     }
     int display = start_move + row;
     if (display > total_full_moves) {
-        return; // Keep rows empty if they exceed the current history depth
+        return; 
     }
 
     int w_idx = (display - 1) * 2;
@@ -1130,29 +1220,40 @@ void print_recent_moves(int row) {
     }
 }
 
-// Blocks and prompts user synchronously to select an under-promotion piece
-int get_promo_choice() {
-    printf("\r\n \033[1;33mPromote pawn to: [Q]ueen, [R]ook, [B]ishop, [N]ight\033[0m");
+int get_promo_choice(void) {
+    printf("\r\n \033[1;33mPromote: [A] Queen, [B] Rook, [1] Bishop, [2] Knight\033[0m");
     fflush(stdout);
-    char c;
     int choice = 5;
     while (1) {
-        if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == 'q' || c == 'Q') { choice = 5; break; }
-            if (c == 'r' || c == 'R') { choice = 4; break; }
-            if (c == 'b' || c == 'B') { choice = 3; break; }
-            if (c == 'n' || c == 'N' || c == 'k' || c == 'K') { choice = 2; break; }
+        VIDEO_WaitVSync();
+        WPAD_ScanPads();
+        PAD_ScanPads();
+        u32 pressed = WPAD_ButtonsDown(0);
+        u32 gc_pressed = PAD_ButtonsDown(0);
+
+        if ((pressed & WPAD_BUTTON_A) || (gc_pressed & PAD_BUTTON_A)) {
+            choice = 5; 
+            break;
+        }
+        if ((pressed & WPAD_BUTTON_B) || (gc_pressed & PAD_BUTTON_B)) {
+            choice = 4; 
+            break;
+        }
+        if ((pressed & WPAD_BUTTON_1) || (gc_pressed & PAD_BUTTON_X)) {
+            choice = 3; 
+            break;
+        }
+        if ((pressed & WPAD_BUTTON_2) || (gc_pressed & PAD_BUTTON_Y)) {
+            choice = 2; 
+            break;
         }
     }
-    // Erase the prompt from screen right after selection is made
     printf("\r\033[K\033[A\033[K");
     fflush(stdout);
     return choice;
 }
 
-// GUI Action / Setting Handlers
-void handle_select() {
-    // If checkmate, stalemate, 50-move draw, or threefold repetition has been reached, do not process selections
+void handle_select(void) {
     if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
         return;
     }
@@ -1168,7 +1269,7 @@ void handle_select() {
         int p = current_state.board[selected_sq];
         int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
         if (is_promo) {
-            m.promo = 5; // Validate with Queen first
+            m.promo = 5; 
         }
 
         if (is_legal_gui_move(&current_state, m)) {
@@ -1181,20 +1282,19 @@ void handle_select() {
             current_state = next;
             selected_sq = -1;
             
-            // Clear engine metrics and thinking lines for new human position
             reset_engine_metrics();
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
-                selected_sq = sq; // Switch focus to different owned piece
+                selected_sq = sq; 
             } else {
-                selected_sq = -1; // Deselect
+                selected_sq = -1; 
             }
         }
     }
 }
 
-void handle_undo() {
+void handle_undo(void) {
     if (engine_thinking) {
         send_to_engine("stop\n");
         engine_thinking = 0;
@@ -1209,7 +1309,7 @@ void handle_undo() {
     selected_sq = -1;
 }
 
-void handle_reset_board() {
+void handle_reset_board(void) {
     if (engine_thinking) {
         send_to_engine("stop\n");
         engine_thinking = 0;
@@ -1220,12 +1320,12 @@ void handle_reset_board() {
     selected_sq = -1;
     cursor_r = 6;
     cursor_c = 4;
-    if (engine_pid > 0) {
+    if (engine_running) {
         send_to_engine("ucinewgame\nisready\n");
     }
 }
 
-void handle_switch_sides() {
+void handle_switch_sides(void) {
     if (engine_thinking) {
         send_to_engine("stop\n");
         engine_thinking = 0;
@@ -1236,8 +1336,8 @@ void handle_switch_sides() {
     else user_side = 1;
 }
 
-void adjust_time_control() {
-    if (time_control_type == 0) { // Time-Limit
+void adjust_time_control(void) {
+    if (time_control_type == 0) { 
         int time_list[] = {1, 10, 50, 100, 500, 1000, 1500, 2000, 3000, 5000, 10000};
         int time_count = sizeof(time_list) / sizeof(time_list[0]);
         int found_idx = -1;
@@ -1252,9 +1352,9 @@ void adjust_time_control() {
         } else {
             time_control_val = time_list[found_idx + 1];
         }
-    } else if (time_control_type == 1) { // Depth-Limit (1-20)
+    } else if (time_control_type == 1) { 
         time_control_val = (time_control_val % 20) + 1;
-    } else { // Node-Limit
+    } else { 
         int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608};
         int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
         int found_idx = -1;
@@ -1272,39 +1372,49 @@ void adjust_time_control() {
     }
 }
 
-void handle_input() {
-    char c;
-    if (read(STDIN_FILENO, &c, 1) == 1) {
-        if (c == '\033') { // Escape / Arrow codes parsing
-            char seq[3];
-            if (read(STDIN_FILENO, &seq[0], 1) == 1 && read(STDIN_FILENO, &seq[1], 1) == 1) {
-                if (seq[0] == '[') {
-                    switch (seq[1]) {
-                        case 'A': if (cursor_r > 0) cursor_r--; break; // Up
-                        case 'B': if (cursor_r < 7) cursor_r++; break; // Down
-                        case 'C': if (cursor_c < 7) cursor_c++; break; // Right
-                        case 'D': if (cursor_c > 0) cursor_c--; break; // Left
-                    }
-                }
-            }
-        } else if (c == ' ' || c == '\r' || c == '\n') {
-            handle_select();
-        } else if (c == 'u' || c == 'U') {
-            handle_undo();
-        } else if (c == 'r' || c == 'R') {
-            handle_reset_board();
-        } else if (c == 'o' || c == 'O') {
-            board_orientation = -board_orientation;
-        } else if (c == 's' || c == 'S') {
-            handle_switch_sides();
-        } else if (c == 't' || c == 'T') {
-            time_control_type = (time_control_type + 1) % 3;
-            time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
-        } else if (c == 'v' || c == 'V') {
-            adjust_time_control();
-        } else if (c == 'q' || c == 'Q') {
-            exit(0);
-        }
+void handle_input(void) {
+    WPAD_ScanPads();
+    PAD_ScanPads();
+
+    u32 pressed = WPAD_ButtonsDown(0);
+    u32 gc_pressed = PAD_ButtonsDown(0);
+
+    /* Cursor board navigation mapping */
+    if ((pressed & WPAD_BUTTON_UP) || (gc_pressed & PAD_BUTTON_UP)) {
+        if (cursor_r > 0) cursor_r--;
+    }
+    if ((pressed & WPAD_BUTTON_DOWN) || (gc_pressed & PAD_BUTTON_DOWN)) {
+        if (cursor_r < 7) cursor_r++;
+    }
+    if ((pressed & WPAD_BUTTON_LEFT) || (gc_pressed & PAD_BUTTON_LEFT)) {
+        if (cursor_c > 0) cursor_c--;
+    }
+    if ((pressed & WPAD_BUTTON_RIGHT) || (gc_pressed & PAD_BUTTON_RIGHT)) {
+        if (cursor_c < 7) cursor_c++;
+    }
+
+    /* Core Action Key mappings */
+    if ((pressed & WPAD_BUTTON_A) || (gc_pressed & PAD_BUTTON_A)) {
+        handle_select();
+    }
+    if ((pressed & WPAD_BUTTON_B) || (gc_pressed & PAD_BUTTON_B)) {
+        handle_undo();
+    }
+    if ((pressed & WPAD_BUTTON_PLUS) || (gc_pressed & PAD_BUTTON_START)) {
+        handle_reset_board();
+    }
+    if ((pressed & WPAD_BUTTON_MINUS) || (gc_pressed & PAD_TRIGGER_Z)) {
+        handle_switch_sides();
+    }
+    if ((pressed & WPAD_BUTTON_1) || (gc_pressed & PAD_TRIGGER_L)) {
+        time_control_type = (time_control_type + 1) % 3;
+        time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+    }
+    if ((pressed & WPAD_BUTTON_2) || (gc_pressed & PAD_TRIGGER_R)) {
+        adjust_time_control();
+    }
+    if (pressed & WPAD_BUTTON_HOME) {
+        exit(0);
     }
 }
 
@@ -1327,110 +1437,58 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-// Launches the local interactive Chess Terminal GUI Loop
-int run_gui_mode() {
-    signal(SIGINT, gui_handle_signal);
-    signal(SIGTERM, gui_handle_signal);
-    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to handle engine exits gracefully
+int run_gui_mode(void) {
     atexit(gui_cleanup);
 
     init_board(&current_state);
-    enable_raw_mode();
-    printf("\033[2J\033[H"); // Initial Full-Screen Clear
+    printf("\033[2J\033[H"); 
     start_engine();
 
     while (1) {
         int engine_active = 0;
-        // Lock engine movement if checkmate, stalemate, 50-move draw, or threefold repetition draw state is active
         if (has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
         }
 
-        if (engine_active && !engine_thinking && engine_pid > 0) {
+        if (engine_active && !engine_thinking && engine_running) {
             engine_thinking = 1;
             trigger_engine_move();
         }
 
-        // Detect engine process death
-        if (engine_pid > 0) {
-            int stat;
-            if (waitpid(engine_pid, &stat, WNOHANG) > 0) {
-                engine_pid = -1;
-                engine_thinking = 0;
-            }
-        }
-
+        read_from_engine();
         draw_ui();
+        handle_input();
 
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(STDIN_FILENO, &fds);
-        int max_fd = STDIN_FILENO;
-        if (engine_pid > 0) {
-            FD_SET(engine_out[0], &fds);
-            if (engine_out[0] > max_fd) max_fd = engine_out[0];
-        }
-
-        struct timeval tv = {0, 30000}; // 30ms latency constraint
-        int act = select(max_fd + 1, &fds, NULL, NULL, &tv);
-
-        if (act > 0) {
-            if (FD_ISSET(STDIN_FILENO, &fds)) {
-                handle_input();
-            }
-            if (engine_pid > 0 && FD_ISSET(engine_out[0], &fds)) {
-                read_from_engine();
-            }
-        }
+        /* Yield GUI execution context back to the Tuxedo scheduler */
+        KThreadYield();
+        VIDEO_WaitVSync(); 
     }
     return 0;
 }
 
-// Unified Main entry-point handles CLI/GUI Mode automatically
 int main(int argc, char **argv)
 {
-    bool force_gui = false;
-    bool force_cli = false;
+    (void)argc;
+    (void)argv;
 
-    // Support flags to override default environment behavior
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--gui") == 0 || strcmp(argv[i], "-g") == 0) {
-            force_gui = true;
-        } else if (strcmp(argv[i], "--cli") == 0 || strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "uci") == 0) {
-            force_cli = true;
-        }
-    }
+    VIDEO_Init();
+    WPAD_Init();
+    PAD_Init();
+    fatInitDefault();
 
-    // Auto-detect: If not running in a terminal TTY, run as a standard UCI Command Line engine
-    if (force_cli || (!force_gui && !isatty(STDIN_FILENO))) {
-        print_engine_info(false);
+    rmode = VIDEO_GetPreferredMode(NULL);
+    xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+    console_init(xfb, 20, 20, rmode->fbWidth, rmode->xfbHeight, rmode->fbWidth * VI_DISPLAY_PIXFMT_COLOR_BYTES);
+    
+    VIDEO_Configure(rmode);
+    VIDEO_SetNextFramebuffer(xfb);
+    VIDEO_SetBlack(FALSE);
+    VIDEO_Flush();
+    VIDEO_WaitVSync();
+    if (rmode->viTVMode & VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-        psqt_init();
-        bitboards_init();
-        zob_init();
-        bitbases_init();
-#ifndef NNUE_PURE
-        endgames_init();
-#endif
-        threads_init();
-        options_init();
-        search_clear();
-
-        uci_loop(argc, argv);
-
-        threads_exit();
-        TB_free();
-        options_free();
-        tt_free();
-        pb_free();
-#ifdef NNUE
-        nnue_free();
-#endif
-        return 0;
-    } else {
-        // Run in local interactive terminal GUI mode
-        return run_gui_mode();
-    }
+    return run_gui_mode();
 }
+```
