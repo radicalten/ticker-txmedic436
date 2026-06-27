@@ -386,9 +386,15 @@ extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
 
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
 
+// Safely map POSIX I/O calls to our thread-safe FIFO hooks.
+// Guarded with undef blocks to ensure no compiler warnings are raised.
+#undef printf
 #define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
+
+#undef fgets
 #define fgets(str, num, stream) (engine_fgets_hook ? engine_fgets_hook(str, num, stream) : fgets(str, num, stream))
 
+#undef getline
 #if defined(__wii__) || defined(GEKKO)
 #define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
 #else
