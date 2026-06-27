@@ -217,7 +217,7 @@ uint64_t prng_sparse_rand(PRNG *rng)
   return r1 & r2 & r3;
 }
 
-//#if !defined(__wii__) && !defined(GEKKO)
+#if !defined(__wii__) && !defined(GEKKO)
 ssize_t getline(char **lineptr, size_t *n, FILE *stream)
 {
   if (*n == 0)
@@ -234,7 +234,7 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream)
   (*lineptr)[i] = 0;
   return i;
 }
-//#endif
+#endif
 
 #ifdef _WIN32
 typedef SIZE_T (WINAPI *GLPM)(void);
