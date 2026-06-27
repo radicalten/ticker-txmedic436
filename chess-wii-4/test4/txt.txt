@@ -1,0 +1,2 @@
+Hello, I have the following error on my wii chess program: Unable to resolve read address ffffd420 PC 801ad420, allow me to share my main.c file: 
+main.c-testv-highest
