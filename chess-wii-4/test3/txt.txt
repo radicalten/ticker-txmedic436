@@ -35,3 +35,6 @@ https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/tick.h
 
 here is timeman.h as well:
 chess5-timeman.h
+
+and what about devkitpro's tuxedo thread.h does this need to be applied anywhere?: 
+https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/thread.h
