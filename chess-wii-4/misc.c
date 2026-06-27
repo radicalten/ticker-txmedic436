@@ -41,6 +41,10 @@ char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
 int (*engine_printf_hook)(const char *format, ...) = NULL;
 ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream) = NULL;
 
+// IMPLEMENTED: Safely redirect standard printf inside this module to our GUI FIFO pipe
+#undef printf
+#define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
+
 char Version[] = "";
 
 #ifndef _WIN32
@@ -226,6 +230,12 @@ uint64_t prng_sparse_rand(PRNG *rng)
 // Custom robust cfish_getline implementation for Nintendo Wii
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
 {
+  // IMPLEMENTED: Route through active pipe input hook if GUI mode is active.
+  // This completely solves the issue where the engine doesn't hear GUI move instructions.
+  if (engine_getline_hook != NULL) {
+    return engine_getline_hook(lineptr, n, stream);
+  }
+
   if (*lineptr == NULL || *n == 0) {
     *n = 128;
     *lineptr = malloc(*n);
