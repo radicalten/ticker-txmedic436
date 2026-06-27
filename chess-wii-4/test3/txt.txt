@@ -3,3 +3,5 @@ main c test2 v3-4?
 
 here is my thread.c as well:
 main test2 v? thread.c
+
+ok the engine connects now but the frame advances only when I move the cursor. 
