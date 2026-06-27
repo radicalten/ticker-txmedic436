@@ -41,6 +41,11 @@
 #include "uci.h"
 #include "tbprobe.h"
 
+// --- ADD THESE TWO LINES HERE ---
+#undef printf
+#undef fgets
+// --------------------------------
+
 // Redirection hooks to keep engine IO completely in-process
 char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
 int (*engine_printf_hook)(const char *format, ...) = NULL;
