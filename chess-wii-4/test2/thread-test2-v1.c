@@ -105,7 +105,7 @@ static void thread_create(int idx)
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x40);
+  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x3f);
   KThreadResume(thread);
 
   while (atomic_load(&Threads.initializing)) {
