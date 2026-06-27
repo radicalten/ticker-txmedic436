@@ -1340,8 +1340,9 @@ int run_gui_mode() {
         draw_ui();
         handle_wii_input();
         read_from_engine();
-        
-        VIDEO_WaitVSync(); // Locks execution securely to standard 60Hz TV frame rates
+
+        KThreadSleepMs(16); // Wakes up GUI every 16ms, yielding CPU to the engine thread
+        //VIDEO_WaitVSync(); // Locks execution securely to standard 60Hz TV frame rates
     }
     return 0;
 }
