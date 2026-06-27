@@ -49,6 +49,12 @@
 
 #define MAX_HISTORY 2048
 
+// Structure to pass and restore Small Data Area (SDA) registers in the new thread
+typedef struct {
+    void* r2_val;
+    void* r13_val;
+} SdaContext;
+
 // Board representation
 typedef struct {
     int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
@@ -154,6 +160,12 @@ int engine_printf(const char *format, ...) {
     int ret = vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
 
+    if (ret < 0) return ret;
+    // Cap ret to prevent reading past the stack buffer if format string exceeded 2048 characters
+    if (ret >= (int)sizeof(buf)) {
+        ret = sizeof(buf) - 1;
+    }
+
     if (gui_mode_active) {
         fifo_write(&eng_to_gui_pipe, buf, ret);
     } else {
@@ -166,6 +178,7 @@ int engine_printf(const char *format, ...) {
 // Redirected standard input reader for Cfish UCI thread (fgets)
 char* engine_fgets(char* str, int num, FILE* stream) {
     (void)stream;
+    if (!str || num <= 0) return NULL;
     int bytes_read = 0;
     while (bytes_read < num - 1) {
         char c;
@@ -184,6 +197,7 @@ char* engine_fgets(char* str, int num, FILE* stream) {
 // Redirected standard input reader for Cfish UCI thread (getline)
 ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
     (void)stream;
+    if (lineptr == NULL || n == NULL) return -1;
     if (*lineptr == NULL || *n == 0) {
         *n = 128;
         *lineptr = malloc(*n);
@@ -195,10 +209,11 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
         char c;
         if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
             if (i >= (int)*n - 1) {
-                *n *= 2;
-                char *new_ptr = realloc(*lineptr, *n);
+                size_t new_size = *n * 2;
+                char *new_ptr = realloc(*lineptr, new_size);
                 if (new_ptr == NULL) return -1;
                 *lineptr = new_ptr;
+                *n = new_size;
             }
             (*lineptr)[i++] = c;
             if (c == '\n') break;
@@ -247,7 +262,14 @@ void init_wii_console() {
 }
 
 static sptr engine_thread_main(void *arg) {
-    (void)arg;
+    // RESTORE SDA: Re-initialize the SDA registers (r2 & r13) using parameters passed from main thread.
+    SdaContext *ctx = (SdaContext*)arg;
+    if (ctx) {
+        void* r2_val = ctx->r2_val;
+        void* r13_val = ctx->r13_val;
+        __asm__ volatile("mr 2, %0" : : "r"(r2_val));
+        __asm__ volatile("mr 13, %0" : : "r"(r13_val));
+    }
     
     psqt_init();
     bitboards_init();
@@ -279,13 +301,23 @@ void start_engine() {
     engine_printf_hook = engine_printf;
     engine_getline_hook = engine_getline;
 
-    engine_thread_stack = memalign(32, 128 * 1024);
+    // Expand the allocated thread stack to 256KB to completely eliminate potential engine overflows.
+    engine_thread_stack = memalign(32, 256 * 1024);
+    if (engine_thread_stack == NULL) {
+        log_engine_line("GUI ERROR: Stack allocation failed!");
+        return;
+    }
     
-    // INTEGRATED: Safe, 32-byte aligned downward-growing stack pointer for Tuxedo PPC
-    void* stack_top = (char*)engine_thread_stack + (128 * 1024) - 32;
+    // Safe, 32-byte aligned downward-growing stack pointer for Tuxedo PPC
+    void* stack_top = (char*)engine_thread_stack + (256 * 1024) - 32;
     
-    // INTEGRATED: Native Tuxedo scheduler priority setup (0x50)
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x50);
+    // Capture the main thread's SDA register states safely before spawning the new thread
+    static SdaContext sda_ctx;
+    __asm__ volatile("mr %0, 2" : "=r"(sda_ctx.r2_val));
+    __asm__ volatile("mr %0, 13" : "=r"(sda_ctx.r13_val));
+
+    // Native Tuxedo scheduler priority setup (0x50)
+    KThreadPrepare(&engine_thread, engine_thread_main, &sda_ctx, stack_top, 0x50);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
@@ -1346,7 +1378,7 @@ void init_board(BoardState *state) {
 }
 
 int run_gui_mode() {
-    // INTEGRATED: Native Tuxedo priority adjustments 
+    // Native Tuxedo priority adjustments 
     KThreadSetPrio(KThreadGetSelf(), 40);
 
     init_board(&current_state);
@@ -1371,7 +1403,7 @@ int run_gui_mode() {
         
         VIDEO_WaitVSync(); 
         
-        // INTEGRATED: Force scheduler context switch on single-core CPU
+        // Force scheduler context switch on single-core CPU
         KThreadSleepMs(1); 
     }
     return 0;
