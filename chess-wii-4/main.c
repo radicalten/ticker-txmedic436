@@ -107,7 +107,7 @@ typedef struct {
     int head;
     int tail;
     LOCK_T lock;
-} InProcessFIFO;
+} SimpleFIFO; // Changed from InProcessFIFO to SimpleFIFO
 
 SimpleFIFO gui_to_eng_pipe;
 SimpleFIFO eng_to_gui_pipe;
