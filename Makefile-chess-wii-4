@@ -19,8 +19,8 @@ LDFLAGS += $(CFLAGS) \
 -L/opt/devkitpro/libogc/lib/wii \
  -lwiikeyboard -lfat -lwiiuse -lbte -logc -lm
 TARGET  := myapp
-EXCLUDE := chess-wii-2/nnue.c chess-wii-2/numa.c
-SRCDIR 	:= chess-wii-2
+EXCLUDE := chess-wii-4/nnue.c chess-wii-4/numa.c
+SRCDIR 	:= chess-wii-4
 C_SOURCES = $(foreach dir, $(SRCDIR), $(filter-out $(EXCLUDE), $(wildcard $(dir)/*.c)))
 SOURCES = $(C_SOURCES) 
 OBJECTS = $(SOURCES:.c=.o)
