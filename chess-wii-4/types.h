@@ -323,7 +323,6 @@ MAKE_CLAMP(long)
 #undef MAKE_CLAMP
 
 #if defined(__wii__) || defined(GEKKO)
-// Wii GCC 32-bit: Bypasses duplicate _Generic branches to prevent compilation errors
 #define TEMPLATE(F,a,...) _Generic((a), \
     int: F##_int,              \
     uint64_t: F##_uint64_t,    \
@@ -383,8 +382,16 @@ typedef struct DirtyPiece DirtyPiece;
 // Redirect hooks to run the GUI and Cfish safely in-process on the Wii
 extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
 extern int (*engine_printf_hook)(const char *format, ...);
+extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
 
 #define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
 #define fgets(str, num, stream) (engine_fgets_hook ? engine_fgets_hook(str, num, stream) : fgets(str, num, stream))
+
+#if defined(__wii__) || defined(GEKKO)
+ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
+#define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
+#else
+#define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : getline(lineptr, n, stream))
+#endif
 
 #endif // TYPES_H
