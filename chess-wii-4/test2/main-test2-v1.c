@@ -41,6 +41,11 @@
 #include "uci.h"
 #include "tbprobe.h"
 
+// --- ADD THESE TWO LINES HERE ---
+#undef printf
+#undef fgets
+// --------------------------------
+
 // Redirection hooks to keep engine IO completely in-process
 char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
 int (*engine_printf_hook)(const char *format, ...) = NULL;
@@ -253,7 +258,7 @@ void start_engine() {
     engine_thread_stack = memalign(32, 128 * 1024);
     void* stack_top = (char*)engine_thread_stack + (128 * 1024);
     
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x3f);
+    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x40);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
