@@ -1,1 +1,2 @@
-
+I have a chess engine for wii, the gui works but the chess engine does not respond. here is my main.c: 
+main c test2 v3-4?
