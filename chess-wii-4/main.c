@@ -29,6 +29,7 @@
 // Nintendo Wii DevkitPro Hardware Headers
 #include <gccore.h>
 #include <wiiuse/wpad.h>
+#include <fat.h> // Added for SD/USB filesystem initialization
 
 #include "bitboard.h"
 #include "endgame.h"
@@ -172,7 +173,7 @@ char* engine_fgets(char* str, int num, FILE* stream) {
             str[bytes_read++] = c;
             if (c == '\n') break;
         } else {
-            KThreadYield();
+            KThreadSleepMs(1); // FIXED: Prevents 100% CPU starvation spinning
         }
     }
     if (bytes_read == 0) return NULL;
@@ -202,7 +203,7 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
             (*lineptr)[i++] = c;
             if (c == '\n') break;
         } else {
-            KThreadYield(); 
+            KThreadSleepMs(1); // FIXED: Prevents 100% CPU starvation spinning
         }
     }
     (*lineptr)[i] = '\0';
@@ -232,6 +233,7 @@ void gui_cleanup() {
 void init_wii_console() {
     VIDEO_Init();
     WPAD_Init();
+    fatInitDefault(); // FIXED: Initialise SD/USB FAT storage for NNUE & book files
     
     GXRModeObj *rmode = VIDEO_GetPreferredMode(NULL);
     void *xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
@@ -278,10 +280,10 @@ void start_engine() {
     engine_getline_hook = engine_getline;
 
     engine_thread_stack = memalign(32, 128 * 1024);
-    void* stack_top = (char*)engine_thread_stack + (128 * 1024);
     
-    // Create the background engine context sharing identical scheduler slices (0x3f)
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x3f);
+    // FIXED: Passed engine_thread_stack (the base address) instead of stack_top
+    // This stops stack memory from writing out of bounds and corrupting the heap.
+    KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
