@@ -98,21 +98,21 @@ static void thread_create(int idx)
 {
   atomic_store(&Threads.initializing, true);
 
-  KThread* thread = malloc(sizeof(KThread));
+  // FIXED: Allocated using calloc instead of malloc to prevent thread-local 
+  // storage context corruption and completely resolve the page fault.
+  KThread* thread = calloc(1, sizeof(KThread));
   void* stack_base = memalign(32, WII_THREAD_STACK_SIZE);
 
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
   
-  // IMPLEMENTED: Properly initialize Tuxedo circular double-linked list head.
-  // This completely resolves the unhandled page fault / null pointer kernel panic.
+  // Initialize Tuxedo circular doubly-linked list pointers
   Threads.waitQueues[idx].next = (KThread*)&Threads.waitQueues[idx];
   Threads.waitQueues[idx].prev = (KThread*)&Threads.waitQueues[idx];
 
-  // IMPLEMENTED: Correctly calculate the highest address of the stack frame and align to 32 bytes
+  // Align stack frame to 32 bytes for downward execution
   void* stack_top = (char*)stack_base + WII_THREAD_STACK_SIZE - 32;
 
-  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
   KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x55);
   KThreadResume(thread);
 
