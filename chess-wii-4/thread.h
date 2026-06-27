@@ -15,6 +15,10 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
+  along with this program.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
@@ -25,20 +29,41 @@
 #include "types.h"
 
 #if defined(__wii__) || defined(GEKKO)
+#include <tick.h>
 #include <tuxedo/thread.h>
 #endif
 
 #define MAX_THREADS 1
 
+// IMPLEMENTED: Thread-safe native Tuxedo Blocking Mutex to prevent priority inversion deadlocks
 typedef struct {
   atomic_bool locked;
+  KThrQueue waiters;
 } TuxedoMutex;
 
 #define LOCK_T TuxedoMutex
-#define LOCK_INIT(x) atomic_store(&(x).locked, false)
+
+// Circular doubly-linked list initialization required by the Tuxedo scheduler
+#define LOCK_INIT(x) do { \
+  atomic_store(&(x).locked, false); \
+  (x).waiters.next = (KThread*)&(x).waiters; \
+  (x).waiters.prev = (KThread*)&(x).waiters; \
+} while (0)
+
 #define LOCK_DESTROY(x) ((void)0)
-#define LOCK(x) do { while (atomic_exchange(&(x).locked, true)) { KThreadYield(); } } while (0)
-#define UNLOCK(x) atomic_store(&(x).locked, false)
+
+// Puts the calling thread to sleep on the queue if the lock is held
+#define LOCK(x) do { \
+  while (atomic_exchange(&(x).locked, true)) { \
+    KThrQueueBlock(&(x).waiters, 0); \
+  } \
+} while (0)
+
+// Releases the lock and wakes up exactly one waiting thread
+#define UNLOCK(x) do { \
+  atomic_store(&(x).locked, false); \
+  KThrQueueUnblockOneByValue(&(x).waiters, 0); \
+} while (0)
 
 enum {
   THREAD_SLEEP, THREAD_SEARCH, THREAD_TT_CLEAR, THREAD_EXIT, THREAD_RESUME
