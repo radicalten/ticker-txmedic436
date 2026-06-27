@@ -27,3 +27,5 @@ https://github.com/devkitPro/libogc/blob/master/tuxedo/thread.c
 then: main.c 
 
 ok now here is my main.c file for the cfish chess engine. it was originally written for macOS, but now we want to port it for wii using this information: main.c
+
+can you also share the other update files?: types.h thread.h, thread.c, misc.h, misc.c
