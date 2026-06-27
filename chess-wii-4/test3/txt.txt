@@ -21,3 +21,5 @@ test2 misc.c
 what about uci.h
 uci.c
 and types.h 
+
+#another thought is about timeman need to make sure the ai knows about devkitppc new tuxedo ticks.h for timing. 
