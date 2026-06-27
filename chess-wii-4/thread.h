@@ -28,7 +28,7 @@
 #include <tuxedo/thread.h>
 #endif
 
-#define MAX_THREADS 4
+#define MAX_THREADS 1
 
 typedef struct {
   atomic_bool locked;
