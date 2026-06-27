@@ -39,6 +39,7 @@ struct TimeManagement {
 extern struct TimeManagement Time;
 
 void time_init(Color us, int ply);
+void time_kill_timer(void); // IMPLEMENTED: Asynchronously disarms the hardware KTickTask clock
 
 #define time_optimum() Time.optimumTime
 #define time_maximum() Time.maximumTime
@@ -49,4 +50,4 @@ INLINE TimePoint time_elapsed(void)
                        : now() - Time.startTime;
 }
 
-#endif
+#endif // TIMEMAN_H
