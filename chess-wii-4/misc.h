@@ -91,9 +91,9 @@ typedef struct {
 
 #endif
 
-#if !defined(__wii__) && !defined(GEKKO)
+//#if !defined(__wii__) && !defined(GEKKO)
 ssize_t getline(char **lineptr, size_t *n, FILE *stream);
-#endif
+//#endif
 
 FD open_file(const char *name);
 void close_file(FD fd);
