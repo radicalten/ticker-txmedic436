@@ -48,3 +48,8 @@ when running now I have this error: Unable to resolve read address ffffd420 PC 8
 #gave a thread.c update and randomly a uci.c update, so I shared my uci.c file just to be sure, i think it pulled up the standard cfish one. 
 
 here is what my uci.c looks like currently:
+
+#it made up a fix, but it didn't fix anything as far as I can tell.
+
+#moving on to test4 still need to fix this: Unable to resolve read address ffffd420 PC 801ad420
+#didn't have that problem on the test2 version
