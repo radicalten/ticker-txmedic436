@@ -24,6 +24,20 @@
 #include "search.h"
 #include "timeman.h"
 #include "uci.h"
+#include "thread.h"
+
+#if defined(__wii__) || defined(GEKKO)
+#include <tick.h> // devkitPro Tuxedo timer tasks header
+
+static KTickTask search_timer_task;
+static bool timer_running = false;
+
+// Task callback executed asynchronously when the time limit expires
+static void timer_callback(KTickTask* t) {
+    (void)t;
+    Threads.stop = true; 
+}
+#endif
 
 struct TimeManagement Time; // Our global time management struct
 
@@ -59,10 +73,10 @@ void time_init(Color us, int ply)
   Time.startTime = Limits.startTime;
 
   // Maximum move horizon of 50 moves
-  int mtg = Limits.movestogo ? min(Limits.movestogo, 50) : 50;
+  int mtg = Limits.movestogo ? min_int(Limits.movestogo, 50) : 50;
 
   // Make sure that timeLeft > 0 since we may use it as a divisor
-  TimePoint timeLeft = max(1, Limits.time[us] + Limits.inc[us] * (mtg - 1) - moveOverhead * (2 + mtg));
+  TimePoint timeLeft = max_int64_t(1, Limits.time[us] + Limits.inc[us] * (mtg - 1) - moveOverhead * (2 + mtg));
 
   // A user may scale time usage by setting UCI option "Slow Mover".
   // Default is 100 and changing this value will probably lose Elo.
@@ -72,27 +86,55 @@ void time_init(Color us, int ply)
   // If there is a healthy increment, timeLeft can exceed actual available
   // game time for the current move, so also cap to 20% of available game time.
   if (Limits.movestogo == 0) {
-    optScale = min(0.0084 + pow(ply + 3.0, 0.5) * 0.0042,
+    optScale = min_double(0.0084 + pow(ply + 3.0, 0.5) * 0.0042,
                     0.2 * Limits.time[us] / (double)timeLeft);
-    maxScale = min(7.0, 4.0 + ply / 12.0);
+    maxScale = min_double(7.0, 4.0 + ply / 12.0);
   }
   // x moves in y seconds (+z increment)
   else {
-    optScale = min((0.8 + ply / 120.0) / mtg,
+    optScale = min_double((0.8 + ply / 120.0) / mtg,
                      0.8 * Limits.time[us] / (double)timeLeft);
-    maxScale = min(6.3, 1.5 + 0.11 * mtg);
+    maxScale = min_double(6.3, 1.5 + 0.11 * mtg);
   }
 
   // Never use more than 80% of the available time for this move
   Time.optimumTime = optScale * timeLeft;
-  Time.maximumTime = min(0.8 * Limits.time[us] - moveOverhead, maxScale * Time.optimumTime);
+  Time.maximumTime = min_int64_t(0.8 * Limits.time[us] - moveOverhead, maxScale * Time.optimumTime);
 
   if (use_time_management()) {
-    int strength = log(max(1, (int)(Time.optimumTime * Threads.numThreads  / 10))) * 60;
-    Time.tempoNNUE = clamp((strength + 264) / 24, 18, 30);
+    int strength = log(max_double(1.0, (double)(Time.optimumTime * Threads.numThreads / 10))) * 60;
+    Time.tempoNNUE = clamp_int((strength + 264) / 24, 18, 30);
   } else
     Time.tempoNNUE = 28; // default for no time given
 
   if (option_value(OPT_PONDER))
     Time.optimumTime += Time.optimumTime / 4;
+
+#if defined(__wii__) || defined(GEKKO)
+  // Stop previous time limit task
+  if (timer_running) {
+      KTickTaskStop(&search_timer_task);
+      timer_running = false;
+  }
+
+  // Configure hardware-driven KTickTask interrupt timer for background search
+  if (use_time_management() && Time.maximumTime > 0) {
+      // Convert maximumTime (milliseconds) to PowerPC hardware ticks
+      // 60,750 ticks = 1 millisecond on Wii
+      u64 delay_ticks = (u64)Time.maximumTime * 60750ULL;
+      KTickTaskStart(&search_timer_task, timer_callback, delay_ticks, 0);
+      timer_running = true;
+  }
+#endif
+}
+
+// Cleans up the background clock callback
+void time_kill_timer(void)
+{
+#if defined(__wii__) || defined(GEKKO)
+  if (timer_running) {
+      KTickTaskStop(&search_timer_task);
+      timer_running = false;
+  }
+#endif
 }
