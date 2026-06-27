@@ -5,3 +5,6 @@ here is my thread.c as well:
 main test2 v? thread.c
 
 ok the engine connects now but the frame advances only when I move the cursor. 
+
+##so far with the above prompts the engine connects "says Connected in yellow", but also says idle, never leaves from idle
+#never moves unfortunately, may make a test 4 to try improvements. 
