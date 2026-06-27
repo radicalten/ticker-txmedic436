@@ -8,3 +8,9 @@ ok the engine connects now but the frame advances only when I move the cursor.
 
 ##so far with the above prompts the engine connects "says Connected in yellow", but also says idle, never leaves from idle
 #never moves unfortunately, may make a test 4 to try improvements. 
+
+what about this misc.c file? can we find the fix there? The engine connects but does not make a move.: 
+test2 misc.c 
+
+here is misc.h as well:
+test2 misc.h
