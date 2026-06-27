@@ -384,11 +384,12 @@ extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
 extern int (*engine_printf_hook)(const char *format, ...);
 extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
 
+ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
+
 #define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
 #define fgets(str, num, stream) (engine_fgets_hook ? engine_fgets_hook(str, num, stream) : fgets(str, num, stream))
 
 #if defined(__wii__) || defined(GEKKO)
-ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
 #define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
 #else
 #define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : getline(lineptr, n, stream))
