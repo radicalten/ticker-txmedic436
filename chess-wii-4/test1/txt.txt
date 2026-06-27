@@ -6,13 +6,13 @@ promptv1: Hello. I have a Cfish port for mac that I would like to translate to w
 
 uplodaded files (from chess5): thread.h, thread.c, misc.h, misc.c, types.h, and main.c 
 from devkitppc tuxedo: 
-https://github.com/devkitPro/libogc/blob/master/tuxedo/thread.c
+https://github.com/devkitPro/libogc/blob/master/tuxedo/thread.c   //#1 priority
 https://github.com/devkitPro/libogc/blob/master/tuxedo/thread_priv.h
 https://github.com/devkitPro/libogc/blob/master/tuxedo/tick.c
 from devkitppc libogc/gc/tuxedo
-https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/thread.h
+https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/thread.h //#2 priority 
 https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/tick.h
-https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/types.h
+https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/types.h //#3 priority
 from devkitpppc libogc/gc/ppc
 https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/ppc/clock.h
 https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/ppc/intrinsics.h
