@@ -35,3 +35,6 @@ ok I have updated all the files, and here is my compiler error:
 
 
 Everything compiles but when launching in dolphin the screen is blank black. any ideas?
+
+ok now the chess board is visible on screen and works. however the chess engine does not connect and start. maybe uci.c needs change?: 
+uci.c
