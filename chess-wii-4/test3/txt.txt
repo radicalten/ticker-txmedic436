@@ -23,3 +23,7 @@ uci.c
 and types.h 
 
 #another thought is about timeman need to make sure the ai knows about devkitppc new tuxedo ticks.h for timing. 
+
+#there is an invalid write when launching the program now
+
+When launching the program there is an Invalid write to 0x00000008, PC = 0x8008d3f4. additionally the engine still does not make a move. perhaps the timeman.c is relevant?: 
