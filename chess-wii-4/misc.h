@@ -32,12 +32,12 @@
 
 #include "types.h"
 
-// IMPLEMENTED: Global redirection hooks exposed to all compiled engine files
+// Redirection hooks exposed to all compiled engine files
 extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
 extern int (*engine_printf_hook)(const char *format, ...);
 extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
 
-// IMPLEMENTED: Redirection of standard printf for GUI pipe safety
+// Redirection of standard printf for GUI pipe safety
 #undef printf
 #define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
 
@@ -69,9 +69,25 @@ INLINE void prefetch2(void *addr)
 typedef int64_t TimePoint; 
 
 INLINE TimePoint now(void) {
+#if defined(__wii__) || defined(GEKKO)
+  // FIXED: Standard gettimeofday() crashes background threads. 
+  // We read the hardware PPC Time Base registers directly.
+  uint32_t tbl, tbu0, tbu1;
+  do {
+      __asm__ __volatile__ ("mftbu %0" : "=r"(tbu0));
+      __asm__ __volatile__ ("mftb %0" : "=r"(tbl));
+      __asm__ __volatile__ ("mftbu %0" : "=r"(tbu1));
+  } while (tbu0 != tbu1);
+  uint64_t ticks = (((uint64_t)tbu0) << 32) | tbl;
+  
+  // The Wii PPC clock frequency is exactly 60.75 MHz (60,750,000 Hz)
+  // Dividing ticks by 60,750 converts ticks to milliseconds safely.
+  return (TimePoint)(ticks / 60750ULL);
+#else
   struct timeval tv;
   gettimeofday( &tv, NULL );
   return 1000 * (uint64_t)tv.tv_sec + (uint64_t)tv.tv_usec / 1000;
+#endif
 }
 
 #ifdef _WIN32
@@ -190,7 +206,7 @@ INLINE uint16_t readu_le_u16(const void *p)
   return q[0] | (q[1] << 8);
 }
 
-// IMPLEMENTED: Force compilation units to route getline calls through our Wii hooks
+// Force compilation units to route getline calls through our Wii hooks
 #if defined(__wii__) || defined(GEKKO)
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
 #undef getline
