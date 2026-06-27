@@ -17,3 +17,7 @@ test2 misc.h
 test2 misc.c
 
 #gemini 3.5 flash made some changes, but unfortunately it still does not work.
+
+what about uci.h
+uci.c
+and types.h 
