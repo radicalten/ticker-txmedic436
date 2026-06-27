@@ -44,3 +44,7 @@ and now what about my current thread.h and thread.c files? shall we update them?
 #after applying the thread.h and thread.c updates, it compiles but has the following error:
 
 when running now I have this error: Unable to resolve read address ffffd420 PC 801ad420
+
+#gave a thread.c update and randomly a uci.c update, so I shared my uci.c file just to be sure, i think it pulled up the standard cfish one. 
+
+here is what my uci.c looks like currently:
