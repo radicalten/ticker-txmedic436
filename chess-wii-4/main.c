@@ -281,9 +281,10 @@ void start_engine() {
 
     engine_thread_stack = memalign(32, 128 * 1024);
     
-    // FIXED: Correctly calculate the highest address of the stack frame and align to 32 bytes
+    // INTEGRATED: Safe, 32-byte aligned downward-growing stack pointer for Tuxedo PPC
     void* stack_top = (char*)engine_thread_stack + (128 * 1024) - 32;
     
+    // INTEGRATED: Native Tuxedo scheduler priority setup (0x50)
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x50);
     KThreadResume(&engine_thread);
 
@@ -1345,7 +1346,8 @@ void init_board(BoardState *state) {
 }
 
 int run_gui_mode() {
-    LWP_SetThreadPriority(LWP_GetSelf(), 40);
+    // INTEGRATED: Native Tuxedo priority adjustments 
+    KThreadSetPrio(KThreadGetSelf(), 40);
 
     init_board(&current_state);
     start_engine();
@@ -1368,6 +1370,9 @@ int run_gui_mode() {
         read_from_engine();
         
         VIDEO_WaitVSync(); 
+        
+        // INTEGRATED: Force scheduler context switch on single-core CPU
+        KThreadSleepMs(1); 
     }
     return 0;
 }
