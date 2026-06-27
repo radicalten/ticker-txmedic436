@@ -15,6 +15,10 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
+  along with this program.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
@@ -85,7 +89,6 @@ static sptr thread_init(void *arg)
   atomic_store(&pos->resetCalls, false);
   pos->selDepth = pos->callsCnt = 0;
   
-  // Explicitly initialize state before entering idle loop
   pos->action = THREAD_SLEEP; 
 
   Threads.pos[idx] = pos;
@@ -107,12 +110,11 @@ static void thread_create(int idx)
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  // FIXED: Pass stack_base instead of stack_top to prevent memory corruption
-  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x40);
+  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
+  // This lets the GUI at priority 40 run completely lag-free
+  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x55);
   KThreadResume(thread);
 
-  // FIXED: Replaced KThreadYield with KThreadSleepMs to allow lower-priority 
-  // threads to run on the Wii's single-core CPU, resolving the connection hang.
   while (atomic_load(&Threads.initializing)) {
     KThreadSleepMs(1);
   }
