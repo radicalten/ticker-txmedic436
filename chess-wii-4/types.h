@@ -286,41 +286,41 @@ extern struct PSQT psqt;
 #undef max
 #undef min
 
-#define MAX(T) INLINE T max_##T(T a, T b) { return a > b ? a : b; }
-MAX(int)
-MAX(uint64_t)
-MAX(unsigned)
-MAX(int64_t)
-MAX(int16_t)
-MAX(uint8_t)
-MAX(double)
-MAX(size_t)
-MAX(long)
-#undef MAX
+#define MAKE_MAX(T) INLINE T max_##T(T a, T b) { return a > b ? a : b; }
+MAKE_MAX(int)
+MAKE_MAX(uint64_t)
+MAKE_MAX(unsigned)
+MAKE_MAX(int64_t)
+MAKE_MAX(int16_t)
+MAKE_MAX(uint8_t)
+MAKE_MAX(double)
+MAKE_MAX(size_t)
+MAKE_MAX(long)
+#undef MAKE_MAX
 
-#define MIN(T) INLINE T min_##T(T a, T b) { return a < b ? a : b; }
-MIN(int)
-MIN(uint64_t)
-MIN(unsigned)
-MIN(int64_t)
-MIN(int16_t)
-MIN(uint8_t)
-MIN(double)
-MIN(size_t)
-MIN(long)
-#undef MIN
+#define MAKE_MIN(T) INLINE T min_##T(T a, T b) { return a < b ? a : b; }
+MAKE_MIN(int)
+MAKE_MIN(uint64_t)
+MAKE_MIN(unsigned)
+MAKE_MIN(int64_t)
+MAKE_MIN(int16_t)
+MAKE_MIN(uint8_t)
+MAKE_MIN(double)
+MAKE_MIN(size_t)
+MAKE_MIN(long)
+#undef MAKE_MIN
 
-#define CLAMP(T) INLINE T clamp_##T(T a, T b, T c) { return a < b ? b : a > c ? c : a; }
-CLAMP(int)
-CLAMP(uint64_t)
-CLAMP(unsigned)
-CLAMP(int64_t)
-CLAMP(int16_t)
-CLAMP(uint8_t)
-CLAMP(double)
-CLAMP(size_t)
-CLAMP(long)
-#undef CLAMP
+#define MAKE_CLAMP(T) INLINE T clamp_##T(T a, T b, T c) { return a < b ? b : a > c ? c : a; }
+MAKE_CLAMP(int)
+MAKE_CLAMP(uint64_t)
+MAKE_CLAMP(unsigned)
+MAKE_CLAMP(int64_t)
+MAKE_CLAMP(int16_t)
+MAKE_CLAMP(uint8_t)
+MAKE_CLAMP(double)
+MAKE_CLAMP(size_t)
+MAKE_CLAMP(long)
+#undef MAKE_CLAMP
 
 #if defined(__wii__) || defined(GEKKO)
 // Wii GCC 32-bit: Bypasses duplicate _Generic branches to prevent compilation errors
