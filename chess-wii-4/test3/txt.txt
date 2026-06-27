@@ -27,3 +27,8 @@ and types.h
 #there is an invalid write when launching the program now
 
 When launching the program there is an Invalid write to 0x00000008, PC = 0x8008d3f4. additionally the engine still does not make a move. perhaps the timeman.c is relevant?: 
+
+#it fixed the invalid writes. 
+
+and what about timeman.c it should be compatible with devkitpro's tuxedo tick.h file:
+https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/tick.h
