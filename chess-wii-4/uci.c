@@ -20,15 +20,17 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "evaluate.h"
+// First-tier headers to apply GUI pipe redirection macros
 #include "misc.h"
+#include "uci.h"
+
+#include "evaluate.h"
 #include "movegen.h"
 #include "position.h"
 #include "search.h"
 #include "settings.h"
 #include "thread.h"
 #include "timeman.h"
-#include "uci.h"
 
 extern void benchmark(Position *pos, char *str);
 
@@ -222,7 +224,8 @@ void uci_loop(int argc, char **argv)
   char str_buf[64];
   char *token;
 
-  LOCK_INIT(Threads.lock);
+  // FIXED: Removed duplicate LOCK_INIT(Threads.lock). 
+  // It is initialized once in threads_init() before uci_loop.
 
   // Threads.searching is only read and set by the UI thread.
   // The UI thread uses it to know whether it must still call
@@ -267,6 +270,8 @@ void uci_loop(int argc, char **argv)
   pos.rootKeyFlip = pos.st->key;
 
   do {
+    // Redirection check: `getline` will call our custom thread-safe cfish_getline hook 
+    // instead of standard blocking console `stdin` inside devkitPro.
     if (argc == 1 && !getline(&cmd, &buf_size, stdin))
       strcpy(cmd, "quit");
 
@@ -361,7 +366,7 @@ void uci_loop(int argc, char **argv)
   free(pos.stackAllocation);
   free(pos.moveList);
 
-  LOCK_DESTROY(Threads.lock);
+  // FIXED: Removed duplicate LOCK_DESTROY(Threads.lock).
 }
 
 
