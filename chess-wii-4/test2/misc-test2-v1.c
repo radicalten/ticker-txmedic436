@@ -36,6 +36,11 @@
 #include "misc.h"
 #include "thread.h"
 
+// Define global in-process redirection hooks
+char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
+int (*engine_printf_hook)(const char *format, ...) = NULL;
+ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream) = NULL;
+
 char Version[] = "";
 
 #ifndef _WIN32
