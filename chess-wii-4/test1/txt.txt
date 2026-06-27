@@ -21,7 +21,7 @@ https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/ppc/bit.h
 
 the order I shared: types.h thread.h, thread.c, misc.h, misc.c
 then: 
-https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/types.h
+https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/types.h //apparently not needed to upload no conflicts. 
 https://github.com/devkitPro/libogc/blob/master/gc/tuxedo/thread.h 
 https://github.com/devkitPro/libogc/blob/master/tuxedo/thread.c
 then: main.c 
