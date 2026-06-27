@@ -1,8 +1,8 @@
-name: DSi-curl-v3
+name: DS-curl-v3
 on:
   push:
     branches:
-    - main
+    - master
 jobs:
   build-nds:
     runs-on: ubuntu-latest
