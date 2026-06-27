@@ -84,6 +84,9 @@ static sptr thread_init(void *arg)
 
   atomic_store(&pos->resetCalls, false);
   pos->selDepth = pos->callsCnt = 0;
+  
+  // Explicitly initialize state before entering idle loop
+  pos->action = THREAD_SLEEP; 
 
   Threads.pos[idx] = pos;
   atomic_store(&Threads.initializing, false);
@@ -98,18 +101,20 @@ static void thread_create(int idx)
 
   KThread* thread = malloc(sizeof(KThread));
   void* stack_base = memalign(32, WII_THREAD_STACK_SIZE);
-  void* stack_top = (char*)stack_base + WII_THREAD_STACK_SIZE;
 
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x40);
+  // FIXED: Pass stack_base instead of stack_top to prevent memory corruption
+  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x40);
   KThreadResume(thread);
 
+  // FIXED: Replaced KThreadYield with KThreadSleepMs to allow lower-priority 
+  // threads to run on the Wii's single-core CPU, resolving the connection hang.
   while (atomic_load(&Threads.initializing)) {
-    KThreadYield();
+    KThreadSleepMs(1);
   }
 }
 
