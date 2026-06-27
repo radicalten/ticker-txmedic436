@@ -281,8 +281,10 @@ void start_engine() {
 
     engine_thread_stack = memalign(32, 128 * 1024);
     
-    // IMPLEMENTED: Set engine thread to Priority 80 (0x50) so it doesn't block the GUI
-    KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x50);
+    // FIXED: Correctly calculate the highest address of the stack frame and align to 32 bytes
+    void* stack_top = (char*)engine_thread_stack + (128 * 1024) - 32;
+    
+    KThreadPrepare(&engine_thread, engine_thread_main, NULL, stack_top, 0x50);
     KThreadResume(&engine_thread);
 
     log_engine_line("GUI -> uci");
@@ -1343,7 +1345,6 @@ void init_board(BoardState *state) {
 }
 
 int run_gui_mode() {
-    // IMPLEMENTED: Explicitly raise GUI thread priority to 40 so it preempts the engine
     LWP_SetThreadPriority(LWP_GetSelf(), 40);
 
     init_board(&current_state);
@@ -1366,8 +1367,6 @@ int run_gui_mode() {
         handle_wii_input();
         read_from_engine();
         
-        // IMPLEMENTED: Lock rendering to the TV's vertical sync (60Hz) 
-        // to cleanly yield all remaining CPU frames to the background engine.
         VIDEO_WaitVSync(); 
     }
     return 0;
