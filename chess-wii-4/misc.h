@@ -61,7 +61,7 @@ typedef int64_t TimePoint;
 
 INLINE TimePoint now(void) {
   struct timeval tv;
-  gettimeofday(&tv, NULL);
+  gettimeofday( &tv, NULL );
   return 1000 * (uint64_t)tv.tv_sec + (uint64_t)tv.tv_usec / 1000;
 }
 
@@ -90,10 +90,6 @@ typedef struct {
 } alloc_t;
 
 #endif
-
-//#if !defined(__wii__) && !defined(GEKKO)
-ssize_t getline(char **lineptr, size_t *n, FILE *stream);
-//#endif
 
 FD open_file(const char *name);
 void close_file(FD fd);
@@ -131,7 +127,7 @@ INLINE uint64_t mul_hi64(uint64_t a, uint64_t b)
 INLINE bool is_little_endian(void)
 {
 #if defined(__wii__) || defined(GEKKO)
-  return false; // Nintendo Wii uses a Big-Endian PowerPC core
+  return false; 
 #else
   int num = 1;
   return *(uint8_t *)&num == 1;
