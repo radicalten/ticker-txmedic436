@@ -46,9 +46,6 @@ void position(Position *pos, char *str)
   char fen[128];
   char *moves;
 
-  printf("db_pos: Parsing position cmd: %s\n", str ? str : "NULL");
-  fflush(stdout);
-
   moves = strstr(str, "moves");
   if (moves) {
     if (moves > str) moves[-1] = 0;
@@ -61,8 +58,6 @@ void position(Position *pos, char *str)
   } else if (strncmp(str, "startpos", 8) == 0)
     strcpy(fen, StartFEN);
   else {
-    printf("db_pos: Invalid position type\n");
-    fflush(stdout);
     return;
   }
 
@@ -76,8 +71,6 @@ void position(Position *pos, char *str)
     for (moves = strtok(moves, " \t"); moves; moves = strtok(NULL, " \t")) {
       Move m = uci_to_move(pos, moves);
       if (!m) {
-        printf("db_pos: Illegal move encountered: %s\n", moves);
-        fflush(stdout);
         break;
       }
       do_move(pos, m, gives_check(pos, pos->st, m));
@@ -123,9 +116,6 @@ void position(Position *pos, char *str)
   }
   pos->rootKeyFlip ^= pos->st->key;
   pos->st->key ^= pos->rootKeyFlip;
-
-  printf("db_pos: Position setup successful.\n");
-  fflush(stdout);
 }
 
 
@@ -177,11 +167,6 @@ static void go(Position *pos, char *str)
   char *token;
   bool ponderMode = false;
 
-  printf("db_go: Parsing search parameters: %s\n", str ? str : "NULL");
-  fflush(stdout);
-
-  printf("db_go: Checking delayed settings...\n");
-  fflush(stdout);
   process_delayed_settings();
 
   Limits = (struct LimitsType){ 0 };
@@ -222,13 +207,7 @@ static void go(Position *pos, char *str)
     }
   }
 
-  printf("db_go: Spawning search thread...\n");
-  fflush(stdout);
-
   start_thinking(pos, ponderMode);
-
-  printf("db_go: Search thread spawned successfully.\n");
-  fflush(stdout);
 }
 
 
@@ -290,31 +269,14 @@ void uci_loop(int argc, char **argv)
   pos_set(&pos, fen, 0);
   pos.rootKeyFlip = pos.st->key;
 
-  // ==========================================
-  // WII COMPATIBILITY SAFE OVERRIDES START
-  // ==========================================
-  printf("db_loop: Forcing Wii memory safety limits...\n");
-  fflush(stdout);
-
-  // 1. Force the Hash size to 2MB (Default of 16MB/32MB exhausts physical Wii memory immediately)
+  // Forcing Wii memory safety limits silently (2MB Hash, 1 Thread, Classical Eval)
   option_set_value(OPT_HASH, 2);
-
-  // 2. Force strictly 1 thread (Wii has only 1 physical CPU core; helper threads create synchronization deadlocks)
   option_set_value(OPT_THREADS, 1);
-
-  // 3. Disable NNUE if classical evaluation is available (NNUE files are 20-45MB and will crash the heap)
 #ifdef NNUE
 #ifndef NNUE_PURE
   option_set_value(OPT_USE_NNUE, 0);
 #endif
 #endif
-
-  printf("db_loop: Wii overrides applied safely! Hash: %dMB, Threads: %d\n", 
-         option_value(OPT_HASH), option_value(OPT_THREADS));
-  fflush(stdout);
-  // ==========================================
-  // WII COMPATIBILITY SAFE OVERRIDES END
-  // ==========================================
 
   do {
     if (argc == 1 && !getline(&cmd, &buf_size, stdin))
@@ -322,10 +284,6 @@ void uci_loop(int argc, char **argv)
 
     if (cmd[strlen(cmd) - 1] == '\n')
       cmd[strlen(cmd) - 1] = 0;
-
-    // Log what the engine just read from the GUI input FIFO
-    printf("db_loop: Received raw cmd: '%s'\n", cmd);
-    fflush(stdout);
 
     token = cmd;
     while (isblank(*token))
@@ -379,23 +337,10 @@ void uci_loop(int argc, char **argv)
       funlockfile(stdout);
     }
     else if (strcmp(token, "ucinewgame") == 0) {
-      printf("db_loop: Entering ucinewgame settings setup...\n");
-      fflush(stdout);
       process_delayed_settings();
-      printf("db_loop: Clearing search...\n");
-      fflush(stdout);
       search_clear();
-      printf("db_loop: ucinewgame complete.\n");
-      fflush(stdout);
     } else if (strcmp(token, "isready") == 0) {
-      printf("db_loop: Entering isready settings setup...\n");
-      fflush(stdout);
-      
       process_delayed_settings();
-      
-      printf("db_loop: settings complete. printing readyok...\n");
-      fflush(stdout);
-      
       printf("readyok\n");
       fflush(stdout);
     }
