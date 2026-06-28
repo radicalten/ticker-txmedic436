@@ -87,7 +87,6 @@ bool gui_mode_active = false;
 // Handshake Tracking
 bool engine_recvd_uciok = false;
 bool engine_recvd_readyok = false;
-char engine_console_log[3][128] = { "", "", "" }; 
 
 // Engine live performance metrics
 long long engine_nps = 0;      
@@ -223,7 +222,7 @@ int count_repetitions(const BoardState *state);
 int get_promo_choice();
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
 void reset_engine_metrics();
-void log_engine_line(const char *line);
+void adjust_time_control();
 
 void gui_cleanup() {
     printf("\033[?25h\033[2J\033[H"); 
@@ -269,7 +268,6 @@ static sptr engine_thread_main(void *arg) {
 void start_engine() {
     engine_recvd_uciok = false;
     engine_recvd_readyok = false;
-    memset(engine_console_log, 0, sizeof(engine_console_log));
 
     fifo_init(&gui_to_eng_pipe);
     fifo_init(&eng_to_gui_pipe);
@@ -281,41 +279,14 @@ void start_engine() {
 
     engine_thread_stack = memalign(32, 128 * 1024);
     
-    // FIXED: Passed engine_thread_stack (the base address) instead of stack_top
-    // This stops stack memory from writing out of bounds and corrupting the heap.
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
     KThreadResume(&engine_thread);
 
-    log_engine_line("GUI -> uci");
-    log_engine_line("GUI -> isready");
-    
     send_to_engine("uci\nisready\n");
 }
 
 void send_to_engine(const char *cmd) {
-    char clean_cmd[128];
-    strncpy(clean_cmd, cmd, sizeof(clean_cmd) - 1);
-    clean_cmd[sizeof(clean_cmd) - 1] = '\0';
-    int len = strlen(clean_cmd);
-    while (len > 0 && (clean_cmd[len - 1] == '\n' || clean_cmd[len - 1] == '\r')) {
-        clean_cmd[--len] = '\0';
-    }
-    char log_buf[140];
-    snprintf(log_buf, sizeof(log_buf), "GUI -> %s", clean_cmd);
-    log_engine_line(log_buf);
-
     fifo_write(&gui_to_eng_pipe, cmd, strlen(cmd));
-}
-
-void log_engine_line(const char *line) {
-    strncpy(engine_console_log[2], engine_console_log[1], sizeof(engine_console_log[2]) - 1);
-    engine_console_log[2][sizeof(engine_console_log[2]) - 1] = '\0';
-    
-    strncpy(engine_console_log[1], engine_console_log[0], sizeof(engine_console_log[1]) - 1);
-    engine_console_log[1][sizeof(engine_console_log[1]) - 1] = '\0';
-
-    strncpy(engine_console_log[0], line, sizeof(engine_console_log[0]) - 1);
-    engine_console_log[0][sizeof(engine_console_log[0]) - 1] = '\0';
 }
 
 int screen_to_board_sq(int r, int c) {
@@ -512,12 +483,6 @@ void process_engine_output(char *line) {
     }
     if (strcmp(line, "readyok") == 0) {
         engine_recvd_readyok = true;
-    }
-
-    if (strncmp(line, "info", 4) != 0 && strlen(line) > 0) {
-        char clean_line[140];
-        snprintf(clean_line, sizeof(clean_line), "ENG -> %s", line);
-        log_engine_line(clean_line);
     }
 
     if (strncmp(line, "info", 4) == 0) {
@@ -1016,96 +981,57 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [1] Undo | [2] Flip | [+] Sides | [-] Time | [HOME] Quit\033[0m\033[K\r\n");
+    // UPDATED: Controls description to map '2' to perspective toggling
+    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | [1] Cycle Level | [2] Flip | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
     
-    printf(" ");
-    if (engine_recvd_readyok) {
-        printf("\033[1;32mReady\033[0m");
-    } else if (engine_recvd_uciok) {
-        printf("\033[1;33mConnected\033[0m");
+    // ==========================================
+    // STREAMLINED ENGINE HUD (PV, NPS, EVAL)
+    // ==========================================
+    printf(" \033[1;34mEngine State:\033[0m ");
+    if (engine_thinking) {
+        printf("\033[1;32mThinking\033[0m");
+    } else if (engine_recvd_readyok) {
+        printf("\033[1;30mIdle (Ready)\033[0m");
     } else {
-        printf("\033[1;34mConnecting...\033[0m");
+        printf("\033[1;31mConnecting...\033[0m");
     }
 
-    if (engine_thinking) {
-        if (engine_nps > 0) {
-            if (engine_nps >= 1000000)      printf(" | Nps: %.2fM", (double)engine_nps / 1000000.0);
-            else if (engine_nps >= 1000)    printf(" | Nps: %.1fk", (double)engine_nps / 1000.0);
-            else                            printf(" | Nps: %lld", engine_nps);
-        }
+    // Nodes Per Second (NPS) Display
+    if (engine_nps > 0) {
+        if (engine_nps >= 1000000)      printf(" | \033[38;5;250mSpeed:\033[0m %.2fM nps", (double)engine_nps / 1000000.0);
+        else if (engine_nps >= 1000)    printf(" | \033[38;5;250mSpeed:\033[0m %.1fk nps", (double)engine_nps / 1000.0);
+        else                            printf(" | \033[38;5;250mSpeed:\033[0m %lld nps", engine_nps);
+    } else {
+        printf(" | \033[38;5;250mSpeed:\033[0m 0 nps");
+    }
 
-        if (engine_score_type == 0) {
-            if (engine_score_val > 0) {
-                printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else if (engine_score_val < 0) {
-                printf(" | Eval: \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else {
-                printf(" | Eval: 0.00");
-            }
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                printf(" | Eval: \033[1;32m+M%d\033[0m", engine_score_val);
-            } else if (engine_score_val < 0) {
-                printf(" | Eval: \033[1;31m-M%d\033[0m", -engine_score_val);
-            } else {
-                printf(" | Eval: M0");
-            }
+    // Evaluation Rating Display
+    if (engine_score_type == 0) {
+        if (engine_score_val > 0) {
+            printf(" | \033[38;5;250mEval:\033[0m \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
+        } else if (engine_score_val < 0) {
+            printf(" | \033[38;5;250mEval:\033[0m \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
+        } else {
+            printf(" | \033[38;5;250mEval:\033[0m 0.00");
         }
-
-        if (engine_depth > 0) {
-            if (engine_seldepth > 0) printf(" | D: %d/%d", engine_depth, engine_seldepth);
-            else                     printf(" | D: %d", engine_depth);
-        }
-
-        if (engine_nodes > 0) {
-            if (engine_nodes >= 1000000)    printf(" | N: %.2fM", (double)engine_nodes / 1000000.0);
-            else if (engine_nodes >= 1000)  printf(" | N: %.1fk", (double)engine_nodes / 1000.0);
-            else                            printf(" | N: %lld", engine_nodes);
-        }
-
-        if (engine_time_ms > 0) {
-            printf(" | T: %.2fs", (double)engine_time_ms / 1000.0);
-        }
-
-        if (engine_hashfull > 0) {
-            printf(" | H: %.1f%%", (double)engine_hashfull / 10.0);
-        }
-
-        if (engine_tbhits > 0) {
-            printf(" | TB: %lld", engine_tbhits);
+    } else if (engine_score_type == 1) {
+        if (engine_score_val > 0) {
+            printf(" | \033[38;5;250mEval:\033[0m \033[1;32m+M%d\033[0m", engine_score_val);
+        } else if (engine_score_val < 0) {
+            printf(" | \033[38;5;250mEval:\033[0m \033[1;31m-M%d\033[0m", -engine_score_val);
+        } else {
+            printf(" | \033[38;5;250mEval:\033[0m M0");
         }
     } else {
-        if (engine_score_type == 0) {
-            if (engine_score_val > 0) {
-                printf(" | Eval: \033[1;32m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else if (engine_score_val < 0) {
-                printf(" | Eval: \033[1;31m%+.2f\033[0m", (double)engine_score_val / 100.0);
-            } else {
-                printf(" | Eval: 0.00");
-            }
-        } else if (engine_score_type == 1) {
-            if (engine_score_val > 0) {
-                printf(" | Eval: \033[1;32m+M%d\033[0m", engine_score_val);
-            } else if (engine_score_val < 0) {
-                printf(" | Eval: \033[1;31m-M%d\033[0m", -engine_score_val);
-            } else {
-                printf(" | Eval: M0");
-            }
-        }
-        printf(" | \033[38;5;243mIdle\033[0m");
+        printf(" | \033[38;5;250mEval:\033[0m -");
     }
     printf("\033[K\r\n");
 
-    for (int i = 2; i >= 0; i--) {
-        if (strlen(engine_console_log[i]) > 0) {
-            printf(" \033[38;5;244m%s\033[0m\033[K\r\n", engine_console_log[i]);
-        } else {
-            printf("\033[K\r\n"); 
-        }
-    }
-
+    // Principal Variation (PV) Display
     if (strlen(engine_pv) > 0) {
-        printf(" \033[38;5;245mPV (Depth %d):\033[0m \033[38;5;250m%s\033[0m\033[K\r\n", engine_depth, engine_pv);
+        printf(" \033[1;33mBest Line:\033[0m \033[38;5;250m%s\033[0m\033[K\r\n", engine_pv);
+    } else {
+        printf(" \033[1;33mBest Line:\033[0m \033[38;5;243m-\033[0m\033[K\r\n");
     }
     
     printf("\033[J"); 
@@ -1179,17 +1105,17 @@ void handle_select() {
         return;
     }
 
-    // FIXED: Block human interaction on the opponent's turn, engine's turn, or when the engine is actively thinking.
+    // Block inputs if engine is searching, in engine-vs-engine mode, or on opponent's turn.
     if (engine_thinking) {
         return;
     }
-    if (user_side == 2) { // Engine vs Engine (Spectator mode)
+    if (user_side == 2) { 
         return;
     }
-    if (user_side == 1 && current_state.turn != 1) { // Player is White, but it's Black's turn
+    if (user_side == 1 && current_state.turn != 1) { 
         return;
     }
-    if (user_side == -1 && current_state.turn != -1) { // Player is Black, but it's White's turn
+    if (user_side == -1 && current_state.turn != -1) { 
         return;
     }
 
@@ -1262,7 +1188,7 @@ void handle_switch_sides() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
-    selected_sq = -1; // FIXED: Clear selection highlights on side swap to prevent visual bugs
+    selected_sq = -1; 
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
@@ -1321,11 +1247,17 @@ void handle_wii_input() {
     if (pressed & WPAD_BUTTON_RIGHT) {
         if (cursor_c < 7) cursor_c++;
     }
-    if (pressed & (WPAD_BUTTON_A | WPAD_BUTTON_2)) {
+    if (pressed & WPAD_BUTTON_A) { // UPDATED: Excluded button 2 so it doesn't double-trigger
         handle_select();
     }
-    if (pressed & (WPAD_BUTTON_B | WPAD_BUTTON_1)) {
+    if (pressed & WPAD_BUTTON_B) { // SWAPPED: B strictly handles Undo actions
         handle_undo();
+    }
+    if (pressed & WPAD_BUTTON_1) { // SWAPPED: 1 cycles levels of current time control 
+        adjust_time_control();
+    }
+    if (pressed & WPAD_BUTTON_2) { // UPDATED: Added mapping to toggle chessboard perspective
+        board_orientation = (board_orientation == 1) ? -1 : 1;
     }
     if (pressed & WPAD_BUTTON_PLUS) {
         handle_switch_sides();
