@@ -1,1 +1,3 @@
+This worked! Thank you. Can you update the uci.c and other appropriate files to remove the debug info now? What I would like display is the PV, Nodes per second and Eval rating.
 
+#produced main-test1-imp-v1.c and uci-test1-imp-v1.c
