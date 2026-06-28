@@ -180,6 +180,8 @@ static void go(Position *pos, char *str)
   printf("db_go: Parsing search parameters: %s\n", str ? str : "NULL");
   fflush(stdout);
 
+  printf("db_go: Checking delayed settings...\n");
+  fflush(stdout);
   process_delayed_settings();
 
   Limits = (struct LimitsType){ 0 };
@@ -351,10 +353,23 @@ void uci_loop(int argc, char **argv)
       funlockfile(stdout);
     }
     else if (strcmp(token, "ucinewgame") == 0) {
+      printf("db_loop: Entering ucinewgame settings setup...\n");
+      fflush(stdout);
       process_delayed_settings();
+      printf("db_loop: Clearing search...\n");
+      fflush(stdout);
       search_clear();
+      printf("db_loop: ucinewgame complete.\n");
+      fflush(stdout);
     } else if (strcmp(token, "isready") == 0) {
+      printf("db_loop: Entering isready settings setup...\n");
+      fflush(stdout);
+      
       process_delayed_settings();
+      
+      printf("db_loop: settings complete. printing readyok...\n");
+      fflush(stdout);
+      
       printf("readyok\n");
       fflush(stdout);
     }
