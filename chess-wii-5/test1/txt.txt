@@ -25,3 +25,8 @@ Unfortunately the engine still does not make a move.  perhaps this misc.h file w
 misc.h-v1?
 
 #it made some changes but still doesn't work.
+
+Unfortunately the engine still does not make a move.  perhaps this thread.c file will help:
+thread.c?
+
+#WOW! This worked
