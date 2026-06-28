@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -226,7 +227,7 @@ uint64_t prng_sparse_rand(PRNG *rng)
 // Custom robust cfish_getline implementation for Nintendo Wii
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
 {
-  // FIXED: Intercept input and route to active thread-safe FIFO pipes
+  // Intercept input and route to active thread-safe FIFO pipes safely
   if (engine_getline_hook != NULL) {
     return engine_getline_hook(lineptr, n, stream);
   }
@@ -258,6 +259,36 @@ ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
   (*lineptr)[i] = '\0';
   return i;
 }
+
+// SAFE printf wrapper to stop recursive macro expansions on GCC compiler
+#undef printf
+int wii_printf(const char *format, ...)
+{
+  char buf[2048];
+  va_list args;
+  va_start(args, format);
+  int ret = vsnprintf(buf, sizeof(buf), format, args);
+  va_end(args);
+
+  if (engine_printf_hook != NULL) {
+    engine_printf_hook("%s", buf);
+  } else {
+    fwrite(buf, 1, ret, stdout);
+    fflush(stdout);
+  }
+  return ret;
+}
+
+// SAFE fgets wrapper to stop macro recursion problems on GCC compiler
+#undef fgets
+char* wii_fgets(char* str, int num, FILE* stream)
+{
+  if (engine_fgets_hook != NULL) {
+    return engine_fgets_hook(str, num, stream);
+  }
+  return fgets(str, num, stream);
+}
+
 #else
 // For non-Wii platforms, undefine the macro to prevent preprocessor expansion during definition
 #undef getline
@@ -352,7 +383,7 @@ void close_file(FD fd)
 
 size_t file_size(FD fd)
 {
-  // FIXED: Safeguard invalid/failed files to prevent unaligned memory errors
+  // Safeguard invalid/failed files to prevent unaligned memory errors
   if (fd < 0) return 0;
 
 #ifndef _WIN32
@@ -368,7 +399,7 @@ size_t file_size(FD fd)
 
 const void *map_file(FD fd, map_t *map)
 {
-  // FIXED: Guard against failed file opens immediately 
+  // Guard against failed file opens immediately 
   if (fd < 0) return NULL;
 
 #if defined(__wii__) || defined(GEKKO)
