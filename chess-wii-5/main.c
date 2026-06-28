@@ -981,8 +981,8 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // UPDATED: Controls description for B Undo and 1 Cycle-Level support
-    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | [1] Cycle Level | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
+    // UPDATED: Controls description to map '2' to perspective toggling
+    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | [1] Cycle Level | [2] Flip | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
     
     // ==========================================
     // STREAMLINED ENGINE HUD (PV, NPS, EVAL)
@@ -1247,7 +1247,7 @@ void handle_wii_input() {
     if (pressed & WPAD_BUTTON_RIGHT) {
         if (cursor_c < 7) cursor_c++;
     }
-    if (pressed & (WPAD_BUTTON_A | WPAD_BUTTON_2)) {
+    if (pressed & WPAD_BUTTON_A) { // UPDATED: Excluded button 2 so it doesn't double-trigger
         handle_select();
     }
     if (pressed & WPAD_BUTTON_B) { // SWAPPED: B strictly handles Undo actions
@@ -1255,6 +1255,9 @@ void handle_wii_input() {
     }
     if (pressed & WPAD_BUTTON_1) { // SWAPPED: 1 cycles levels of current time control 
         adjust_time_control();
+    }
+    if (pressed & WPAD_BUTTON_2) { // UPDATED: Added mapping to toggle chessboard perspective
+        board_orientation = (board_orientation == 1) ? -1 : 1;
     }
     if (pressed & WPAD_BUTTON_PLUS) {
         handle_switch_sides();
