@@ -9,3 +9,10 @@ p2: Can you update the controls in the main file so that the B button on the wii
 p3: can you swap the functionality of B and 1? B should undo, and 1 should cycle level. 
 
 #produced main-test1-imp-v2.c
+
+#what improvments are needed next. condense the text, configure controls for gamecube control, and
+# fix: Invalid write to 0x00000008, PC = 0x8008d5a4
+
+p4: When launching the program I get this error message: Invalid write to 0x00000008, PC = 0x8008d5a4. Any ideas?
+
+# This made changes to misc.c misc.h thread.h and main.c, 4 files total. I will label those v3pt1 
