@@ -1,3 +1,5 @@
 prompt1: 
 Can you update this main.c file? It is a chess engine for wii. currently it allows the user to move on the opponent's turn, that should be fixed:
 main-test3-v1.c
+
+#main-test3-v1.1.c is the new file name, it does prevent moves on the opposite player's turn, but still the computer does not play
