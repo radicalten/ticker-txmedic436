@@ -226,6 +226,11 @@ uint64_t prng_sparse_rand(PRNG *rng)
 // Custom robust cfish_getline implementation for Nintendo Wii
 ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
 {
+  // FIXED: Intercept input and route to active thread-safe FIFO pipes
+  if (engine_getline_hook != NULL) {
+    return engine_getline_hook(lineptr, n, stream);
+  }
+
   if (*lineptr == NULL || *n == 0) {
     *n = 128;
     *lineptr = malloc(*n);
@@ -347,9 +352,12 @@ void close_file(FD fd)
 
 size_t file_size(FD fd)
 {
+  // FIXED: Safeguard invalid/failed files to prevent unaligned memory errors
+  if (fd < 0) return 0;
+
 #ifndef _WIN32
   struct stat statbuf;
-  fstat(fd, &statbuf);
+  if (fstat(fd, &statbuf) != 0) return 0;
   return statbuf.st_size;
 #else
   DWORD sizeLow, sizeHigh;
@@ -360,6 +368,9 @@ size_t file_size(FD fd)
 
 const void *map_file(FD fd, map_t *map)
 {
+  // FIXED: Guard against failed file opens immediately 
+  if (fd < 0) return NULL;
+
 #if defined(__wii__) || defined(GEKKO)
   size_t size = file_size(fd);
   if (size == 0) return NULL;
