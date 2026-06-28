@@ -1,0 +1,21 @@
+name: Wii-curl-v2
+on:
+  push:
+    branches:
+    - main
+jobs:
+  build-wii:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+    - name: Compile
+      run: |
+        make -f Makefile-chess-wii-6
+    - name: Upload
+      uses: actions/upload-artifact@v6
+      with:
+        name: wii-curl
+        path: |
+          *.dol
