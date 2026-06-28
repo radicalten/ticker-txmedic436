@@ -1,2 +1,3 @@
-prompt1: Can you update this main.c file? It is a chess engine for wii. currently it allows the user to move on the opponent's turn, that should be fixed. 
+prompt1: 
+Can you update this main.c file? It is a chess engine for wii. currently it allows the user to move on the opponent's turn, that should be fixed:
 main-test3-v1.c
