@@ -16,3 +16,8 @@ p3: can you swap the functionality of B and 1? B should undo, and 1 should cycle
 p4: When launching the program I get this error message: Invalid write to 0x00000008, PC = 0x8008d5a4. Any ideas?
 
 # This made changes to misc.c misc.h thread.h and main.c, 4 files total. I will label those v3pt1 
+# none of it worked so I will revert. Instead on the main.c I would like to have the 2 button switch the board view from white to black perspective. Likely have to start a new chat now as these "fixes" failed and are polluting the ai thought space. 
+
+New chat log:
+Can you update this main.c file so that the 2 button on the wii remote changes the chessboard perspective from white to black and vice-versa?
+main-test1-imp-v2.c
