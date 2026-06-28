@@ -277,7 +277,14 @@ void start_engine() {
     engine_printf_hook = engine_printf;
     engine_getline_hook = engine_getline;
 
-    engine_thread_stack = memalign(32, 128 * 1024);
+    // Allocated a safe 64KB stack (lowered from 128KB) to prevent launching memory exhaustion crashes
+    engine_thread_stack = memalign(32, 64 * 1024);
+    if (engine_thread_stack == NULL) {
+        engine_thread_stack = malloc(64 * 1024);
+    }
+    if (engine_thread_stack == NULL) {
+        return; // Fail gracefully if out of memory
+    }
     
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
     KThreadResume(&engine_thread);
@@ -981,7 +988,7 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // UPDATED: Controls description for B Undo and 1 Cycle-Level support
+    // Controls description for B Undo and 1 Cycle-Level support
     printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | [1] Cycle Level | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
     
     // ==========================================
