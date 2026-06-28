@@ -23,8 +23,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__wii__) || defined(GEKKO)
+#include <malloc.h> 
+#include <unistd.h>
 #else
 #include <sys/mman.h>
 #endif
@@ -32,8 +36,11 @@
 #include "misc.h"
 #include "thread.h"
 
-// Version number. If Version is left empty, then compile date in the format
-// DD-MM-YY and show in engine_info.
+// Define global in-process redirection hooks
+char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
+int (*engine_printf_hook)(const char *format, ...) = NULL;
+ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream) = NULL;
+
 char Version[] = "";
 
 #ifndef _WIN32
@@ -45,11 +52,6 @@ HANDLE ioMutex;
 static char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 static char date[] = __DATE__;
 
-// print engine_info() prints the full name of the current Stockfish version.
-// This will be either "Stockfish <Tag> DD-MM-YY" (where DD-MM-YY is the
-// date when the program was compiled) or "Stockfish <Version>", depending
-// on whether Version is empty.
-
 void print_engine_info(bool to_uci)
 {
   char my_date[64];
@@ -60,11 +62,11 @@ void print_engine_info(bool to_uci)
     int day, month, year;
 
     strcpy(my_date, date);
-    char *str = strtok(my_date, " "); // month
+    char *str = strtok(my_date, " "); 
     for (month = 1; strncmp(str, &months[3 * month - 3], 3) != 0; month++);
-    str = strtok(NULL, " "); // day
+    str = strtok(NULL, " "); 
     day = atoi(str);
-    str = strtok(NULL, " "); // year
+    str = strtok(NULL, " "); 
     year = atoi(str);
 
     printf("%02d%02d%02d", day, month, year % 100);
@@ -96,8 +98,6 @@ void print_engine_info(bool to_uci)
   fflush(stdout);
 }
 
-// print compiler_info() prints a string trying to describe the compiler
-
 void print_compiler_info(void)
 {
 #define stringify2(x) #x
@@ -123,6 +123,8 @@ void print_compiler_info(void)
 
 #ifdef __APPLE__
          " on Apple"
+#elif defined(__wii__) || defined(GEKKO)
+         " on Nintendo Wii"
 #elif __CYGWIN__
          " on Cygwin"
 #elif __MINGW64__
@@ -195,21 +197,6 @@ void print_compiler_info(void)
          "\n\n");
 }
 
-// xorshift64star Pseudo-Random Number Generator
-// This class is based on original code written and dedicated
-// to the public domain by Sebastiano Vigna (2014).
-// It has the following characteristics:
-//
-//  -  Outputs 64-bit numbers
-//  -  Passes Dieharder and SmallCrush test batteries
-//  -  Does not require warm-up, no zeroland to escape
-//  -  Internal state is a single 64-bit integer
-//  -  Period is 2^64 - 1
-//  -  Speed: 1.60 ns/call (Core i7 @3.40GHz)
-//
-// For further analysis see
-//   <http://vigna.di.unimi.it/ftp/papers/xorshift.pdf>
-
 void prng_init(PRNG *rng, uint64_t seed)
 {
   rng->s = seed;
@@ -235,6 +222,40 @@ uint64_t prng_sparse_rand(PRNG *rng)
   return r1 & r2 & r3;
 }
 
+#if defined(__wii__) || defined(GEKKO)
+// Custom robust cfish_getline implementation for Nintendo Wii
+ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
+{
+  if (*lineptr == NULL || *n == 0) {
+    *n = 128;
+    *lineptr = malloc(*n);
+    if (*lineptr == NULL) return -1;
+  }
+
+  int c;
+  size_t i = 0;
+  while ((c = getc(stream)) != EOF) {
+    // Ensure space for character and trailing null terminator
+    if (i >= *n - 1) {
+      *n *= 2;
+      char *new_ptr = realloc(*lineptr, *n);
+      if (new_ptr == NULL) return -1;
+      *lineptr = new_ptr;
+    }
+    (*lineptr)[i++] = c;
+    if (c == '\n') break;
+  }
+
+  if (i == 0 && c == EOF) {
+    return -1; // Standard EOF sentinel
+  }
+
+  (*lineptr)[i] = '\0';
+  return i;
+}
+#else
+// For non-Wii platforms, undefine the macro to prevent preprocessor expansion during definition
+#undef getline
 ssize_t getline(char **lineptr, size_t *n, FILE *stream)
 {
   if (*n == 0)
@@ -251,6 +272,7 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream)
   (*lineptr)[i] = 0;
   return i;
 }
+#endif
 
 #ifdef _WIN32
 typedef SIZE_T (WINAPI *GLPM)(void);
@@ -258,7 +280,7 @@ size_t largePageMinimum;
 
 bool large_pages_supported(void)
 {
-  GLPM impGetLargePageMinimum =
+  GLPM __attribute__((__stdcall__)) impGetLargePageMinimum =
     (GLPM)(void (*)(void))GetProcAddress(GetModuleHandle("kernel32.dll"),
         "GetLargePageMinimum");
   if (!impGetLargePageMinimum)
@@ -285,17 +307,6 @@ bool large_pages_supported(void)
   return 1;
 }
 
-// The following two functions were taken from mingw_lock.c
-
-void __cdecl _lock(int locknum);
-void __cdecl _unlock(int locknum);
-#define _STREAM_LOCKS 16
-#define _IOLOCKED 0x8000
-typedef struct {
-  FILE f;
-  CRITICAL_SECTION lock;
-} _FILEX;
-
 void flockfile(FILE *F)
 {
   if ((F >= (&__iob_func()[0])) && (F <= (&__iob_func()[_IOB_ENTRIES-1]))) {
@@ -319,11 +330,9 @@ FD open_file(const char *name)
 {
 #ifndef _WIN32
   return open(name, O_RDONLY);
-
 #else
   return CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
       FILE_FLAG_RANDOM_ACCESS, NULL);
-
 #endif
 }
 
@@ -331,10 +340,8 @@ void close_file(FD fd)
 {
 #ifndef _WIN32
   close(fd);
-
 #else
   CloseHandle(fd);
-
 #endif
 }
 
@@ -344,18 +351,35 @@ size_t file_size(FD fd)
   struct stat statbuf;
   fstat(fd, &statbuf);
   return statbuf.st_size;
-
 #else
   DWORD sizeLow, sizeHigh;
   sizeLow = GetFileSize(fd, &sizeHigh);
   return ((uint64_t)sizeHigh << 32) | sizeLow;
-
 #endif
 }
 
 const void *map_file(FD fd, map_t *map)
 {
-#ifndef _WIN32
+#if defined(__wii__) || defined(GEKKO)
+  size_t size = file_size(fd);
+  if (size == 0) return NULL;
+
+  void *data = malloc(size);
+  if (!data) return NULL;
+
+  size_t bytes_read = 0;
+  while (bytes_read < size) {
+    ssize_t r = read(fd, (char *)data + bytes_read, size - bytes_read);
+    if (r <= 0) {
+      free(data);
+      return NULL;
+    }
+    bytes_read += r;
+  }
+  *map = size;
+  return data;
+
+#elif !defined(_WIN32)
   *map = file_size(fd);
   void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
 #ifdef MADV_RANDOM
@@ -370,7 +394,6 @@ const void *map_file(FD fd, map_t *map)
   if (*map == NULL)
     return NULL;
   return MapViewOfFile(*map, FILE_MAP_READ, 0, 0, 0);
-
 #endif
 }
 
@@ -378,13 +401,16 @@ void unmap_file(const void *data, map_t map)
 {
   if (!data) return;
 
-#ifndef _WIN32
+#if defined(__wii__) || defined(GEKKO)
+  free((void *)data);
+  (void)map;
+
+#elif !defined(_WIN32)
   munmap((void *)data, map);
 
 #else
   UnmapViewOfFile(data);
   CloseHandle(map);
-
 #endif
 }
 
@@ -403,6 +429,13 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   alloc->ptr = ptr;
   return ptr;
 
+#elif defined(__wii__) || defined(GEKKO)
+  (void)lp;
+  ptr = memalign(64, size); // Cache line (64-byte) aligned memory is returned
+  alloc->ptr = ptr;
+  alloc->size = size;
+  return ptr;
+
 #else /* Unix */
   size_t alignment = lp ? 1ULL << 21 : 1;
   size_t allocSize = size + alignment - 1;
@@ -419,7 +452,6 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #if defined(__linux__) && defined(MADV_HUGEPAGE)
-  // Advise the kernel to allocate large pages.
   if (lp)
     madvise(ptr, allocSize, MADV_HUGEPAGE);
 #endif
@@ -429,14 +461,17 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   alloc->ptr = ptr;
   alloc->size = allocSize;
   return (void *)(((uintptr_t)ptr + alignment - 1) & ~(alignment - 1));
-
 #endif
 }
 
 void free_memory(alloc_t *alloc)
 {
+  if (!alloc || !alloc->ptr) return;
+
 #ifdef _WIN32
   VirtualFree(alloc->ptr, 0, MEM_RELEASE);
+#elif defined(__wii__) || defined(GEKKO)
+  free(alloc->ptr);
 #else
   munmap(alloc->ptr, alloc->size);
 #endif
