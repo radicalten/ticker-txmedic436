@@ -290,6 +290,32 @@ void uci_loop(int argc, char **argv)
   pos_set(&pos, fen, 0);
   pos.rootKeyFlip = pos.st->key;
 
+  // ==========================================
+  // WII COMPATIBILITY SAFE OVERRIDES START
+  // ==========================================
+  printf("db_loop: Forcing Wii memory safety limits...\n");
+  fflush(stdout);
+
+  // 1. Force the Hash size to 2MB (Default of 16MB/32MB exhausts physical Wii memory immediately)
+  option_set_value(OPT_HASH, 2);
+
+  // 2. Force strictly 1 thread (Wii has only 1 physical CPU core; helper threads create synchronization deadlocks)
+  option_set_value(OPT_THREADS, 1);
+
+  // 3. Disable NNUE if classical evaluation is available (NNUE files are 20-45MB and will crash the heap)
+#ifdef NNUE
+#ifndef NNUE_PURE
+  option_set_value(OPT_USE_NNUE, 0);
+#endif
+#endif
+
+  printf("db_loop: Wii overrides applied safely! Hash: %dMB, Threads: %d\n", 
+         option_value(OPT_HASH), option_value(OPT_THREADS));
+  fflush(stdout);
+  // ==========================================
+  // WII COMPATIBILITY SAFE OVERRIDES END
+  // ==========================================
+
   do {
     if (argc == 1 && !getline(&cmd, &buf_size, stdin))
       strcpy(cmd, "quit");
