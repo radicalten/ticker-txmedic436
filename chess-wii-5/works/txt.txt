@@ -1,4 +1,4 @@
-Contains all the files that work up to this point. improvements are in thee improve directory:
+Contains all the files that work up to this point. improvements are in the improve directory:
 
 prompt1: 
 Can you update this main.c file? It is a chess engine for wii. currently it allows the user to move on the opponent's turn, that should be fixed:
