@@ -18,461 +18,167 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <fcntl.h>
-#include <inttypes.h>
+#ifndef MISC_H
+#define MISC_H
+
+#include <assert.h>
 #include <stdio.h>
-#include <string.h>
-#include <sys/stat.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__wii__) || defined(GEKKO)
-#include <malloc.h> 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+#include <stdatomic.h>
+#include <sys/time.h>
 #include <unistd.h>
-#else
-#include <sys/mman.h>
-#endif
 
-#include "misc.h"
-#include "thread.h"
+#include "types.h"
 
-// Define global in-process redirection hooks
-char* (*engine_fgets_hook)(char* str, int num, FILE* stream) = NULL;
-int (*engine_printf_hook)(const char *format, ...) = NULL;
-ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream) = NULL;
+void print_engine_info(bool to_uci);
+void print_compiler_info(void);
 
-char Version[] = "";
-
-#ifndef _WIN32
-pthread_mutex_t ioMutex = PTHREAD_MUTEX_INITIALIZER;
-#else
-HANDLE ioMutex;
-#endif
-
-static char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-static char date[] = __DATE__;
-
-void print_engine_info(bool to_uci)
+INLINE void prefetch(void *addr)
 {
-  char my_date[64];
-
-  printf("Cfish %s", Version);
-
-  if (strlen(Version) == 0) {
-    int day, month, year;
-
-    strcpy(my_date, date);
-    char *str = strtok(my_date, " "); 
-    for (month = 1; strncmp(str, &months[3 * month - 3], 3) != 0; month++);
-    str = strtok(NULL, " "); 
-    day = atoi(str);
-    str = strtok(NULL, " "); 
-    year = atoi(str);
-
-    printf("%02d%02d%02d", day, month, year % 100);
-  }
-
-  printf(
-#ifdef IS_64BIT
-         " 64"
+#ifndef NO_PREFETCH
+#if defined(__INTEL_COMPILER)
+  __asm__ ("");
 #endif
-#ifdef USE_AVX512
-         " AVX512"
-#elif USE_PEXT
-         " BMI2"
-#elif USE_AVX2
-         " AVX2"
-#elif USE_NEON
-         " NEON"
-#elif USE_POPCNT
-         " POPCNT"
+#if defined(__INTEL_COMPILER) || defined(_MSC_VER)
+  _mm_prefetch((char *)addr, _MM_HINT_T0);
+#else
+  __builtin_prefetch(addr);
 #endif
-#ifdef USE_VNNI
-         "-VNNI"
+#else
+  (void)addr;
 #endif
-#ifdef NUMA
-         " NUMA"
-#endif
-         "%s\n", to_uci ? "\nid author The Stockfish developers"
-                      : " by Syzygy based on Stockfish");
-  fflush(stdout);
 }
 
-void print_compiler_info(void)
+INLINE void prefetch2(void *addr)
 {
-#define stringify2(x) #x
-#define stringify(x) stringify2(x)
-#define make_version_string(major, minor, patch) stringify(major) "." stringify(minor) "." stringify(patch)
-
-  printf("\nCompiled by "
-
-#ifdef __clang__
-         "clang " make_version_string(__clang_major__, __clang_minor__,
-                                      __clang_patchlevel__)
-#elif __INTEL_COMPILER
-         "Intel compiler (version " stringify(__INTEL_COMPILER)
-         " update " stringify(__INTEL_COMPILER_UPDATE) ")"
-#elif _MSC_VER
-         "MSVC (version " stringify(_MSC_FULL_VER) "." stringify(_MSC_BUILD) ")"
-#elif __GNUC__
-         "gcc (GNUC) "
-         make_version_string(__GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__)
-#else
-         "Unknown compiler (unknown version)"
-#endif
-
-#ifdef __APPLE__
-         " on Apple"
-#elif defined(__wii__) || defined(GEKKO)
-         " on Nintendo Wii"
-#elif __CYGWIN__
-         " on Cygwin"
-#elif __MINGW64__
-         " on MinGW64"
-#elif __MINGW32__
-         " on MinGW32"
-#elif __ANDROID__
-         " on Android"
-#elif __linux__
-         " on Linux"
-#elif _WIN64
-         " on Microsoft Windows 64-bit"
-#elif _WIN32
-         " on Microsoft Windows 32-bit"
-#else
-         " on unknown system"
-#endif
-
-         "\nCompilation settings include: "
-#ifdef IS_64BIT
-         "64bit"
-#else
-         "32bit"
-#endif
-#ifdef USE_VNNI
-         " VNNI"
-#endif
-#ifdef USE_AVX512
-         " AVX512"
-#endif
-#ifdef USE_PEXT
-         " BMI2"
-#endif
-#ifdef USE_AVX2
-         " AVX2"
-#endif
-#ifdef USE_AVX
-         " AVX"
-#endif
-#ifdef USE_SSE41
-         " SSE41"
-#endif
-#ifdef USE_SSSE3
-         " SSSE3"
-#endif
-#ifdef USE_SSE2
-         " SSE2"
-#endif
-#ifdef USE_POPCNT
-         " POPCNT"
-#endif
-#ifdef USE_MMX
-         " MMX"
-#endif
-#ifdef USE_NEON
-         " NEON"
-#endif
-#ifdef NNUE_SPARSE
-         " sparse"
-#endif
-#ifndef NDEBUG
-         " DEBUG"
-#endif
-         "\n__VERSION__ macro expands to: "
-#ifdef __VERSION__
-         __VERSION__
-#else
-         "(undefined macro)"
-#endif
-         "\n\n");
+  prefetch(addr);
+  prefetch((uint8_t *)addr + 64);
 }
 
-void prng_init(PRNG *rng, uint64_t seed)
-{
-  rng->s = seed;
+typedef int64_t TimePoint; 
+
+INLINE TimePoint now(void) {
+  struct timeval tv;
+  gettimeofday( &tv, NULL );
+  return 1000 * (uint64_t)tv.tv_sec + (uint64_t)tv.tv_usec / 1000;
 }
-
-uint64_t prng_rand(PRNG *rng)
-{
-  uint64_t s = rng->s;
-
-  s ^= s >> 12;
-  s ^= s << 25;
-  s ^= s >> 27;
-  rng->s = s;
-
-  return s * 2685821657736338717LL;
-}
-
-uint64_t prng_sparse_rand(PRNG *rng)
-{
-  uint64_t r1 = prng_rand(rng);
-  uint64_t r2 = prng_rand(rng);
-  uint64_t r3 = prng_rand(rng);
-  return r1 & r2 & r3;
-}
-
-#if defined(__wii__) || defined(GEKKO)
-// Custom robust cfish_getline implementation for Nintendo Wii
-ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream)
-{
-  if (*lineptr == NULL || *n == 0) {
-    *n = 128;
-    *lineptr = malloc(*n);
-    if (*lineptr == NULL) return -1;
-  }
-
-  int c;
-  size_t i = 0;
-  while ((c = getc(stream)) != EOF) {
-    // Ensure space for character and trailing null terminator
-    if (i >= *n - 1) {
-      *n *= 2;
-      char *new_ptr = realloc(*lineptr, *n);
-      if (new_ptr == NULL) return -1;
-      *lineptr = new_ptr;
-    }
-    (*lineptr)[i++] = c;
-    if (c == '\n') break;
-  }
-
-  if (i == 0 && c == EOF) {
-    return -1; // Standard EOF sentinel
-  }
-
-  (*lineptr)[i] = '\0';
-  return i;
-}
-#else
-// For non-Wii platforms, undefine the macro to prevent preprocessor expansion during definition
-#undef getline
-ssize_t getline(char **lineptr, size_t *n, FILE *stream)
-{
-  if (*n == 0)
-    *lineptr = malloc(*n = 100);
-
-  int c = 0;
-  size_t i = 0;
-  while ((c = getc(stream)) != EOF) {
-    (*lineptr)[i++] = c;
-    if (i == *n)
-      *lineptr = realloc(*lineptr, *n += 100);
-    if (c == '\n') break;
-  }
-  (*lineptr)[i] = 0;
-  return i;
-}
-#endif
 
 #ifdef _WIN32
-typedef SIZE_T (WINAPI *GLPM)(void);
-size_t largePageMinimum;
+bool large_pages_supported(void);
+extern size_t largePageMinimum;
 
-bool large_pages_supported(void)
-{
-  GLPM __attribute__((__stdcall__)) impGetLargePageMinimum =
-    (GLPM)(void (*)(void))GetProcAddress(GetModuleHandle("kernel32.dll"),
-        "GetLargePageMinimum");
-  if (!impGetLargePageMinimum)
-    return 0;
+typedef HANDLE FD;
+#define FD_ERR INVALID_HANDLE_VALUE
+typedef HANDLE map_t;
+typedef struct {
+  void *ptr;
+} alloc_t;
 
-  if ((largePageMinimum = impGetLargePageMinimum()) == 0)
-    return 0;
-
-  LUID privLuid;
-  if (!LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, &privLuid))
-    return 0;
-
-  HANDLE token;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token))
-    return 0;
-
-  TOKEN_PRIVILEGES tokenPrivs;
-  tokenPrivs.PrivilegeCount = 1;
-  tokenPrivs.Privileges[0].Luid = privLuid;
-  tokenPrivs.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-  if (!AdjustTokenPrivileges(token, FALSE, &tokenPrivs, 0, NULL, NULL))
-    return 0;
-
-  return 1;
-}
-
-void flockfile(FILE *F)
-{
-  if ((F >= (&__iob_func()[0])) && (F <= (&__iob_func()[_IOB_ENTRIES-1]))) {
-    _lock(_STREAM_LOCKS + (int)(F - (&__iob_func()[0])));
-    F->_flag |= _IOLOCKED;
-  } else
-    EnterCriticalSection(&(((_FILEX *)F)->lock));
-}
-
-void funlockfile(FILE *F)
-{
-  if ((F >= (&__iob_func()[0])) && (F <= (&__iob_func()[_IOB_ENTRIES-1]))) {
-    F->_flag &= ~_IOLOCKED;
-    _unlock(_STREAM_LOCKS + (int)(F - (&__iob_func()[0])));
-  } else
-    LeaveCriticalSection(&(((_FILEX *)F)->lock));
-}
-#endif
-
-FD open_file(const char *name)
-{
-#ifndef _WIN32
-  return open(name, O_RDONLY);
-#else
-  return CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-      FILE_FLAG_RANDOM_ACCESS, NULL);
-#endif
-}
-
-void close_file(FD fd)
-{
-#ifndef _WIN32
-  close(fd);
-#else
-  CloseHandle(fd);
-#endif
-}
-
-size_t file_size(FD fd)
-{
-#ifndef _WIN32
-  struct stat statbuf;
-  fstat(fd, &statbuf);
-  return statbuf.st_size;
-#else
-  DWORD sizeLow, sizeHigh;
-  sizeLow = GetFileSize(fd, &sizeHigh);
-  return ((uint64_t)sizeHigh << 32) | sizeLow;
-#endif
-}
-
-const void *map_file(FD fd, map_t *map)
-{
-#if defined(__wii__) || defined(GEKKO)
-  size_t size = file_size(fd);
-  if (size == 0) return NULL;
-
-  void *data = malloc(size);
-  if (!data) return NULL;
-
-  size_t bytes_read = 0;
-  while (bytes_read < size) {
-    ssize_t r = read(fd, (char *)data + bytes_read, size - bytes_read);
-    if (r <= 0) {
-      free(data);
-      return NULL;
-    }
-    bytes_read += r;
-  }
-  *map = size;
-  return data;
-
-#elif !defined(_WIN32)
-  *map = file_size(fd);
-  void *data = mmap(NULL, *map, PROT_READ, MAP_SHARED, fd, 0);
-#ifdef MADV_RANDOM
-  madvise(data, *map, MADV_RANDOM);
-#endif
-  return data == MAP_FAILED ? NULL : data;
-
-#else
-  DWORD sizeLow, sizeHigh;
-  sizeLow = GetFileSize(fd, &sizeHigh);
-  *map = CreateFileMapping(fd, NULL, PAGE_READONLY, sizeHigh, sizeLow, NULL);
-  if (*map == NULL)
-    return NULL;
-  return MapViewOfFile(*map, FILE_MAP_READ, 0, 0, 0);
-#endif
-}
-
-void unmap_file(const void *data, map_t map)
-{
-  if (!data) return;
-
-#if defined(__wii__) || defined(GEKKO)
-  free((void *)data);
-  (void)map;
-
-#elif !defined(_WIN32)
-  munmap((void *)data, map);
-
-#else
-  UnmapViewOfFile(data);
-  CloseHandle(map);
-#endif
-}
-
-void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
-{
-  void *ptr = NULL;
-
-#ifdef _WIN32
-  if (lp) {
-    size_t pageSize = largePageMinimum;
-    size_t lpSize = (size + pageSize - 1) & ~(pageSize - 1);
-    ptr = VirtualAlloc(NULL, lpSize,
-        MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE);
-  } else
-    ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-  alloc->ptr = ptr;
-  return ptr;
-
-#elif defined(__wii__) || defined(GEKKO)
-  (void)lp;
-  ptr = memalign(64, size); // Cache line (64-byte) aligned memory is returned
-  alloc->ptr = ptr;
-  alloc->size = size;
-  return ptr;
+void flockfile(FILE *F);
+void funlockfile(FILE *F);
 
 #else /* Unix */
-  size_t alignment = lp ? 1ULL << 21 : 1;
-  size_t allocSize = size + alignment - 1;
 
-#if defined(__APPLE__) && defined(VM_FLAGS_SUPERPAGE_SIZE_2MB)
-  if (lp)
-    ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, VM_FLAGS_SUPERPAGE_SIZE_2MB, 0);
-  else
-    ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-#else
-  ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-#if defined(__linux__) && defined(MADV_HUGEPAGE)
-  if (lp)
-    madvise(ptr, allocSize, MADV_HUGEPAGE);
-#endif
+typedef int FD;
+#define FD_ERR -1
+typedef size_t map_t;
+typedef struct {
+  void *ptr;
+  size_t size;
+} alloc_t;
 
 #endif
 
-  alloc->ptr = ptr;
-  alloc->size = allocSize;
-  return (void *)(((uintptr_t)ptr + alignment - 1) & ~(alignment - 1));
-#endif
-}
+FD open_file(const char *name);
+void close_file(FD fd);
+size_t file_size(FD fd);
+const void *map_file(FD fd, map_t *map);
+void unmap_file(const void *data, map_t map);
+void *allocate_memory(size_t size, bool lp, alloc_t *alloc);
+void free_memory(alloc_t *alloc);
 
-void free_memory(alloc_t *alloc)
+struct PRNG
 {
-  if (!alloc || !alloc->ptr) return;
+  uint64_t s;
+};
+typedef struct PRNG PRNG;
 
-#ifdef _WIN32
-  VirtualFree(alloc->ptr, 0, MEM_RELEASE);
-#elif defined(__wii__) || defined(GEKKO)
-  free(alloc->ptr);
+void prng_init(PRNG *rng, uint64_t seed);
+uint64_t prng_rand(PRNG *rng);
+uint64_t prng_sparse_rand(PRNG *rng);
+
+INLINE uint64_t mul_hi64(uint64_t a, uint64_t b)
+{
+#if defined(__GNUC__) && defined(IS_64BIT)
+  __extension__ typedef unsigned __int128 uint128;
+  return ((uint128)a * (uint128)b) >> 64;
 #else
-  munmap(alloc->ptr, alloc->size);
+  uint64_t aL = (uint32_t)a, aH = a >> 32;
+  uint64_t bL = (uint32_t)b, bH = b >> 32;
+  uint64_t c1 = (aL * bL) >> 32;
+  uint64_t c2 = aH * bL + c1;
+  uint64_t c3 = aL * bH + (uint32_t)c2;
+  return aH * bH + (c2 >> 32) + (c3 >> 32);
 #endif
 }
+
+INLINE bool is_little_endian(void)
+{
+#if defined(__wii__) || defined(GEKKO)
+  return false; 
+#else
+  int num = 1;
+  return *(uint8_t *)&num == 1;
+#endif
+}
+
+INLINE uint32_t from_le_u32(uint32_t v)
+{
+  return is_little_endian() ? v : __builtin_bswap32(v);
+}
+
+INLINE uint16_t from_le_u16(uint16_t v)
+{
+  return is_little_endian() ? v : __builtin_bswap16(v);
+}
+
+INLINE uint64_t from_be_u64(uint64_t v)
+{
+  return is_little_endian() ? __builtin_bswap64(v) : v;
+}
+
+INLINE uint32_t from_be_u32(uint32_t v)
+{
+  return is_little_endian() ? __builtin_bswap32(v) : v;
+}
+
+INLINE uint16_t from_be_u16(uint16_t v)
+{
+  return is_little_endian() ? __builtin_bswap16(v) : v;
+}
+
+INLINE uint32_t read_le_u32(const void *p)
+{
+  return from_le_u32(*(uint32_t *)p);
+}
+
+INLINE uint16_t read_le_u16(const void *p)
+{
+  return from_le_u16(*(uint16_t *)p);
+}
+
+INLINE uint32_t readu_le_u32(const void *p)
+{
+  const uint8_t *q = p;
+  return q[0] | (q[1] << 8) | (q[2] << 16) | (q[3] << 24);
+}
+
+INLINE uint16_t readu_le_u16(const void *p)
+{
+  const uint8_t *q = p;
+  return q[0] | (q[1] << 8);
+}
+
+#endif // MISC_H
