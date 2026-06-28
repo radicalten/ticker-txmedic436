@@ -22,74 +22,59 @@
 #define THREAD_H
 
 #include <stdatomic.h>
-#ifndef _WIN32
-#include <pthread.h>
-#else
-#include <windows.h>
-#endif
-
 #include "types.h"
 
-#define MAX_THREADS 512
-
-#ifndef _WIN32
-#define LOCK_T pthread_mutex_t
-#define LOCK_INIT(x) pthread_mutex_init(&(x), NULL)
-#define LOCK_DESTROY(x) pthread_mutex_destroy(&(x))
-#define LOCK(x) pthread_mutex_lock(&(x))
-#define UNLOCK(x) pthread_mutex_unlock(&(x))
-#else
-#define LOCK_T HANDLE
-#define LOCK_INIT(x) do { x = CreateMutex(NULL, FALSE, NULL); } while (0)
-#define LOCK_DESTROY(x) CloseHandle(x)
-#define LOCK(x) WaitForSingleObject(x, INFINITE)
-#define UNLOCK(x) ReleaseMutex(x)
+#if defined(__wii__) || defined(GEKKO)
+#include <tuxedo/thread.h>
 #endif
+
+#define MAX_THREADS 4
+
+typedef struct {
+  atomic_bool locked;
+} TuxedoMutex;
+
+#define LOCK_T TuxedoMutex
+#define LOCK_INIT(x) atomic_store(&(x).locked, false)
+#define LOCK_DESTROY(x) ((void)0)
+#define LOCK(x) do { while (atomic_exchange(&(x).locked, true)) { KThreadYield(); } } while (0)
+#define UNLOCK(x) atomic_store(&(x).locked, false)
 
 enum {
   THREAD_SLEEP, THREAD_SEARCH, THREAD_TT_CLEAR, THREAD_EXIT, THREAD_RESUME
 };
+
+struct Position;
+typedef struct Position Position;
 
 void thread_search(Position *pos);
 void thread_wake_up(Position *pos, int action);
 void thread_wait_until_sleeping(Position *pos);
 void thread_wait(Position *pos, atomic_bool *b);
 
-
-// MainThread struct seems to exist mostly for easy move.
-
 struct MainThread {
   double previousTimeReduction;
   Value previousScore;
   Value iterValue[4];
 };
-
 typedef struct MainThread MainThread;
 
 extern MainThread mainThread;
-
 void mainthread_search(void);
-
-
-// ThreadPool struct handles all the threads-related stuff like init,
-// starting, parking and, most importantly, launching a thread. All the
-// access to threads data is done through this class.
 
 struct ThreadPool {
   Position *pos[MAX_THREADS];
   int numThreads;
-#ifndef _WIN32
-  pthread_mutex_t mutex;
-  pthread_cond_t sleepCondition;
-  bool initializing;
-#else
-  HANDLE event;
-#endif
+  
+  KThread* threads[MAX_THREADS];
+  void* thread_stacks[MAX_THREADS];
+  KThrQueue waitQueues[MAX_THREADS];
+  
+  atomic_bool initializing;
   bool searching, sleeping, stopOnPonderhit;
   atomic_bool ponder, stop, increaseDepth;
   LOCK_T lock;
 };
-
 typedef struct ThreadPool ThreadPool;
 
 void threads_init(void);
@@ -109,4 +94,4 @@ INLINE Position *threads_main(void)
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
-#endif
+#endif // THREAD_H
