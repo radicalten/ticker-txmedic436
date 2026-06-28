@@ -13,3 +13,14 @@ It says ENG -> db_loop: Recieved raw cmd: 'is ready', GUI -> position startpos m
 #updated it for the uci test to be more granular now it fails on setup, which means it never gives back uciok. 
 
 The engine gets stuck after saying: ENG -> db_loop: Entering isready settings setup...
+
+#still doesn't play even with the changes. 
+
+Unfortunately the engine still does not make a move.  perhaps this misc.c file will help: 
+misc.c-v1?
+
+#it identified some problems with misc.c and I applied the changes but it still doesn't work. 
+
+Unfortunately the engine still does not make a move.  perhaps this misc.h file will help:
+misc.h-v1?
+
