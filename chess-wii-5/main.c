@@ -1179,6 +1179,20 @@ void handle_select() {
         return;
     }
 
+    // FIXED: Block human interaction on the opponent's turn, engine's turn, or when the engine is actively thinking.
+    if (engine_thinking) {
+        return;
+    }
+    if (user_side == 2) { // Engine vs Engine (Spectator mode)
+        return;
+    }
+    if (user_side == 1 && current_state.turn != 1) { // Player is White, but it's Black's turn
+        return;
+    }
+    if (user_side == -1 && current_state.turn != -1) { // Player is Black, but it's White's turn
+        return;
+    }
+
     int sq = screen_to_board_sq(cursor_r, cursor_c);
     if (selected_sq == -1) {
         int p = current_state.board[sq];
@@ -1248,6 +1262,7 @@ void handle_switch_sides() {
         send_to_engine("stop\n");
         engine_thinking = 0;
     }
+    selected_sq = -1; // FIXED: Clear selection highlights on side swap to prevent visual bugs
     if (user_side == 1) user_side = -1;
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
