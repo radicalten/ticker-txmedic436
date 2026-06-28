@@ -46,6 +46,9 @@ void position(Position *pos, char *str)
   char fen[128];
   char *moves;
 
+  printf("db_pos: Parsing position cmd: %s\n", str ? str : "NULL");
+  fflush(stdout);
+
   moves = strstr(str, "moves");
   if (moves) {
     if (moves > str) moves[-1] = 0;
@@ -57,8 +60,11 @@ void position(Position *pos, char *str)
     fen[127] = 0;
   } else if (strncmp(str, "startpos", 8) == 0)
     strcpy(fen, StartFEN);
-  else
+  else {
+    printf("db_pos: Invalid position type\n");
+    fflush(stdout);
     return;
+  }
 
   pos->st = pos->stack + 100; // Start of circular buffer of 100 slots.
   pos_set(pos, fen, option_value(OPT_CHESS960));
@@ -69,7 +75,11 @@ void position(Position *pos, char *str)
 
     for (moves = strtok(moves, " \t"); moves; moves = strtok(NULL, " \t")) {
       Move m = uci_to_move(pos, moves);
-      if (!m) break;
+      if (!m) {
+        printf("db_pos: Illegal move encountered: %s\n", moves);
+        fflush(stdout);
+        break;
+      }
       do_move(pos, m, gives_check(pos, pos->st, m));
       pos->gamePly++;
       // Roll over if we reach 100 plies.
@@ -113,6 +123,9 @@ void position(Position *pos, char *str)
   }
   pos->rootKeyFlip ^= pos->st->key;
   pos->st->key ^= pos->rootKeyFlip;
+
+  printf("db_pos: Position setup successful.\n");
+  fflush(stdout);
 }
 
 
@@ -164,6 +177,9 @@ static void go(Position *pos, char *str)
   char *token;
   bool ponderMode = false;
 
+  printf("db_go: Parsing search parameters: %s\n", str ? str : "NULL");
+  fflush(stdout);
+
   process_delayed_settings();
 
   Limits = (struct LimitsType){ 0 };
@@ -204,7 +220,13 @@ static void go(Position *pos, char *str)
     }
   }
 
+  printf("db_go: Spawning search thread...\n");
+  fflush(stdout);
+
   start_thinking(pos, ponderMode);
+
+  printf("db_go: Search thread spawned successfully.\n");
+  fflush(stdout);
 }
 
 
@@ -272,6 +294,10 @@ void uci_loop(int argc, char **argv)
 
     if (cmd[strlen(cmd) - 1] == '\n')
       cmd[strlen(cmd) - 1] = 0;
+
+    // Log what the engine just read from the GUI input FIFO
+    printf("db_loop: Received raw cmd: '%s'\n", cmd);
+    fflush(stdout);
 
     token = cmd;
     while (isblank(*token))
