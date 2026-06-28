@@ -23,3 +23,5 @@ Can you update this main.c file so that the 2 button on the wii remote changes t
 main-test1-imp-v2.c
 
 #will call this main-test1-impv2pt1
+
+#I tested on wii and sure enough it loads for 1s then crashes. The chessboard does blink into view which means it is loading but the invalid write is certainly killing it. Will need to fix that to run properly on wii. I wonder that the fix is. perhaps if I configure all the memory to 1MB or something. we will see 6-28-26
