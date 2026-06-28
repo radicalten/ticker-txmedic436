@@ -23,25 +23,6 @@
 
 #include "config.h"
 
-// When compiling with provided Makefile (e.g. for Linux and OSX),
-// configuration is done automatically. To get started type 'make help'.
-//
-// When Makefile is not used (e.g. with Microsoft Visual Studio) some
-// switches need to be set manually:
-//
-// -DNDEBUG      | Disable debugging mode. Always use this for release.
-//
-// -DNO_PREFETCH | Disable use of prefetch asm-instruction. You may need
-//               | this to run on some very old machines.
-//
-// -DUSE_POPCNT  | Add runtime support for use of popcnt asm-instruction.
-//               | Works only in 64-bit mode and requires hardware with
-//               | popcnt support.
-//
-// -DUSE_PEXT    | Add runtime support for use of pext asm-instruction.
-//               | Works only in 64-bit mode and requires hardware with
-//               | pext support.
-
 #ifndef NDEBUG
 #include <assert.h>
 #endif
@@ -49,15 +30,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
 #define INLINE static inline __attribute__((always_inline))
 #define NOINLINE __attribute__((noinline))
-
-// Declaring pure functions as pure seems not to help. (Investigate later.)
-//#define PURE __attribute__((pure))
 #define PURE
 
 #if defined __has_attribute
@@ -72,29 +51,21 @@
 #define SMALL
 #endif
 
-// Predefined macros hell:
-//
-// __GNUC__           Compiler is gcc, Clang or Intel on Linux
-// __INTEL_COMPILER   Compiler is Intel
-// _MSC_VER           Compiler is MSVC or Intel on Windows
-// _WIN32             Building on Windows (any)
-// _WIN64             Building on Windows 64 bit
-
-#if defined(_WIN64) && defined(_MSC_VER) // No Makefile used
-#  include <intrin.h> // Microsoft header for _BitScanForward64()
+#if defined(_WIN64) && defined(_MSC_VER) 
+#  include <intrin.h> 
 #  define IS_64BIT
 #endif
 
 #if defined(USE_POPCNT) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
-#  include <nmmintrin.h> // Intel and Microsoft header for _mm_popcnt_u64()
+#  include <nmmintrin.h> 
 #endif
 
 #if !defined(NO_PREFETCH) && (defined(__INTEL_COMPILER) || defined(_MSC_VER))
-#  include <xmmintrin.h> // Intel and Microsoft header for _mm_prefetch()
+#  include <xmmintrin.h> 
 #endif
 
 #if defined(USE_PEXT)
-#  include <immintrin.h> // Header for _pext_u64() intrinsic
+#  include <immintrin.h> 
 #  define pext(b, m) _pext_u64(b, m)
 #else
 #  define pext(b, m) (0)
@@ -129,24 +100,10 @@ typedef uint64_t Bitboard;
 
 enum { MAX_MOVES = 256, MAX_PLY = 246 };
 
-// A move needs 16 bits to be stored
-//
-// bit  0- 5: destination square (from 0 to 63)
-// bit  6-11: origin square (from 0 to 63)
-// bit 12-13: promotion piece type - 2 (from KNIGHT-2 to QUEEN-2)
-// bit 14-15: special move flag: promotion (1), en passant (2), castling (3)
-// NOTE: EN-PASSANT bit is set only when a pawn can be captured
-//
-// Null move (MOVE_NULL) is encoded as a2a2.
-
 enum { MOVE_NONE = 0, MOVE_NULL = 65 };
-
 enum { NORMAL, PROMOTION, ENPASSANT, CASTLING };
-
 enum { WHITE = false, BLACK = true };
-
 enum { KING_SIDE, QUEEN_SIDE };
-
 enum {
   NO_CASTLING = 0, WHITE_OO = 1, WHITE_OOO = 2,
   BLACK_OO = 4, BLACK_OOO = 8, ANY_CASTLING = 15
@@ -160,14 +117,11 @@ INLINE int make_castling_right(int c, int s)
 
 enum { PHASE_ENDGAME = 0, PHASE_MIDGAME = 128 };
 enum { MG, EG };
-
 enum {
   SCALE_FACTOR_DRAW = 0, SCALE_FACTOR_NORMAL = 64,
   SCALE_FACTOR_MAX = 128, SCALE_FACTOR_NONE = 255
 };
-
 enum { BOUND_NONE, BOUND_UPPER, BOUND_LOWER, BOUND_EXACT };
-
 enum {
   VALUE_ZERO = 0, VALUE_DRAW = 0,
   VALUE_KNOWN_WIN = 10000, VALUE_MATE = 32000,
@@ -193,12 +147,10 @@ enum {
   BishopValueMg = 825,   BishopValueEg = 915,
   RookValueMg   = 1276,  RookValueEg   = 1380,
   QueenValueMg  = 2538,  QueenValueEg  = 2682,
-
   MidgameLimit  = 15258, EndgameLimit = 3915
 };
 
 enum { PAWN = 1, KNIGHT, BISHOP, ROOK, QUEEN, KING };
-
 enum {
   W_PAWN = 1, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
   B_PAWN = 9, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING
@@ -231,7 +183,6 @@ enum {
 };
 
 enum { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H };
-
 enum { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8 };
 
 typedef uint32_t Move;
@@ -244,19 +195,12 @@ typedef int32_t Depth;
 typedef uint32_t Square;
 typedef uint32_t File;
 typedef uint32_t Rank;
-
-// Score type stores a middlegame and an endgame value in a single integer.
-// The endgame value goes in the upper 16 bits, the middlegame value in
-// the lower 16 bits.
-
 typedef uint32_t Score;
 
 enum { SCORE_ZERO };
 
 #define make_score(mg,eg) ((((unsigned)(eg))<<16) + (mg))
 
-// Casting an out-of-range value to int16_t is implementation-defined, but
-// we assume the implementation does the right thing.
 INLINE Value eg_value(Score s)
 {
   return (int16_t)((s + 0x8000) >> 16);
@@ -267,25 +211,21 @@ INLINE Value mg_value(Score s)
   return (int16_t)s;
 }
 
-/// Division of a Score must be handled separately for each tEerm
 INLINE Score score_divide(Score s, int i)
 {
   return make_score(mg_value(s) / i, eg_value(s) / i);
 }
 
 extern Value PieceValue[2][16];
-
 extern uint32_t NonPawnPieceValue[16];
 
 #define SQUARE_FLIP(sq) ((sq) ^ 0x38)
-
 #define mate_in(ply) ((Value)(VALUE_MATE - (ply)))
 #define mated_in(ply) ((Value)(-VALUE_MATE + (ply)))
 #define make_square(f,r) ((Square)(((r) << 3) + (f)))
 #define make_piece(c,pt) ((Piece)(((c) << 3) + (pt)))
 #define type_of_p(p) ((p) & 7)
 #define color_of(p) ((p) >> 3)
-// since Square is now unsigned, no need to test for s >= SQ_A1
 #define square_is_ok(s) ((Square)(s) <= SQ_H8)
 #define file_of(s) ((s) & 7)
 #define rank_of(s) ((s) >> 3)
@@ -336,55 +276,63 @@ struct ExtMove {
   Move move;
   int value;
 };
-
 typedef struct ExtMove ExtMove;
 
 struct PSQT {
   Score psq[16][64];
 };
-
 extern struct PSQT psqt;
 
 #undef max
 #undef min
 
-#define MAX(T) INLINE T max_##T(T a, T b) { return a > b ? a : b; }
-MAX(int)
-MAX(uint64_t)
-MAX(unsigned)
-MAX(int64_t)
-MAX(int16_t)
-MAX(uint8_t)
-MAX(double)
-MAX(size_t)
-MAX(long)
-#undef MAX
+#define MAKE_MAX(T) INLINE T max_##T(T a, T b) { return a > b ? a : b; }
+MAKE_MAX(int)
+MAKE_MAX(uint64_t)
+MAKE_MAX(unsigned)
+MAKE_MAX(int64_t)
+MAKE_MAX(int16_t)
+MAKE_MAX(uint8_t)
+MAKE_MAX(double)
+MAKE_MAX(size_t)
+MAKE_MAX(long)
+#undef MAKE_MAX
 
-#define MIN(T) INLINE T min_##T(T a, T b) { return a < b ? a : b; }
-MIN(int)
-MIN(uint64_t)
-MIN(unsigned)
-MIN(int64_t)
-MIN(int16_t)
-MIN(uint8_t)
-MIN(double)
-MIN(size_t)
-MIN(long)
-#undef MIN
+#define MAKE_MIN(T) INLINE T min_##T(T a, T b) { return a < b ? a : b; }
+MAKE_MIN(int)
+MAKE_MIN(uint64_t)
+MAKE_MIN(unsigned)
+MAKE_MIN(int64_t)
+MAKE_MIN(int16_t)
+MAKE_MIN(uint8_t)
+MAKE_MIN(double)
+MAKE_MIN(size_t)
+MAKE_MIN(long)
+#undef MAKE_MIN
 
-#define CLAMP(T) INLINE T clamp_##T(T a, T b, T c) { return a < b ? b : a > c ? c : a; }
-CLAMP(int)
-CLAMP(uint64_t)
-CLAMP(unsigned)
-CLAMP(int64_t)
-CLAMP(int16_t)
-CLAMP(uint8_t)
-CLAMP(double)
-CLAMP(size_t)
-CLAMP(long)
-#undef CLAMP
+#define MAKE_CLAMP(T) INLINE T clamp_##T(T a, T b, T c) { return a < b ? b : a > c ? c : a; }
+MAKE_CLAMP(int)
+MAKE_CLAMP(uint64_t)
+MAKE_CLAMP(unsigned)
+MAKE_CLAMP(int64_t)
+MAKE_CLAMP(int16_t)
+MAKE_CLAMP(uint8_t)
+MAKE_CLAMP(double)
+MAKE_CLAMP(size_t)
+MAKE_CLAMP(long)
+#undef MAKE_CLAMP
 
-#ifndef __APPLE__
+#if defined(__wii__) || defined(GEKKO)
+#define TEMPLATE(F,a,...) _Generic((a), \
+    int: F##_int,              \
+    uint64_t: F##_uint64_t,    \
+    unsigned: F##_unsigned,    \
+    int64_t: F##_int64_t,      \
+    int16_t: F##_int16_t,      \
+    uint8_t: F##_uint8_t,      \
+    double: F##_double         \
+) (a,__VA_ARGS__)
+#elif !defined(__APPLE__)
 #define TEMPLATE(F,a,...) _Generic((a), \
     int: F##_int,              \
     uint64_t: F##_uint64_t,    \
@@ -422,16 +370,29 @@ CLAMP(long)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
 #ifdef NNUE
-
 struct DirtyPiece {
   int dirtyNum;
   Piece pc[3];
   Square from[3];
   Square to[3];
 };
-
 typedef struct DirtyPiece DirtyPiece;
-
 #endif
 
+// Redirect hooks to run the GUI and Cfish safely in-process on the Wii
+extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
+extern int (*engine_printf_hook)(const char *format, ...);
+extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
+
+ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
+
+#define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
+#define fgets(str, num, stream) (engine_fgets_hook ? engine_fgets_hook(str, num, stream) : fgets(str, num, stream))
+
+#if defined(__wii__) || defined(GEKKO)
+#define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
+#else
+#define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : getline(lineptr, n, stream))
 #endif
+
+#endif // TYPES_H
