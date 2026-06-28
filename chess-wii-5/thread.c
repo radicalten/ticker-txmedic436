@@ -110,10 +110,9 @@ static void thread_create(int idx)
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  // FIXED: Correctly calculate the highest address of the stack frame and align to 32 bytes
-  void* stack_top = (char*)stack_base + WII_THREAD_STACK_SIZE - 32;
-
-  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_top, 0x55);
+  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
+  // This lets the GUI at priority 40 run completely lag-free
+  KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x55);
   KThreadResume(thread);
 
   while (atomic_load(&Threads.initializing)) {
