@@ -36,8 +36,7 @@
 
 static void thread_idle_loop(Position *pos);
 
-// Lowered to 64KB stack to stop the console from running out of MEM1 space and crashing!
-#define WII_THREAD_STACK_SIZE (64 * 1024)
+#define WII_THREAD_STACK_SIZE (256 * 1024)
 
 ThreadPool Threads;
 MainThread mainThread;
@@ -102,23 +101,12 @@ static void thread_create(int idx)
   KThread* thread = malloc(sizeof(KThread));
   void* stack_base = memalign(32, WII_THREAD_STACK_SIZE);
 
-  // OOM Fallback logic: Try malloc if memalign failed
-  if (stack_base == NULL) {
-    stack_base = malloc(WII_THREAD_STACK_SIZE);
-  }
-
-  // Gracefully handle a total out of memory situation to prevent a NULL pointer write
-  if (thread == NULL || stack_base == NULL) {
-    atomic_store(&Threads.initializing, false);
-    return;
-  }
-
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  // Lower heavy search threads to Priority 85 (0x55)
+  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
   // This lets the GUI at priority 40 run completely lag-free
   KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x55);
   KThreadResume(thread);
@@ -204,7 +192,7 @@ static void thread_idle_loop(Position *pos)
 
     pos->action = THREAD_SLEEP;
 
-    // Wake up any parent/GUI threads currently blocked waiting for this thread to finish its search tasks!
+    // FIXED: Wake up any parent/GUI threads currently blocked waiting for this thread to finish its search tasks!
     KThrQueueUnblockAllByValue(&Threads.waitQueues[idx], 0);
   }
 }
