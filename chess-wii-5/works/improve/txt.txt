@@ -21,3 +21,5 @@ p4: When launching the program I get this error message: Invalid write to 0x0000
 New chat log:
 Can you update this main.c file so that the 2 button on the wii remote changes the chessboard perspective from white to black and vice-versa?
 main-test1-imp-v2.c
+
+#will call this main-test1-impv2pt1
