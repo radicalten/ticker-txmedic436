@@ -1,4 +1,6 @@
 The current state of the files here work on wii.
+what can likely be changed is the debug options added to uci.c
+also need to update the main.c gui so that eval move PV and nodes per second is displayed
 
 follows the txt.txt from chess-wii-5 test1 to here:
 
