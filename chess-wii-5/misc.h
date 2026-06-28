@@ -32,15 +32,6 @@
 
 #include "types.h"
 
-// IMPLEMENTED: Global redirection hooks exposed to all compiled engine files
-extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
-extern int (*engine_printf_hook)(const char *format, ...);
-extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
-
-// IMPLEMENTED: Redirection of standard printf for GUI pipe safety
-#undef printf
-#define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
-
 void print_engine_info(bool to_uci);
 void print_compiler_info(void);
 
@@ -189,12 +180,5 @@ INLINE uint16_t readu_le_u16(const void *p)
   const uint8_t *q = p;
   return q[0] | (q[1] << 8);
 }
-
-// IMPLEMENTED: Force compilation units to route getline calls through our Wii hooks
-#if defined(__wii__) || defined(GEKKO)
-ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
-#undef getline
-#define getline cfish_getline
-#endif
 
 #endif // MISC_H
