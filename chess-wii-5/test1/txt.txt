@@ -9,3 +9,7 @@ currently the chess engine connects but does not make a move. may i share my uci
 #it suggested a debug uci.c file that prints different errors, i stated:
 
 It says ENG -> db_loop: Recieved raw cmd: 'is ready', GUI -> position startpos moves e2e4, GUI -> go movetime 1, but then nothing further happens
+
+#updated it for the uci test to be more granular now it fails on setup, which means it never gives back uciok. 
+
+The engine gets stuck after saying: ENG -> db_loop: Entering isready settings setup...
