@@ -35,20 +35,12 @@
 void print_engine_info(bool to_uci);
 void print_compiler_info(void);
 
-// prefetch() preloads the given address in L1/L2 cache. This is
-// a non-blocking function that doesn't stall the CPU waiting for data
-// to be loaded from memory, which can be quite slow.
-
 INLINE void prefetch(void *addr)
 {
 #ifndef NO_PREFETCH
-
 #if defined(__INTEL_COMPILER)
-// This hack prevents prefetches from being optimized away by
-// Intel compiler. Both MSVC and gcc seem not be affected by this.
   __asm__ ("");
 #endif
-
 #if defined(__INTEL_COMPILER) || defined(_MSC_VER)
   _mm_prefetch((char *)addr, _MM_HINT_T0);
 #else
@@ -65,11 +57,11 @@ INLINE void prefetch2(void *addr)
   prefetch((uint8_t *)addr + 64);
 }
 
-typedef int64_t TimePoint; // A value in milliseconds
+typedef int64_t TimePoint; 
 
 INLINE TimePoint now(void) {
   struct timeval tv;
-  gettimeofday(&tv, NULL);
+  gettimeofday( &tv, NULL );
   return 1000 * (uint64_t)tv.tv_sec + (uint64_t)tv.tv_usec / 1000;
 }
 
@@ -99,8 +91,6 @@ typedef struct {
 
 #endif
 
-ssize_t getline(char **lineptr, size_t *n, FILE *stream);
-
 FD open_file(const char *name);
 void close_file(FD fd);
 size_t file_size(FD fd);
@@ -113,7 +103,6 @@ struct PRNG
 {
   uint64_t s;
 };
-
 typedef struct PRNG PRNG;
 
 void prng_init(PRNG *rng, uint64_t seed);
@@ -137,8 +126,12 @@ INLINE uint64_t mul_hi64(uint64_t a, uint64_t b)
 
 INLINE bool is_little_endian(void)
 {
+#if defined(__wii__) || defined(GEKKO)
+  return false; 
+#else
   int num = 1;
   return *(uint8_t *)&num == 1;
+#endif
 }
 
 INLINE uint32_t from_le_u32(uint32_t v)
@@ -188,4 +181,4 @@ INLINE uint16_t readu_le_u16(const void *p)
   return q[0] | (q[1] << 8);
 }
 
-#endif
+#endif // MISC_H
