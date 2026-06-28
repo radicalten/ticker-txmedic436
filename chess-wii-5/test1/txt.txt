@@ -24,3 +24,4 @@ misc.c-v1?
 Unfortunately the engine still does not make a move.  perhaps this misc.h file will help:
 misc.h-v1?
 
+#it made some changes but still doesn't work.
