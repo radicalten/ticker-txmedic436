@@ -15,10 +15,6 @@
   GNU General Public License for more details.
 
   You should have received a copy of the GNU General Public License
-  along with this program.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
@@ -195,6 +191,9 @@ static void thread_idle_loop(Position *pos)
     }
 
     pos->action = THREAD_SLEEP;
+
+    // FIXED: Wake up any parent/GUI threads currently blocked waiting for this thread to finish its search tasks!
+    KThrQueueUnblockAllByValue(&Threads.waitQueues[idx], 0);
   }
 }
 
