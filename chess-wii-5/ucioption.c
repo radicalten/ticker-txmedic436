@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wii__) && !defined(GEKKO)
 #include <sys/mman.h>
 #endif
 
