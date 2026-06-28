@@ -222,6 +222,7 @@ int count_repetitions(const BoardState *state);
 int get_promo_choice();
 void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
 void reset_engine_metrics();
+void adjust_time_control();
 
 void gui_cleanup() {
     printf("\033[?25h\033[2J\033[H"); 
@@ -980,7 +981,8 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [1] Undo | [2] Flip | [+] Sides | [-] Time | [HOME] Quit\033[0m\033[K\r\n");
+    // UPDATED: Controls description for B cycle-level support
+    printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Cycle Level | [1] Undo | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
     
     // ==========================================
     // STREAMLINED ENGINE HUD (PV, NPS, EVAL)
@@ -1248,7 +1250,10 @@ void handle_wii_input() {
     if (pressed & (WPAD_BUTTON_A | WPAD_BUTTON_2)) {
         handle_select();
     }
-    if (pressed & (WPAD_BUTTON_B | WPAD_BUTTON_1)) {
+    if (pressed & WPAD_BUTTON_B) { // UPDATED: B cycles levels of current time control 
+        adjust_time_control();
+    }
+    if (pressed & WPAD_BUTTON_1) { // UPDATED: 1 strictly handles Undo actions
         handle_undo();
     }
     if (pressed & WPAD_BUTTON_PLUS) {
