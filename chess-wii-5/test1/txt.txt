@@ -30,3 +30,5 @@ Unfortunately the engine still does not make a move.  perhaps this thread.c file
 thread.c?
 
 #WOW! This worked
+
+This worked! Thank you. Can you update the uci.c and other appropriate files to remove the debug info now? What I would like display is the PV, Nodes per second and Eval rating.
