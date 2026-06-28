@@ -255,7 +255,7 @@ void uci_loop(int argc, char **argv)
   for (int i = 1; i < argc; i++)
     buf_size += strlen(argv[i]) + 1;
 
-  if (buf_size < 1024) buf_size = 1024;
+  if (buf_size < 8192) buf_size = 8192;
 
   char *cmd = malloc(buf_size);
 
