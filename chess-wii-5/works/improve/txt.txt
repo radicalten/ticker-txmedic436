@@ -3,3 +3,7 @@ This worked! Thank you. Can you update the uci.c and other appropriate files to 
 #produced main-test1-imp-v1.c and uci-test1-imp-v1.c
 
 p2: Can you update the controls in the main file so that the B button on the wiimote imcrements through the time-control levels?
+
+#ok it made a good change, but now to change the B and the 1 functionality. B to undo, 1 to cycle level.
+
+p3: can you swap the functionality of B and 1? B should undo, and 1 should cycle level. 
