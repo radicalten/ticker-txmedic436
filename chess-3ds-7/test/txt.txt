@@ -48,3 +48,8 @@ chess-3ds-7/main.c:157:18: error: request for member 'from' in something not a s
 Is is possible to combine these two separate C language files into one? The primary file should be thread.h 
 3ds_bridge.h
 thread.h
+
+#gemini3.5flash made one combined thread.h file, now to ask for a combined thread.c file
+
+Now lets create a combined thread.c file. here is 3ds_bridge.c followed by thread.c:
+wait, I simply meant to merge 3ds_bridge.c with this thread.c:
