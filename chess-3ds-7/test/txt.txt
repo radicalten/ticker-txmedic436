@@ -1,1 +1,14 @@
+#removed an unnecessary 50ms sleep in main.c
+#changed a 2ms sleep in thread.c to 1ms
 
+#Speed improvement: none found yet. On console Old 3DS, chess-3ds-6 depth 20 3.1-3.2k nps, now chess-3ds-7 depth 20 3.2k nps, 
+#within margin of error, perhaps it is slightly faster by .1k nps at most
+
+#next is to try to combine main_stockfish.c with main.c perhaps rolling the uci_loop twice is hurting performance.
+#currently wii is 80-100k+ nps avg 90k nps. so thats nearly 30x performance when it should be 3x performance at most
+
+ai: gemini-3.5 flash
+
+p1: Can you combine these two c files into one main file?: 
+main_stockfish.c
+main-test-1ms-sleep-v1.c 
