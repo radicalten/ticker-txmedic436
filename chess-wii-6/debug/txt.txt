@@ -67,3 +67,7 @@ return 0;
 #however with engine_running = false, now I get the other dolphin only error
 #trouble is with just this the engine now locks up and never moves, I will need to continue my hand debugging to match claude. 
 
+#Working with:
+#Commit d4f6f0a
+#current line is 353 or 266
+
