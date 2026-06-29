@@ -201,6 +201,10 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
 
     int i = 0;
     while (1) {
+      if (!engine_running) {
+            if (i == 0) return -1;
+            break;
+        }
         char c;
         if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
             if (i >= (int)*n - 1) {
