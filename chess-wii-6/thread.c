@@ -36,7 +36,7 @@
 
 static void thread_idle_loop(Position *pos);
 
-#define WII_THREAD_STACK_SIZE (256 * 1024)
+#define WII_THREAD_STACK_SIZE (128 * 1024)
 
 ThreadPool Threads;
 MainThread mainThread;
