@@ -21,6 +21,8 @@
 #include <assert.h>
 #include <malloc.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "material.h"
 #include "movegen.h"
@@ -51,13 +53,25 @@ static sptr thread_init(void *arg)
   if (t >= numCmhTables) {
     int old = numCmhTables;
     numCmhTables = t + 16;
-    cmhTables = realloc(cmhTables,
+    CounterMoveHistoryStat **new_cmhTables = realloc(cmhTables,
         numCmhTables * sizeof(CounterMoveHistoryStat *));
+    if (!new_cmhTables) {
+        fprintf(stderr, "\n[FATAL] Out of memory: Failed to reallocate cmhTables list!\n");
+        exit(1);
+    }
+    cmhTables = new_cmhTables;
     while (old < numCmhTables)
       cmhTables[old++] = NULL;
   }
+  
   if (!cmhTables[t]) {
+    // 16MB allocation - Check strictly for NULL on the Wii!
     cmhTables[t] = calloc(1, sizeof(CounterMoveHistoryStat));
+    if (!cmhTables[t]) {
+        fprintf(stderr, "\n[FATAL] Out of memory: Failed to allocate %u MB for CounterMoveHistory!\n", 
+                (unsigned int)(sizeof(CounterMoveHistoryStat) / (1024 * 1024)));
+        exit(1);
+    }
     for (int chk = 0; chk < 2; chk++)
       for (int c = 0; c < 2; c++)
         for (int j = 0; j < 16; j++)
@@ -66,10 +80,20 @@ static sptr thread_init(void *arg)
   }
 
   Position *pos = calloc(1, sizeof(Position));
+  if (!pos) {
+      fprintf(stderr, "\n[FATAL] Out of memory: Failed to allocate Position struct!\n");
+      exit(1);
+  }
+
 #ifndef NNUE_PURE
   pos->pawnTable = calloc(PAWN_ENTRIES,  sizeof(PawnEntry));
   pos->materialTable = calloc(8192, sizeof(MaterialEntry));
+  if (!pos->pawnTable || !pos->materialTable) {
+      fprintf(stderr, "\n[FATAL] Out of memory: Failed to allocate pawn or material tables!\n");
+      exit(1);
+  }
 #endif
+
   pos->counterMoves = calloc(1, sizeof(CounterMoveStat));
   pos->mainHistory = calloc(1, sizeof(ButterflyHistory));
   pos->captureHistory = calloc(1, sizeof(CapturePieceToHistory));
@@ -77,6 +101,13 @@ static sptr thread_init(void *arg)
   pos->rootMoves = calloc(1, sizeof(RootMoves));
   pos->stackAllocation = calloc(63 + (MAX_PLY + 110), sizeof(Stack));
   pos->moveList = calloc(10000, sizeof(ExtMove));
+
+  // Strict validation of engine allocations
+  if (!pos->counterMoves || !pos->mainHistory || !pos->captureHistory ||
+      !pos->lowPlyHistory || !pos->rootMoves || !pos->stackAllocation || !pos->moveList) {
+      fprintf(stderr, "\n[FATAL] Out of memory: Failed to allocate engine search structures!\n");
+      exit(1);
+  }
 
   pos->stack = (Stack *)(((uintptr_t)pos->stackAllocation + 0x3f) & ~0x3f);
   pos->threadIdx = idx;
@@ -101,13 +132,22 @@ static void thread_create(int idx)
   KThread* thread = malloc(sizeof(KThread));
   void* stack_base = memalign(32, WII_THREAD_STACK_SIZE);
 
+  if (!thread) {
+      fprintf(stderr, "\n[FATAL] Out of memory: Cannot allocate Thread structure!\n");
+      exit(1);
+  }
+  if (!stack_base) {
+      fprintf(stderr, "\n[FATAL] Out of memory: Cannot allocate %d KB for thread stack!\n", 
+              WII_THREAD_STACK_SIZE / 1024);
+      exit(1);
+  }
+
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
   
   memset(&Threads.waitQueues[idx], 0, sizeof(KThrQueue));
 
-  // IMPLEMENTED: Lower heavy search threads to Priority 85 (0x55)
-  // This lets the GUI at priority 40 run completely lag-free
+  // Search threads Priority 85 (0x55)
   KThreadPrepare(thread, thread_init, (void *)(intptr_t)idx, stack_base, 0x55);
   KThreadResume(thread);
 
@@ -192,7 +232,6 @@ static void thread_idle_loop(Position *pos)
 
     pos->action = THREAD_SLEEP;
 
-    // FIXED: Wake up any parent/GUI threads currently blocked waiting for this thread to finish its search tasks!
     KThrQueueUnblockAllByValue(&Threads.waitQueues[idx], 0);
   }
 }
