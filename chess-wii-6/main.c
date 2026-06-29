@@ -208,10 +208,16 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
         char c;
         if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
             if (i >= (int)*n - 1) {
-                *n *= 2;
-                char *new_ptr = realloc(*lineptr, *n);
-                if (new_ptr == NULL) return -1;
+                size_t  new_n   = *n * 2;
+                char   *new_ptr = realloc(*lineptr, new_n);
+                if (!new_ptr) {
+                    free(*lineptr);
+                    *lineptr = NULL;
+                    *n       = 0;
+                    return -1;
+                }
                 *lineptr = new_ptr;
+                *n       = new_n;
             }
             (*lineptr)[i++] = c;
             if (c == '\n') break;
