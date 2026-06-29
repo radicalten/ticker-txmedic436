@@ -32,20 +32,8 @@
 
 #include "types.h"
 
-// FIXED: Declare redirection hooks as extern so they are visible to all engine source files
-#if defined(__wii__) || defined(GEKKO)
-extern char* (*engine_fgets_hook)(char* str, int num, FILE* stream);
-extern int (*engine_printf_hook)(const char *format, ...);
-extern ssize_t (*engine_getline_hook)(char **lineptr, size_t *n, FILE *stream);
-
-// Prototype of custom robust getline implementation
-ssize_t cfish_getline(char **lineptr, size_t *n, FILE *stream);
-
-// FIXED: Map standard standard input/output functions to Wii-safe redirected memory FIFOs
-#define getline cfish_getline
-#define printf(...) (engine_printf_hook ? engine_printf_hook(__VA_ARGS__) : printf(__VA_ARGS__))
-#define fgets(str, num, stream) (engine_fgets_hook ? engine_fgets_hook(str, num, stream) : fgets(str, num, stream))
-#endif
+// REDUNDANT WII HOOKS REMOVED: 
+// All engine_printf/fgets/getline redirections are already handled correctly in types.h
 
 void print_engine_info(bool to_uci);
 void print_compiler_info(void);
