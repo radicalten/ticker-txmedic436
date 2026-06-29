@@ -170,14 +170,12 @@ int engine_printf(const char *format, ...) {
 char* engine_fgets(char* str, int num, FILE* stream) {
     (void)stream;
     if (!str || num <= 1) return NULL;
-    int n = 0;
-    while (n < num - 1) {
-        if (!engine_running) {
-            if (n == 0) return NULL;
-            break;
-        }
     int bytes_read = 0;
     while (bytes_read < num - 1) {
+            if (!engine_running) {
+            if (bytes_read == 0) return NULL;
+            break;
+          }
         char c;
         if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
             str[bytes_read++] = c;
