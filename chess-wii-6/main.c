@@ -202,7 +202,7 @@ void fifo_write(SimpleFIFO *f, const char *str, int len)
     LOCK(f->lock);
     for (int i = 0; i < len; i++) {
         int next = (f->head + 1) % FIFO_SIZE;
-        if (next != f->tail) { // Drop silently when full
+        if (next != f->tail) {
             f->data[f->head] = str[i];
             f->head          = next;
         }
@@ -216,8 +216,8 @@ int fifo_read(SimpleFIFO *f, char *out, int max_len)
     LOCK(f->lock);
     int n = 0;
     while (f->tail != f->head && n < max_len) {
-        out[n++]  = f->data[f->tail];
-        f->tail   = (f->tail + 1) % FIFO_SIZE;
+        out[n++] = f->data[f->tail];
+        f->tail  = (f->tail + 1) % FIFO_SIZE;
     }
     UNLOCK(f->lock);
     return n;
@@ -228,9 +228,6 @@ int fifo_read(SimpleFIFO *f, char *out, int max_len)
 // resolve to these functions via the macros in types.h
 // ============================================================
 
-// engine_printf: routes engine UCI output into the GUI FIFO
-// NOTE: This function must NOT use the macro-redirected printf
-// because main.c has #undef printf above.
 int engine_printf(const char *format, ...)
 {
     char    buf[2048];
@@ -248,7 +245,6 @@ int engine_printf(const char *format, ...)
     return ret;
 }
 
-// engine_fgets: blocks until a full line arrives in the GUI->engine FIFO
 char *engine_fgets(char *str, int num, FILE *stream)
 {
     (void)stream;
@@ -274,7 +270,6 @@ char *engine_fgets(char *str, int num, FILE *stream)
     return str;
 }
 
-// engine_getline: growable-buffer line reader for GUI->engine FIFO
 ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream)
 {
     (void)stream;
@@ -351,12 +346,9 @@ void init_wii_console(void)
     VIDEO_Init();
     WPAD_Init();
 
-    // fatInitDefault returns bool - log failure but continue
-    // (engine will run without NNUE/opening book if SD fails)
-    if (!fatInitDefault()) {
-        // Cannot log yet - console not up. Will be visible after
-        // console_init below on next printf.
-    }
+    // fatInitDefault returns bool - non-fatal if it fails
+    // engine will run without NNUE/opening book if SD fails
+    fatInitDefault();
 
     GXRModeObj *rmode = VIDEO_GetPreferredMode(NULL);
     void *xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
@@ -375,12 +367,10 @@ void init_wii_console(void)
 // Engine thread
 // ============================================================
 
-// sptr is the thread return type defined by the Wii threading layer
 static sptr engine_thread_main(void *arg)
 {
     (void)arg;
 
-    // Step-by-step logging so we can see which init crashes on Wii
     printf("[engine] psqt_init\n");      fflush(stdout);
     psqt_init();
     printf("[engine] bitboards_init\n"); fflush(stdout);
@@ -420,7 +410,7 @@ void start_engine(void)
     engine_recvd_uciok   = false;
     engine_recvd_readyok = false;
 
-    // FIXED: Init FIFOs BEFORE hooks or thread - each does memset+LOCK_INIT
+    // FIXED: Init FIFOs BEFORE hooks or thread
     fifo_init(&gui_to_eng_pipe);
     fifo_init(&eng_to_gui_pipe);
 
@@ -434,7 +424,6 @@ void start_engine(void)
     engine_running = true;
 
     // FIXED: 512KB stack - Stockfish recurses to MAX_PLY depth
-    // 256KB was too small and caused silent stack overflow corruption
     const size_t STACK_SIZE = 512 * 1024;
     engine_thread_stack = memalign(32, STACK_SIZE);
     if (!engine_thread_stack) {
@@ -447,37 +436,26 @@ void start_engine(void)
     memset(engine_thread_stack, 0, STACK_SIZE);
 
     // FIXED: Zero KThread struct before KThreadPrepare reads it.
-    // KThreadPrepare writing to a NULL KThread ptr = write to 0x8.
+    // KThreadPrepare writing to a NULL/garbage KThread = write to 0x8.
     memset(&engine_thread, 0, sizeof(KThread));
 
-    // FIXED: PowerPC stack grows DOWNWARD - pass TOP of buffer
-    // Passing stack_base caused first frame to write before buffer
+    // FIXED: PowerPC stack grows DOWNWARD - pass TOP of buffer.
+    // Passing stack_base caused first frame to write before the buffer.
     void *stack_top = (char *)engine_thread_stack + STACK_SIZE;
 
-    // Priority 64: engine runs below GUI (~40) so display stays fluid
-    int result = KThreadPrepare(&engine_thread,
-                                engine_thread_main,
-                                NULL,
-                                stack_top,
-                                64);
-    if (result != 0) {
-        printf("FATAL: KThreadPrepare failed (ret=%d)\n", result);
-        fflush(stdout);
-        free(engine_thread_stack);
-        engine_thread_stack = NULL;
-        engine_running      = false;
-        return;
-    }
+    // FIXED: KThreadPrepare returns void on devkitPPC.
+    // Assigning the return value causes:
+    // "error: void value not ignored as it ought to be"
+    KThreadPrepare(&engine_thread,
+                   engine_thread_main,
+                   NULL,
+                   stack_top,
+                   64);
 
-    result = KThreadResume(&engine_thread);
-    if (result != 0) {
-        printf("FATAL: KThreadResume failed (ret=%d)\n", result);
-        fflush(stdout);
-        free(engine_thread_stack);
-        engine_thread_stack = NULL;
-        engine_running      = false;
-        return;
-    }
+    // FIXED: KThreadResume returns void on devkitPPC.
+    // Assigning the return value causes:
+    // "error: invalid use of void expression"
+    KThreadResume(&engine_thread);
 
     // Give engine time to reach uci_loop before sending commands
     KThreadSleepMs(200);
@@ -498,7 +476,6 @@ void move_to_uci(GuiMove m, char *buf)
 {
     int f_col = m.from % 8, f_row = 8 - (m.from / 8);
     int t_col = m.to   % 8, t_row = 8 - (m.to   / 8);
-    // FIXED: use snprintf, not sprintf, for safety
     snprintf(buf, 6, "%c%d%c%d",
              'a' + f_col, f_row,
              'a' + t_col, t_row);
@@ -549,8 +526,7 @@ int is_square_attacked(const BoardState *state, int sq, int attacker)
             if (state->board[nr*8+nc] == attacker * 6) return 1;
     }
 
-    // Pawns: attacker==1 (White) attacks from row below (r+1)
-    //        attacker==-1 (Black) attacks from row above (r-1)
+    // Pawns
     int p_dr = (attacker == 1) ? 1 : -1;
     for (int dc = -1; dc <= 1; dc += 2) {
         int nr = r + p_dr, nc = c + dc;
@@ -599,9 +575,9 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m)
     int target = state->board[m.to];
     int turn   = state->turn;
 
-    if (p == 0)                                                    return 0;
-    if ((turn ==  1 && p < 0) || (turn == -1 && p > 0))           return 0;
-    if (m.from == m.to)                                            return 0;
+    if (p == 0)                                                      return 0;
+    if ((turn ==  1 && p < 0) || (turn == -1 && p > 0))             return 0;
+    if (m.from == m.to)                                              return 0;
     if (target != 0 &&
         ((turn ==  1 && target > 0) || (turn == -1 && target < 0))) return 0;
 
@@ -614,12 +590,9 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m)
     case 1: { // Pawn
         int dir     = (turn ==  1) ? -1 :  1;
         int start_r = (turn ==  1) ?  6 :  1;
-        // One square forward
         if (dc == 0 && dr == dir && target == 0) return 1;
-        // Two squares from start
         if (dc == 0 && fr == start_r && dr == 2 * dir &&
             state->board[(fr + dir) * 8 + fc] == 0 && target == 0) return 1;
-        // Capture (diagonal)
         if (abs_dc == 1 && dr == dir) {
             if (target != 0) return 1;
             // FIXED: guard ep with != -1 before comparing
@@ -662,7 +635,6 @@ int is_pseudo_legal_move(const BoardState *state, GuiMove m)
     }
     case 6: { // King
         if (abs_dr <= 1 && abs_dc <= 1) return 1;
-        // Castling
         if (dr == 0 && abs_dc == 2) {
             if (turn == 1 && fr == 7 && fc == 4) {
                 if (m.to == 62 && (state->castle & 1) &&
@@ -718,9 +690,9 @@ int has_legal_moves(const BoardState *state)
             GuiMove m = {f, t, 0};
             // FIXED: only set promo for correct color reaching back rank
             if (abs(p) == 1) {
-                int tr = t / 8;
-                if ((state->turn ==  1 && tr == 0) ||
-                    (state->turn == -1 && tr == 7))
+                int trank = t / 8;
+                if ((state->turn ==  1 && trank == 0) ||
+                    (state->turn == -1 && trank == 7))
                     m.promo = 5;
             }
             if (is_legal_gui_move(state, m)) return 1;
@@ -733,10 +705,9 @@ int count_repetitions(const BoardState *state)
 {
     int count = 1;
     for (int i = 0; i < history_count; i++) {
-        // Only compare positions with the same side to move
-        if (history[i].turn != state->turn)   continue;
+        if (history[i].turn   != state->turn)   continue;
         if (history[i].castle != state->castle) continue;
-        if (history[i].ep    != state->ep)    continue;
+        if (history[i].ep     != state->ep)     continue;
         if (memcmp(state->board, history[i].board,
                    sizeof(state->board)) == 0)
             count++;
@@ -749,15 +720,13 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m)
     *dst = *src;
     int p = dst->board[m.from];
 
-    // Capture detection uses src state (before modification)
     int is_capture = (src->board[m.to] != 0) ||
                      (abs(p) == 1 && src->ep != -1 && m.to == src->ep);
 
     dst->board[m.from] = 0;
 
-    // Place piece (or promoted piece) on destination
+    // FIXED: use src->turn - dst->turn not yet flipped
     if (m.promo != 0) {
-        // FIXED: use src->turn - dst->turn not yet flipped
         dst->board[m.to] = src->turn * m.promo;
     } else {
         dst->board[m.to] = p;
@@ -766,8 +735,6 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m)
     // En-passant: remove captured pawn
     if (abs(p) == 1 && src->ep != -1 && m.to == src->ep) {
         // FIXED: use src->turn for direction (not yet flipped)
-        // White pawn moves up (decreasing index): captured pawn is below ep
-        // Black pawn moves down (increasing index): captured pawn is above ep
         int cap_sq = m.to + (src->turn == 1 ? 8 : -8);
         if (cap_sq >= 0 && cap_sq < 64)
             dst->board[cap_sq] = 0;
@@ -801,14 +768,11 @@ void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m)
     if (m.from ==  7 || m.to ==  7) dst->castle &= ~4;
     if (m.from ==  0 || m.to ==  0) dst->castle &= ~8;
 
-    // Flip side to move
     dst->turn = -dst->turn;
 
-    // Halfmove clock
     if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
     else                            dst->halfmoves++;
 
-    // Fullmove counter increments after Black's move
     if (dst->turn == 1) dst->fullmoves++;
 }
 
@@ -840,12 +804,10 @@ void trigger_engine_move(void)
     reset_engine_metrics();
 
     // FIXED: 16384 bytes - enough for MAX_HISTORY=2048 moves * ~6 chars
-    // Old 8192 could overflow silently and corrupt adjacent memory
     static char cmd[16384];
     cmd[0] = '\0';
 
     const char *header = "position startpos moves";
-    // Use strncpy then force-terminate
     strncpy(cmd, header, sizeof(cmd) - 1);
     cmd[sizeof(cmd) - 1] = '\0';
     int len = (int)strlen(cmd);
@@ -855,7 +817,6 @@ void trigger_engine_move(void)
         move_to_uci(move_history[i], uci_m);
         int mlen = (int)strlen(uci_m);
 
-        // Reserve room for ' ' + move + '\n' + '\0'
         if (len + 1 + mlen + 2 >= (int)sizeof(cmd)) break;
 
         cmd[len++] = ' ';
@@ -863,7 +824,7 @@ void trigger_engine_move(void)
         len += mlen;
     }
 
-    // FIXED: safe termination - always room for \n\0
+    // FIXED: safe termination
     if (len < (int)sizeof(cmd) - 2) {
         cmd[len++] = '\n';
         cmd[len]   = '\0';
@@ -921,20 +882,18 @@ void process_engine_output(char *line)
 {
     if (!line) return;
 
-    // Strip trailing whitespace
     int len = (int)strlen(line);
     while (len > 0 && (line[len-1] == '\r' || line[len-1] == '\n' ||
                        line[len-1] == ' '  || line[len-1] == '\t'))
         line[--len] = '\0';
     if (len == 0) return;
 
-    if (strcmp(line, "uciok") == 0)    { engine_recvd_uciok   = true; return; }
-    if (strcmp(line, "readyok") == 0)  { engine_recvd_readyok = true; return; }
+    if (strcmp(line, "uciok")   == 0) { engine_recvd_uciok   = true; return; }
+    if (strcmp(line, "readyok") == 0) { engine_recvd_readyok = true; return; }
 
     if (strncmp(line, "info", 4) == 0) {
         char *ptr;
 
-        // FIXED: advance past the token keyword before sscanf
         if ((ptr = strstr(line, " nps "))) {
             long long v = 0;
             if (sscanf(ptr + 5, "%lld", &v) == 1) engine_nps = v;
@@ -991,7 +950,6 @@ void process_engine_output(char *line)
                 return;
             }
             GuiMove m = uci_to_gui_move(move_str);
-            // FIXED: validate before calling is_legal
             if (m.from >= 0 && m.from < 64 &&
                 m.to   >= 0 && m.to   < 64 &&
                 is_legal_gui_move(&current_state, m)) {
@@ -1015,7 +973,8 @@ void read_from_engine(void)
 {
     char tmp[2048];
     int  n;
-    while ((n = fifo_read(&eng_to_gui_pipe, tmp, (int)sizeof(tmp) - 1)) > 0) {
+    while ((n = fifo_read(&eng_to_gui_pipe, tmp,
+                          (int)sizeof(tmp) - 1)) > 0) {
         tmp[n] = '\0';
         for (int i = 0; i < n; i++) {
             if (tmp[i] == '\n') {
@@ -1028,7 +987,6 @@ void read_from_engine(void)
                 if (engine_buf_len < (int)sizeof(engine_buffer) - 1) {
                     engine_buffer[engine_buf_len++] = tmp[i];
                 } else {
-                    // Buffer full: flush and restart
                     engine_buffer[engine_buf_len] = '\0';
                     process_engine_output(engine_buffer);
                     engine_buf_len = 0;
@@ -1089,12 +1047,11 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf)
         if (abs_p == 1 && m.promo != 0) {
             static const char promo_ch[] = " PNBRQK";
             *ptr++ = '=';
-            *ptr++ = (m.promo < 6) ? promo_ch[m.promo] : 'Q';
+            *ptr++ = (m.promo >= 1 && m.promo <= 6) ? promo_ch[m.promo] : 'Q';
         }
         *ptr = '\0';
     }
 
-    // Append check / checkmate symbol
     BoardState next;
     make_gui_move(state, &next, m);
     int opp_king = find_king(&next, next.turn);
@@ -1117,18 +1074,18 @@ typedef struct {
 static FrameCache build_frame_cache(void)
 {
     FrameCache fc;
-    fc.has_moves       = has_legal_moves(&current_state);
-    fc.repetitions     = count_repetitions(&current_state);
-    fc.is_check        = 0;
+    fc.has_moves        = has_legal_moves(&current_state);
+    fc.repetitions      = count_repetitions(&current_state);
+    fc.is_check         = 0;
     fc.king_in_check_sq = -1;
 
     int wk = find_king(&current_state,  1);
     int bk = find_king(&current_state, -1);
     if (wk != -1 && is_square_attacked(&current_state, wk, -1)) {
-        fc.is_check        = 1;
+        fc.is_check         = 1;
         fc.king_in_check_sq = wk;
     } else if (bk != -1 && is_square_attacked(&current_state, bk, 1)) {
-        fc.is_check        = 1;
+        fc.is_check         = 1;
         fc.king_in_check_sq = bk;
     }
     return fc;
@@ -1210,7 +1167,6 @@ void draw_ui(void)
     else                             printf(" (%d nodes)",  time_control_val);
     printf("\033[K\r\n\r\n");
 
-    // Column labels
     printf((board_orientation == 1)
            ? "     a  b  c  d  e  f  g  h    "
            : "     h  g  f  e  d  c  b  a    ");
@@ -1237,24 +1193,27 @@ void draw_ui(void)
                 GuiMove tm = {selected_sq, sq, 0};
                 int sp = current_state.board[selected_sq];
                 if (abs(sp) == 1) {
-                    int tr = sq / 8;
-                    if ((current_state.turn ==  1 && tr == 0) ||
-                        (current_state.turn == -1 && tr == 7))
+                    int trank = sq / 8;
+                    if ((current_state.turn ==  1 && trank == 0) ||
+                        (current_state.turn == -1 && trank == 7))
                         tm.promo = 5;
                 }
                 if (is_legal_gui_move(&current_state, tm)) is_legal_dest = 1;
             }
 
             const char *bg;
-            if      (r == cursor_r && c == cursor_c)  bg = "\033[48;5;208m";
-            else if (sq == selected_sq)                bg = "\033[48;5;34m";
-            else if (sq == fc.king_in_check_sq)        bg = "\033[48;5;196m";
-            else if (is_prev)   bg = is_light ? "\033[48;5;75m"  : "\033[48;5;68m";
-            else if (is_legal_dest) bg = is_light ? "\033[48;5;151m": "\033[48;5;108m";
-            else                bg = is_light ? "\033[48;5;180m" : "\033[48;5;94m";
+            if      (r == cursor_r && c == cursor_c) bg = "\033[48;5;208m";
+            else if (sq == selected_sq)              bg = "\033[48;5;34m";
+            else if (sq == fc.king_in_check_sq)      bg = "\033[48;5;196m";
+            else if (is_prev)
+                bg = is_light ? "\033[48;5;75m"  : "\033[48;5;68m";
+            else if (is_legal_dest)
+                bg = is_light ? "\033[48;5;151m" : "\033[48;5;108m";
+            else
+                bg = is_light ? "\033[48;5;180m" : "\033[48;5;94m";
 
-            const char *fg  = (p > 0) ? "\033[38;5;255m\033[1m"
-                                       : "\033[38;5;232m";
+            const char *fg = (p > 0) ? "\033[38;5;255m\033[1m"
+                                      : "\033[38;5;232m";
             static const char *glyphs[] = {" ","P","N","B","R","Q","K"};
             const char *g = (p != 0 && abs(p) <= 6) ? glyphs[abs(p)] : " ";
 
@@ -1266,19 +1225,16 @@ void draw_ui(void)
         printf("\033[K\r\n");
     }
 
-    // Bottom column labels
     printf((board_orientation == 1)
            ? "     a  b  c  d  e  f  g  h    "
            : "     h  g  f  e  d  c  b  a    ");
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // Controls hint
     printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | "
            "[1] Cycle Level | [2] Flip | [+] Sides | "
            "[-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
 
-    // Engine HUD
     printf(" \033[1;34mEngine:\033[0m ");
     if      (engine_thinking)      printf("\033[1;32mThinking\033[0m");
     else if (engine_recvd_readyok) printf("\033[1;30mIdle\033[0m");
@@ -1324,7 +1280,8 @@ void draw_ui(void)
 // ============================================================
 int get_promo_choice(void)
 {
-    printf("\r\n \033[1;33mPromote: [A]=Queen [B]=Rook [+]=Bishop [-]=Knight\033[0m");
+    printf("\r\n \033[1;33mPromote: "
+           "[A]=Queen [B]=Rook [+]=Bishop [-]=Knight\033[0m");
     fflush(stdout);
     int choice = 5;
     for (;;) {
@@ -1343,11 +1300,11 @@ int get_promo_choice(void)
 
 void handle_select(void)
 {
-    if (engine_thinking)                           return;
-    if (current_state.halfmoves >= 100)            return;
-    if (count_repetitions(&current_state) >= 3)    return;
-    if (!has_legal_moves(&current_state))          return;
-    if (user_side == 2)                            return;
+    if (engine_thinking)                             return;
+    if (current_state.halfmoves >= 100)              return;
+    if (count_repetitions(&current_state) >= 3)      return;
+    if (!has_legal_moves(&current_state))            return;
+    if (user_side == 2)                              return;
     if (user_side ==  1 && current_state.turn !=  1) return;
     if (user_side == -1 && current_state.turn != -1) return;
 
@@ -1364,11 +1321,11 @@ void handle_select(void)
         int p = current_state.board[selected_sq];
 
         // FIXED: promotion rank is color-dependent
-        int tr      = sq / 8;
+        int trank   = sq / 8;
         int is_prom = (abs(p) == 1) &&
-                      ((current_state.turn ==  1 && tr == 0) ||
-                       (current_state.turn == -1 && tr == 7));
-        if (is_prom) m.promo = 5; // Queen for legality check
+                      ((current_state.turn ==  1 && trank == 0) ||
+                       (current_state.turn == -1 && trank == 7));
+        if (is_prom) m.promo = 5;
 
         if (is_legal_gui_move(&current_state, m)) {
             if (is_prom) m.promo = get_promo_choice();
@@ -1441,8 +1398,8 @@ void adjust_time_control(void)
         int idx = -1;
         for (int i = 0; i < cnt; i++)
             if (time_control_val == tlist[i]) { idx = i; break; }
-        time_control_val = (idx == -1 || idx == cnt-1) ? tlist[0]
-                                                       : tlist[idx+1];
+        time_control_val = (idx == -1 || idx == cnt-1)
+                           ? tlist[0] : tlist[idx+1];
     } else if (time_control_type == 1) {
         time_control_val = (time_control_val % 20) + 1;
     } else {
@@ -1455,8 +1412,8 @@ void adjust_time_control(void)
         int idx = -1;
         for (int i = 0; i < cnt; i++)
             if (time_control_val == nlist[i]) { idx = i; break; }
-        time_control_val = (idx == -1 || idx == cnt-1) ? nlist[0]
-                                                       : nlist[idx+1];
+        time_control_val = (idx == -1 || idx == cnt-1)
+                           ? nlist[0] : nlist[idx+1];
     }
 }
 
@@ -1514,12 +1471,11 @@ int run_gui_mode(void)
     start_engine();
 
     for (;;) {
-        // Determine whether engine should move
         int eng_active = 0;
         if (has_legal_moves(&current_state)    &&
             current_state.halfmoves < 100       &&
             count_repetitions(&current_state) < 3) {
-            if (user_side == 2)                                  eng_active = 1;
+            if (user_side == 2)                                   eng_active = 1;
             else if (user_side ==  1 && current_state.turn == -1) eng_active = 1;
             else if (user_side == -1 && current_state.turn ==  1) eng_active = 1;
         }
@@ -1531,7 +1487,7 @@ int run_gui_mode(void)
         draw_ui();
         handle_wii_input();
         read_from_engine();
-        KThreadSleepMs(16); // ~60 fps
+        KThreadSleepMs(16);
     }
     return 0;
 }
