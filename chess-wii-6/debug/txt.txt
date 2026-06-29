@@ -33,3 +33,15 @@ Here is misc.h
 p1v2: the updated files introduced some compilation errors. here is my types.h file to help: 
 types-default.h
 
+
+# playing with claude 4.6 sonnet i get a new error on dolphin:
+#Attempted to load a discarded value
+
+#  Condition: reg_type != RegType::Discarded
+#  File: /Users/administrator/buildbot-worker/osx_m1/dev-osx-universal/build/Source/Core/Core/PowerPC/JitArm64/JitArm64_RegCache.cpp
+#  Line: 402
+#  Function: BindToRegister
+
+#Ignore and continue?
+
+#will try to see if wii can handle this other type of error
