@@ -117,6 +117,7 @@ SimpleFIFO eng_to_gui_pipe;
 
 KThread engine_thread;
 void* engine_thread_stack = NULL;
+static volatile bool engine_running = false; // FIXED: engine_running flag lets engine_fgets/engine_getline exit cleanly when the engine is told to stop, preventing infinite loops.
 
 void fifo_init(SimpleFIFO *f) {
     memset(f, 0, sizeof(SimpleFIFO));
