@@ -1058,8 +1058,6 @@ int main(int argc, char **argv) {
         fflush(stdout);
     }
 
-    svcSleepThread(50000000ULL); // 50ms
-
     // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
