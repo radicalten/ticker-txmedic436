@@ -35,3 +35,5 @@ chess-3ds-7/main.c:157:18: error: request for member 'from' in something not a s
   157 |     int f_col = m.from % 8;
       |                  ^
 #
+
+#the output from this compiled, not sure if it really works. 
