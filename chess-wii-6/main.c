@@ -255,8 +255,9 @@ static sptr engine_thread_main(void *arg) {
 #ifndef NNUE_PURE
     endgames_init();
 #endif
-    threads_init();
+    // FIXED: Swapped sequence so options are configured before threads spawn
     options_init();
+    threads_init();
     search_clear();
 
     char *engine_argv[] = {"ucichess", NULL};
@@ -278,15 +279,15 @@ void start_engine() {
     engine_getline_hook = engine_getline;
 
     engine_thread_stack = memalign(32, 128 * 1024);
+    if (!engine_thread_stack) {
+        fprintf(stderr, "\n[FATAL] Out of memory: Cannot allocate engine main stack!\n");
+        exit(1);
+    }
     
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
     KThreadResume(&engine_thread);
 
     send_to_engine("uci\nisready\n");
-}
-
-void send_to_engine(const char *cmd) {
-    fifo_write(&gui_to_eng_pipe, cmd, strlen(cmd));
 }
 
 int screen_to_board_sq(int r, int c) {
@@ -1340,8 +1341,9 @@ int main(int argc, char **argv)
 #ifndef NNUE_PURE
         endgames_init();
 #endif
-        threads_init();
+        // FIXED: Swapped sequence so options are configured before threads spawn in CLI mode
         options_init();
+        threads_init();
         search_clear();
 
         uci_loop(argc, argv);
