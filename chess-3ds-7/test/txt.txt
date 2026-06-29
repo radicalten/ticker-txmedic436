@@ -12,3 +12,5 @@ ai: gemini-3.5 flash
 p1: Can you combine these two c files into one main file?: 
 main_stockfish.c
 main-test-1ms-sleep-v1.c 
+
+#called it: main-merge-1ms-v1-main_stockfish-.c
