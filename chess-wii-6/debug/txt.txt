@@ -1,4 +1,5 @@
 #Debugging Strategy: Will upload main.c and thread.c to gemini 3.5 flash and sonnet 4.6
 #I have this error when running a wii program: Invalid write to 0x00000008, PC = 0x8008d5c8
 
-p1: I have this error when running a wii program: Invalid write to 0x00000008, PC = 0x8008d5c8, can you help me fix and debug this program? I will share my main.c and thread.c files. 
+p1: 
+I have this error when running a wii program: Invalid write to 0x00000008, PC = 0x8008d5c8, can you help me fix and debug this program? I will share my main.c and thread.c files. 
