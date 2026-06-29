@@ -25,3 +25,5 @@ chess-wii-6/misc.h:45:9: warning: 'getline' redefined
       |         ^~~~~~~
 Here is types.h: 
 Here is misc.h
+
+#this did in fact remove the compilation errors, so cool! however the invalid writes persist. will keep working on that. 
