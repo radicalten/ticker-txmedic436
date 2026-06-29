@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <malloc.h>
 
 // Nintendo Wii DevkitPro Hardware Headers
