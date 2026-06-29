@@ -47,3 +47,11 @@ types-default.h
 #will try to see if wii can handle this other type of error
 
 #turns out this error only effects dolphin, and that it truly works on wii. also that the nps on dolphin is accurate it truly runs at 80-100k nps, avg 90k nps. Amazing. Much higher than 3DS 2.8k nps and DSi 1.4k nps. I wonder if those could be improved somehow? 
+
+#list of fixes to make: 
+What is left to fix: 
+Can still optimize Wii remote controls. Currently it expects you to hold the Wii remote pointing at the screen instead of sideways. Should switch to sideways, with 1 and 2 being undo and select. + and - being flip board switch engine sides, A and B being Cycle type and Cycle level (time control depth-limit and incrementing it) also need some kind of button combo for reset as currently there is no way to reset a game only undo. Perhaps A+B+1. 
+Need to add Gamecube Control support
+Need to remove the random [engine] psqt_init and [engine] zob_init text added by Claude 4.6 sonnet at the top
+Need to make sure the chess board is perfectly square, currently it looks to be 3x4 instead of 4x4. Its unsettling. 
+#
