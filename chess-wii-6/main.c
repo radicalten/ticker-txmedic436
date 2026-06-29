@@ -192,10 +192,11 @@ char* engine_fgets(char* str, int num, FILE* stream) {
 // Redirected standard input reader for Cfish UCI thread (getline)
 ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
     (void)stream;
+    if (!lineptr || !n) return -1;
     if (*lineptr == NULL || *n == 0) {
         *n = 128;
         *lineptr = malloc(*n);
-        if (*lineptr == NULL) return -1;
+        if (!*lineptr) return -1;
     }
 
     int i = 0;
