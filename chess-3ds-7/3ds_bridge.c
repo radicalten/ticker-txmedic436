@@ -4,8 +4,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-// Reduced to 4KB to handle heavy Stockfish PV search info outputs
-#define MSG_QUEUE_SIZE 4096
+// Expanded to 64KB to easily handle heavy Stockfish PV search info outputs
+#define MSG_QUEUE_SIZE 65536
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
@@ -118,7 +118,7 @@ void sf_recv_command(char *buf, size_t max_len) {
         
         __sync_synchronize();
         LightLock_Unlock(&q_gui_to_engine.lock);
-        svcSleepThread(1000000LL); // Sleep 1ms to prevent CPU core starvation
+        svcSleepThread(2000000LL); // Sleep 2ms to prevent CPU core starvation
     }
 }
 
