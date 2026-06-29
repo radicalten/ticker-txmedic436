@@ -440,7 +440,7 @@ void reset_engine_metrics() {
 void trigger_engine_move() {
     reset_engine_metrics();
 
-    static char cmd[8192]; 
+    static char cmd[16384]; 
     cmd[0] = '\0';
     strcpy(cmd, "position startpos moves");
     
