@@ -1,11 +1,47 @@
+/*
+  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
+  Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+
+  Stockfish is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  Stockfish is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
+
+// System Headers
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+// Bridge Interface
 #include "3ds_bridge.h"
 
+// Stockfish Engine Headers
+#include "bitboard.h"
+#include "endgame.h"
+#include "pawns.h"
+#include "polybook.h"
+#include "position.h"
+#include "search.h"
+#include "thread.h"
+#include "tt.h"
+#include "uci.h"
+#include "tbprobe.h"
+
+// Constants
 #define MAX_HISTORY 2048
 #define ENGINE_STACK_SIZE (32 * 1024) // DevkitPro 3DS Examples thread uses 4kb 4*1024 size but that crashes, 8kb 8*1024 works without issue. 3DS Page size is 32kb = 32*1024
 
@@ -56,6 +92,7 @@ int engine_score_val = 0;
 
 PrintConsole topConsole, bottomConsole;
 
+// Forward Declarations
 void init_board(BoardState *state);
 int is_legal_move(const BoardState *state, Move m);
 int has_legal_moves(const BoardState *state);
@@ -65,9 +102,49 @@ void trigger_engine_move(void);
 int find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice(void);
-
 Move gui_uci_to_move(const char *str);
 
+// ============================================================================
+// Stockfish Engine Thread Entry Point
+// ============================================================================
+int main_stockfish(int argc, char **argv)
+{
+  print_engine_info(false);
+
+  psqt_init();
+  bitboards_init();
+  zob_init();
+  bitbases_init();
+#ifndef NNUE_PURE
+  endgames_init();
+#endif
+  threads_init();
+  options_init();
+  search_clear();
+
+  uci_loop(argc, argv);
+
+  threads_exit();
+  TB_free();
+  options_free();
+  tt_free();
+  pb_free();
+  #ifdef NNUE
+  nnue_free();
+  #endif
+
+  return 0;
+}
+
+// Background thread runner callback
+void stockfish_thread_func(void* arg) {
+    char *argv[] = {"stockfish", NULL};
+    main_stockfish(1, argv);
+}
+
+// ============================================================================
+// GUI / Board Geometry and Math
+// ============================================================================
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
         return r * 8 + c;
@@ -207,6 +284,9 @@ void push_state(const BoardState *state, Move m) {
     }
 }
 
+// ============================================================================
+// Engine Communication & UCI Parsing
+// ============================================================================
 void trigger_engine_move(void) {
     engine_nps = 0;
     engine_score_type = -1;
@@ -264,7 +344,7 @@ void process_engine_output(char *line) {
         }
     } else if (engine_state == ENGINE_STATE_WAIT_READYOK) {
         if (strstr(line, "readyok") != NULL) {
-            // Memory Optimization: Higher Hash = Higher elo. 1HV = 1MB, 128MB 3DS, 64MB crashes, 32MB crashes, 16MB works
+            // Memory Optimization: Higher Hash = Higher elo. 13MB limits crashes.
             sf_send_command("setoption name Hash value 13"); 
             // Explicitly disable pondering to optimize battery and CPU usage
             sf_send_command("setoption name Ponder value false");
@@ -349,6 +429,9 @@ void read_from_engine(void) {
     }
 }
 
+// ============================================================================
+// Chess Rules Engine / Move Legality
+// ============================================================================
 int find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
@@ -604,7 +687,9 @@ void make_move(const BoardState *src, BoardState *dst, Move m) {
     if (dst->turn == 1) dst->fullmoves++;
 }
 
-// GUI Drawing and 3DS Screen Output matching Visual Theme of Desktop CLI
+// ============================================================================
+// UI Rendering
+// ============================================================================
 void draw_ui(void) {
     consoleSelect(&topConsole);
     printf("\x1b[1;1H"); // Flick-free frame reset
@@ -843,6 +928,9 @@ void draw_ui(void) {
     consoleSelect(&bottomConsole);
 }
 
+// ============================================================================
+// Input & State Controllers
+// ============================================================================
 int get_promo_choice(void) {
     consoleSelect(&bottomConsole);
     printf("\n\x1b[1;33mPROMOTION! Tap Screen / Key selection:\n");
@@ -1012,12 +1100,9 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-extern int main_stockfish(int argc, char **argv);
-void stockfish_thread_func(void* arg) {
-    char *argv[] = {"stockfish", NULL};
-    main_stockfish(1, argv);
-}
-
+// ============================================================================
+// System Main / Loop Initialization
+// ============================================================================
 int main(int argc, char **argv) {
     gfxInitDefault();
     
