@@ -220,7 +220,7 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
         }
     }
     (*lineptr)[i] = '\0';
-    return i;
+    return (ssize_t)i;
 }
 
 void init_board(BoardState *state);
