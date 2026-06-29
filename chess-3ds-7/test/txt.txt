@@ -14,3 +14,24 @@ main_stockfish.c
 main-test-1ms-sleep-v1.c 
 
 #called it: main-merge-1ms-v1-main_stockfish-.c
+
+#I get several errors from the merge:
+chess-3ds-7/main.c:71:3: error: conflicting types for 'Move'; have 'struct <anonymous>'
+   71 | } Move;
+      |   ^~~~
+In file included from chess-3ds-7/bitboard.h:26,
+                 from chess-3ds-7/main.c:33:
+chess-3ds-7/types.h:237:18: note: previous declaration of 'Move' with type 'Move' {aka 'long unsigned int'}
+  237 | typedef uint32_t Move;
+      |                  ^~~~
+chess-3ds-7/main.c:100:62: error: macro 'make_move' passed 3 arguments, but takes just 2
+  100 | void make_move(const BoardState *src, BoardState *dst, Move m);
+      |                                                              ^
+chess-3ds-7/types.h:301:9: note: macro 'make_move' defined here
+  301 | #define make_move(from,to) ((Move)((to) | ((from) << 6)))
+      |         ^~~~~~~~~
+chess-3ds-7/main.c: In function 'move_to_uci':
+chess-3ds-7/main.c:157:18: error: request for member 'from' in something not a structure or union
+  157 |     int f_col = m.from % 8;
+      |                  ^
+#
