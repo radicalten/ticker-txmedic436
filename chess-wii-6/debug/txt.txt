@@ -55,3 +55,15 @@ Need to add Gamecube Control support
 Need to remove the random [engine] psqt_init and [engine] zob_init text added by Claude 4.6 sonnet at the top
 Need to make sure the chess board is perfectly square, currently it looks to be 3x4 instead of 4x4. Its unsettling. 
 #
+
+#in terms of debugging by handing taking the main-default and making it match claude4.6son work, it seems I was able to remove the invalid write with the specific: 
+static sptr engine_thread_main(void *arg) {
+...
+engine_running = false; //add this like claude does
+return 0;
+}
+
+#everything above that I already changed and I kept seeing various invalid writes, so even if they fixed something I couldn't see a problem persisted
+#however with engine_running = false, now I get the other dolphin only error
+#trouble is with just this the engine now locks up and never moves, I will need to continue my hand debugging to match claude. 
+
