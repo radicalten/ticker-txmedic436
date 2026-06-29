@@ -45,3 +45,5 @@ types-default.h
 #Ignore and continue?
 
 #will try to see if wii can handle this other type of error
+
+#turns out this error only effects dolphin, and that it truly works on wii. also that the nps on dolphin is accurate it truly runs at 80-100k nps, avg 90k nps. Amazing. Much higher than 3DS 2.8k nps and DSi 1.4k nps. I wonder if those could be improved somehow? 
