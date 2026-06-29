@@ -266,7 +266,7 @@ static void thread_idle_loop(Position *pos)
   while (true) {
     while (pos->action == THREAD_SLEEP) {
       __sync_synchronize();       
-      svcSleepThread(2000000ULL); // Sleep 2ms
+      svcSleepThread(1000000ULL); // Sleep 1ms
     }
 
     if (pos->action == THREAD_EXIT) {
