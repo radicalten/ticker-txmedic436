@@ -255,7 +255,7 @@ void uci_loop(int argc, char **argv)
   for (int i = 1; i < argc; i++)
     buf_size += strlen(argv[i]) + 1;
 
-  if (buf_size < 8192) buf_size = 8192;
+  if (buf_size < 1024) buf_size = 1024;
 
   char *cmd = malloc(buf_size);
 
@@ -269,8 +269,8 @@ void uci_loop(int argc, char **argv)
   pos_set(&pos, fen, 0);
   pos.rootKeyFlip = pos.st->key;
 
-  // Forcing Wii memory safety limits silently (1MB Hash, 1 Thread, Classical Eval)
-  option_set_value(OPT_HASH, 1);
+  // Forcing Wii memory safety limits silently (2MB Hash, 1 Thread, Classical Eval)
+  option_set_value(OPT_HASH, 2);
   option_set_value(OPT_THREADS, 1);
 #ifdef NNUE
 #ifndef NNUE_PURE
