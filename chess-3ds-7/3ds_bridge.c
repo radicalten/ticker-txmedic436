@@ -4,7 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-// Expanded to 4KB to easily handle heavy Stockfish PV search info outputs
+// Reduced to 4KB to handle heavy Stockfish PV search info outputs
 #define MSG_QUEUE_SIZE 4096
 
 typedef struct {
