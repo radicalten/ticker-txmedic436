@@ -21,11 +21,18 @@
 #ifndef THREAD_H
 #define THREAD_H
 
+#include <stdio.h>
+#include <stddef.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <3ds.h>
 
 #include "types.h"
+
+// =============================================================================
+// STOCKFISH NATIVE THREAD CONFIGURATIONS
+// =============================================================================
 
 // Max search threads scaled to 4 for optimal performance on New 3DS models
 #define MAX_THREADS 4
@@ -88,5 +95,55 @@ static inline Position *threads_main(void)
 
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
+
+
+// =============================================================================
+// 3DS BRIDGE REDIRECTION DECLARATIONS
+// =============================================================================
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void sf_bridge_init(void);
+void sf_send_command(const char *cmd);
+void sf_recv_command(char *buf, size_t max_len);
+
+// Custom stream overrides
+int sf_printf(const char *format, ...);
+int sf_fprintf(FILE *stream, const char *format, ...);
+int sf_vfprintf(FILE *stream, const char *format, va_list arg);
+int sf_fflush(FILE *stream);
+int sf_puts(const char *str);
+int sf_fputs(const char *str, FILE *stream);
+int sf_putchar(int character);
+int sf_fputc(int character, FILE *stream);
+int sf_putc(int character, FILE *stream);
+size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+
+int sf_get_output(char *buf, size_t max_len);
+
+// Custom thread override to set execution stack size
+int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                      void *(*start_routine) (void *), void *arg);
+
+#ifdef __cplusplus
+}
+#endif
+
+// Redirection applies ONLY to the Stockfish engine files, NOT the GUI main.c
+#ifndef IS_GUI
+#define printf sf_printf
+#define fprintf sf_fprintf
+#define vfprintf sf_vfprintf
+#define fflush sf_fflush
+#define puts sf_puts
+#define fputs sf_fputs
+#define putchar sf_putchar
+#define fputc sf_fputc
+#define putc sf_putc
+#define fwrite sf_fwrite
+#define pthread_create sf_pthread_create
+#endif
 
 #endif // THREAD_H
