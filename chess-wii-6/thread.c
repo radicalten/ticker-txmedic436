@@ -21,7 +21,6 @@
 #include <assert.h>
 #include <malloc.h>
 #include <string.h>
-#include <stdio.h>
 
 #include "material.h"
 #include "movegen.h"
@@ -54,25 +53,11 @@ static sptr thread_init(void *arg)
     numCmhTables = t + 16;
     cmhTables = realloc(cmhTables,
         numCmhTables * sizeof(CounterMoveHistoryStat *));
-    
-    if (!cmhTables) {
-      printf("ERROR: Failed to allocate cmhTables array (thread %d)\n", idx);
-      atomic_store(&Threads.initializing, false);
-      return -1;
-    }
-    
     while (old < numCmhTables)
       cmhTables[old++] = NULL;
   }
-  
   if (!cmhTables[t]) {
     cmhTables[t] = calloc(1, sizeof(CounterMoveHistoryStat));
-    if (!cmhTables[t]) {
-      printf("ERROR: Failed to allocate CounterMoveHistoryStat (thread %d)\n", idx);
-      atomic_store(&Threads.initializing, false);
-      return -1;
-    }
-    
     for (int chk = 0; chk < 2; chk++)
       for (int c = 0; c < 2; c++)
         for (int j = 0; j < 16; j++)
@@ -81,74 +66,17 @@ static sptr thread_init(void *arg)
   }
 
   Position *pos = calloc(1, sizeof(Position));
-  if (!pos) {
-    printf("ERROR: Failed to allocate Position structure (thread %d)\n", idx);
-    atomic_store(&Threads.initializing, false);
-    return -1;
-  }
-
 #ifndef NNUE_PURE
-  pos->pawnTable = calloc(PAWN_ENTRIES, sizeof(PawnEntry));
-  if (!pos->pawnTable) {
-    printf("ERROR: Failed to allocate pawnTable (thread %d, size %zu bytes)\n", 
-           idx, PAWN_ENTRIES * sizeof(PawnEntry));
-    free(pos);
-    atomic_store(&Threads.initializing, false);
-    return -1;
-  }
-  
+  pos->pawnTable = calloc(PAWN_ENTRIES,  sizeof(PawnEntry));
   pos->materialTable = calloc(8192, sizeof(MaterialEntry));
-  if (!pos->materialTable) {
-    printf("ERROR: Failed to allocate materialTable (thread %d, size %zu bytes)\n", 
-           idx, 8192 * sizeof(MaterialEntry));
-    free(pos->pawnTable);
-    free(pos);
-    atomic_store(&Threads.initializing, false);
-    return -1;
-  }
 #endif
-
   pos->counterMoves = calloc(1, sizeof(CounterMoveStat));
-  if (!pos->counterMoves) {
-    printf("ERROR: Failed to allocate counterMoves (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->mainHistory = calloc(1, sizeof(ButterflyHistory));
-  if (!pos->mainHistory) {
-    printf("ERROR: Failed to allocate mainHistory (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->captureHistory = calloc(1, sizeof(CapturePieceToHistory));
-  if (!pos->captureHistory) {
-    printf("ERROR: Failed to allocate captureHistory (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->lowPlyHistory = calloc(1, sizeof(LowPlyHistory));
-  if (!pos->lowPlyHistory) {
-    printf("ERROR: Failed to allocate lowPlyHistory (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->rootMoves = calloc(1, sizeof(RootMoves));
-  if (!pos->rootMoves) {
-    printf("ERROR: Failed to allocate rootMoves (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->stackAllocation = calloc(63 + (MAX_PLY + 110), sizeof(Stack));
-  if (!pos->stackAllocation) {
-    printf("ERROR: Failed to allocate stackAllocation (thread %d)\n", idx);
-    goto allocation_failed;
-  }
-  
   pos->moveList = calloc(10000, sizeof(ExtMove));
-  if (!pos->moveList) {
-    printf("ERROR: Failed to allocate moveList (thread %d)\n", idx);
-    goto allocation_failed;
-  }
 
   pos->stack = (Stack *)(((uintptr_t)pos->stackAllocation + 0x3f) & ~0x3f);
   pos->threadIdx = idx;
@@ -164,23 +92,6 @@ static sptr thread_init(void *arg)
 
   thread_idle_loop(pos);
   return 0;
-
-allocation_failed:
-#ifndef NNUE_PURE
-  if (pos->pawnTable) free(pos->pawnTable);
-  if (pos->materialTable) free(pos->materialTable);
-#endif
-  if (pos->counterMoves) free(pos->counterMoves);
-  if (pos->mainHistory) free(pos->mainHistory);
-  if (pos->captureHistory) free(pos->captureHistory);
-  if (pos->lowPlyHistory) free(pos->lowPlyHistory);
-  if (pos->rootMoves) free(pos->rootMoves);
-  if (pos->stackAllocation) free(pos->stackAllocation);
-  if (pos->moveList) free(pos->moveList);
-  free(pos);
-  
-  atomic_store(&Threads.initializing, false);
-  return -1;
 }
 
 static void thread_create(int idx)
@@ -188,20 +99,7 @@ static void thread_create(int idx)
   atomic_store(&Threads.initializing, true);
 
   KThread* thread = malloc(sizeof(KThread));
-  if (!thread) {
-    printf("ERROR: Failed to allocate KThread structure (thread %d)\n", idx);
-    atomic_store(&Threads.initializing, false);
-    return;
-  }
-  
   void* stack_base = memalign(32, WII_THREAD_STACK_SIZE);
-  if (!stack_base) {
-    printf("ERROR: Failed to allocate thread stack (thread %d, size %d bytes)\n", 
-           idx, WII_THREAD_STACK_SIZE);
-    free(thread);
-    atomic_store(&Threads.initializing, false);
-    return;
-  }
 
   Threads.threads[idx] = thread;
   Threads.thread_stacks[idx] = stack_base;
@@ -220,11 +118,6 @@ static void thread_create(int idx)
 
 static void thread_destroy(Position *pos)
 {
-  if (!pos) {
-    printf("ERROR: thread_destroy called with NULL pos\n");
-    return;
-  }
-  
   int idx = pos->threadIdx;
   pos->action = THREAD_EXIT;
   
@@ -237,26 +130,21 @@ static void thread_destroy(Position *pos)
   Threads.thread_stacks[idx] = NULL;
 
 #ifndef NNUE_PURE
-  if (pos->pawnTable) free(pos->pawnTable);
-  if (pos->materialTable) free(pos->materialTable);
+  free(pos->pawnTable);
+  free(pos->materialTable);
 #endif
-  if (pos->counterMoves) free(pos->counterMoves);
-  if (pos->mainHistory) free(pos->mainHistory);
-  if (pos->captureHistory) free(pos->captureHistory);
-  if (pos->lowPlyHistory) free(pos->lowPlyHistory);
-  if (pos->rootMoves) free(pos->rootMoves);
-  if (pos->stackAllocation) free(pos->stackAllocation);
-  if (pos->moveList) free(pos->moveList);
+  free(pos->counterMoves);
+  free(pos->mainHistory);
+  free(pos->captureHistory);
+  free(pos->lowPlyHistory);
+  free(pos->rootMoves);
+  free(pos->stackAllocation);
+  free(pos->moveList);
   free(pos);
 }
 
 void thread_wait_until_sleeping(Position *pos)
 {
-  if (!pos) {
-    printf("ERROR: thread_wait_until_sleeping called with NULL pos\n");
-    return;
-  }
-  
   int idx = pos->threadIdx;
   while (pos->action != THREAD_SLEEP) {
     KThrQueueBlock(&Threads.waitQueues[idx], 0);
@@ -268,15 +156,6 @@ void thread_wait_until_sleeping(Position *pos)
 
 void thread_wait(Position *pos, atomic_bool *condition)
 {
-  if (!pos) {
-    printf("ERROR: thread_wait called with NULL pos\n");
-    return;
-  }
-  if (!condition) {
-    printf("ERROR: thread_wait called with NULL condition\n");
-    return;
-  }
-  
   int idx = pos->threadIdx;
   while (!atomic_load(condition)) {
     KThrQueueBlock(&Threads.waitQueues[idx], 0);
@@ -285,11 +164,6 @@ void thread_wait(Position *pos, atomic_bool *condition)
 
 void thread_wake_up(Position *pos, int action)
 {
-  if (!pos) {
-    printf("ERROR: thread_wake_up called with NULL pos\n");
-    return;
-  }
-  
   int idx = pos->threadIdx;
   if (action != THREAD_RESUME)
     pos->action = action;
@@ -299,11 +173,6 @@ void thread_wake_up(Position *pos, int action)
 
 static void thread_idle_loop(Position *pos)
 {
-  if (!pos) {
-    printf("ERROR: thread_idle_loop called with NULL pos\n");
-    return;
-  }
-  
   int idx = pos->threadIdx;
   while (true) {
     while (pos->action == THREAD_SLEEP) {
@@ -342,23 +211,11 @@ void threads_exit(void)
 
 void threads_set_number(int num)
 {
-  while (Threads.numThreads < num) {
-    thread_create(Threads.numThreads);
-    if (Threads.pos[Threads.numThreads] != NULL) {
-      Threads.numThreads++;
-    } else {
-      printf("WARNING: Failed to create thread %d\n", Threads.numThreads);
-      break;
-    }
-  }
+  while (Threads.numThreads < num)
+    thread_create(Threads.numThreads++);
 
-  while (Threads.numThreads > num) {
-    if (Threads.pos[Threads.numThreads - 1] != NULL) {
-      thread_destroy(Threads.pos[--Threads.numThreads]);
-    } else {
-      Threads.numThreads--;
-    }
-  }
+  while (Threads.numThreads > num)
+    thread_destroy(Threads.pos[--Threads.numThreads]);
 
   search_init();
 
@@ -380,21 +237,15 @@ void threads_set_number(int num)
 uint64_t threads_nodes_searched(void)
 {
   uint64_t nodes = 0;
-  for (int idx = 0; idx < Threads.numThreads; idx++) {
-    if (Threads.pos[idx] != NULL) {
-      nodes += Threads.pos[idx]->nodes;
-    }
-  }
+  for (int idx = 0; idx < Threads.numThreads; idx++)
+    nodes += Threads.pos[idx]->nodes;
   return nodes;
 }
 
 uint64_t threads_tb_hits(void)
 {
   uint64_t hits = 0;
-  for (int idx = 0; idx < Threads.numThreads; idx++) {
-    if (Threads.pos[idx] != NULL) {
-      hits += Threads.pos[idx]->tbHits;
-    }
-  }
+  for (int idx = 0; idx < Threads.numThreads; idx++)
+    hits += Threads.pos[idx]->tbHits;
   return hits;
 }
