@@ -10,7 +10,7 @@
   (at your option) any later version.
 
   Stockfish is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  but WITHOUT ANY WARRANTY; without even the implied warranty ofg
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
 
@@ -83,7 +83,7 @@ int time_control_type = 0;
 int time_control_val = 1;    
 
 int engine_thinking = 0;
-bool gui_mode_active = false;
+bool gui_mode_active = true; // FIXED: gui_mode_active starts true so engine_printf routes to the FIFO from the very first call, avoiding a race condition
 
 // Handshake Tracking
 bool engine_recvd_uciok = false;
