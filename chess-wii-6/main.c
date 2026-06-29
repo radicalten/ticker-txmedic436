@@ -118,7 +118,7 @@ KThread engine_thread;
 void* engine_thread_stack = NULL;
 
 void fifo_init(SimpleFIFO *f) {
-    f->head = f->tail = 0;
+    memset(f, 0, sizeof(SimpleFIFO));
     LOCK_INIT(f->lock);
 }
 
