@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include "3ds_bridge.h"
 
 #if defined(USE_AVX2)
 #include <immintrin.h>
