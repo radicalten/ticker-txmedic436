@@ -27,3 +27,9 @@ Here is types.h:
 Here is misc.h
 
 #this did in fact remove the compilation errors, so cool! however the invalid writes persist. will keep working on that. 
+
+#picking back up on the claude 4.6 gemini 3.5 flash dual thread. going to add the types.h file to help them craft the code. 
+
+p1v2: the updated files introduced some compilation errors. here is my types.h file to help: 
+types-default.h
+
