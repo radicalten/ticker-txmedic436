@@ -40,3 +40,5 @@ chess-3ds-7/main.c:157:18: error: request for member 'from' in something not a s
 #seems to run fine and citra shows 12.5k nps depth 20
 
 #next plan is to try to merge 3ds_bridge.c, 3ds_bridge.h with thread.c and thread.h (perhaps need to include misc.c and misc.h in the mix too). 
+
+#note i tried 4kb message queue size instead of 64kb in 3ds_bridge.c and it seems fine, but only tested on citra.
