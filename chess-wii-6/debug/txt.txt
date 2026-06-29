@@ -71,3 +71,13 @@ return 0;
 #Commit d4f6f0a
 #current line is 353 or 266
 
+#simply setting the next thread to engine_running = true; // FIXED: Set flag BEFORE thread starts made it work seemingly!
+void start_engine() {
+...
+engine_running = true; // FIXED: Set flag BEFORE thread starts
+    engine_thread_stack = memalign(32, 512 * 1024);
+...
+    send_to_engine("uci\nisready\n");
+}
+#it is interesting what adding an engine_running true and false will do (above i beileve it was even defined as volatile to keep it safe from a certain bug, not sure what was completely necessary but I will keep it like this and test on wii. 
+
