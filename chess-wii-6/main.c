@@ -282,6 +282,7 @@ static sptr engine_thread_main(void *arg) {
     char *engine_argv[] = {"ucichess", NULL};
     uci_loop(1, engine_argv);
 
+    engine_running = false;
     return 0;
 }
 
