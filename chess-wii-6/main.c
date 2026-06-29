@@ -123,6 +123,7 @@ void fifo_init(SimpleFIFO *f) {
 }
 
 void fifo_write(SimpleFIFO *f, const char *str, int len) {
+    if (!f || !str || len <= 0) return;
     LOCK(f->lock);
     for (int i = 0; i < len; i++) {
         int next = (f->head + 1) % FIFO_SIZE;
