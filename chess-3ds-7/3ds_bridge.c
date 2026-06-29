@@ -118,7 +118,7 @@ void sf_recv_command(char *buf, size_t max_len) {
         
         __sync_synchronize();
         LightLock_Unlock(&q_gui_to_engine.lock);
-        svcSleepThread(2000000LL); // Sleep 2ms to prevent CPU core starvation
+        svcSleepThread(1000000LL); // Sleep 1ms to prevent CPU core starvation
     }
 }
 
