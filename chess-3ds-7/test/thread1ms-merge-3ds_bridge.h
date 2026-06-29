@@ -31,7 +31,7 @@
 #include "types.h"
 
 // =============================================================================
-// STOCKFISH NATIVE 3DS THREAD CONFIGURATIONS & DEFINITIONS
+// STOCKFISH NATIVE THREAD CONFIGURATIONS
 // =============================================================================
 
 // Max search threads scaled to 4 for optimal performance on New 3DS models
@@ -98,7 +98,7 @@ extern int numCmhTables;
 
 
 // =============================================================================
-// THREEDS BRIDGE DECLARATIONS
+// 3DS BRIDGE REDIRECTION DECLARATIONS
 // =============================================================================
 
 #ifdef __cplusplus
@@ -123,7 +123,7 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 int sf_get_output(char *buf, size_t max_len);
 
-// Custom thread override to set stack sizes and cores
+// Custom thread override to set execution stack size
 int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                       void *(*start_routine) (void *), void *arg);
 
@@ -147,177 +147,3 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 #endif
 
 #endif // THREAD_H
-
-
-/* =============================================================================
-   IMPLEMENTATION SECTION
-   This section is compiled ONLY in the file where you define
-   THREEDS_BRIDGE_IMPLEMENTATION.
-   ========================================================================== */
-#ifdef THREEDS_BRIDGE_IMPLEMENTATION
-
-#include <string.h>
-#include <stdlib.h>
-
-#define SF_BUFFER_SIZE 16384
-
-// Thread-safe circular buffer for storing stdout redirection
-static char sf_out_buffer[SF_BUFFER_SIZE];
-static size_t sf_buf_head = 0;
-static size_t sf_buf_tail = 0;
-static pthread_mutex_t sf_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Command queue (Engine to GUI and vice-versa)
-static char sf_cmd_buffer[1024];
-static pthread_mutex_t sf_cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t sf_cmd_cond = PTHREAD_COND_INITIALIZER;
-static int sf_cmd_ready = 0;
-
-void sf_bridge_init(void) {
-    pthread_mutex_init(&sf_buffer_mutex, NULL);
-    pthread_mutex_init(&sf_cmd_mutex, NULL);
-    pthread_cond_init(&sf_cmd_cond, NULL);
-    sf_buf_head = 0;
-    sf_buf_tail = 0;
-    sf_cmd_ready = 0;
-}
-
-// GUI writes a command to the engine
-void sf_send_command(const char *cmd) {
-    pthread_mutex_lock(&sf_cmd_mutex);
-    strncpy(sf_cmd_buffer, cmd, sizeof(sf_cmd_buffer) - 1);
-    sf_cmd_buffer[sizeof(sf_cmd_buffer) - 1] = '\0';
-    sf_cmd_ready = 1;
-    pthread_cond_signal(&sf_cmd_cond);
-    pthread_mutex_unlock(&sf_cmd_mutex);
-}
-
-// Engine waits to receive command from GUI
-void sf_recv_command(char *buf, size_t max_len) {
-    pthread_mutex_lock(&sf_cmd_mutex);
-    while (!sf_cmd_ready) {
-        pthread_cond_wait(&sf_cmd_cond, &sf_cmd_mutex);
-    }
-    strncpy(buf, sf_cmd_buffer, max_len - 1);
-    buf[max_len - 1] = '\0';
-    sf_cmd_ready = 0;
-    pthread_mutex_unlock(&sf_cmd_mutex);
-}
-
-// Helper to push characters into the redirect buffer
-static void sf_buffer_push(const char *str, size_t len) {
-    pthread_mutex_lock(&sf_buffer_mutex);
-    for (size_t i = 0; i < len; i++) {
-        size_t next = (sf_buf_head + 1) % SF_BUFFER_SIZE;
-        if (next != sf_buf_tail) { // Avoid overflow (discard oldest if full)
-            sf_out_buffer[sf_buf_head] = str[i];
-            sf_buf_head = next;
-        }
-    }
-    pthread_mutex_unlock(&sf_buffer_mutex);
-}
-
-// GUI calls this to read what Stockfish has printed
-int sf_get_output(char *buf, size_t max_len) {
-    pthread_mutex_lock(&sf_buffer_mutex);
-    size_t i = 0;
-    while (sf_buf_tail != sf_buf_head && i < (max_len - 1)) {
-        buf[i++] = sf_out_buffer[sf_buf_tail];
-        sf_buf_tail = (sf_buf_tail + 1) % SF_BUFFER_SIZE;
-    }
-    buf[i] = '\0';
-    pthread_mutex_unlock(&sf_buffer_mutex);
-    return (int)i;
-}
-
-/* Custom Standard Library overrides */
-
-int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
-    char temp[512];
-    int len = vsnprintf(temp, sizeof(temp), format, arg);
-    if (len > 0) {
-        sf_buffer_push(temp, len);
-    }
-    return len;
-}
-
-int sf_printf(const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-    int r = sf_vfprintf(stdout, format, args);
-    va_end(args);
-    return r;
-}
-
-int sf_fprintf(FILE *stream, const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-    int r = sf_vfprintf(stream, format, args);
-    va_end(args);
-    return r;
-}
-
-int sf_fflush(FILE *stream) {
-    (void)stream;
-    return 0; // No-op as we handle buffer on-the-fly
-}
-
-int sf_puts(const char *str) {
-    size_t len = strlen(str);
-    sf_buffer_push(str, len);
-    sf_buffer_push("\n", 1);
-    return (int)len + 1;
-}
-
-int sf_fputs(const char *str, FILE *stream) {
-    (void)stream;
-    return sf_puts(str);
-}
-
-int sf_putchar(int character) {
-    char c = (char)character;
-    sf_buffer_push(&c, 1);
-    return character;
-}
-
-int sf_fputc(int character, FILE *stream) {
-    (void)stream;
-    return sf_putchar(character);
-}
-
-int sf_putc(int character, FILE *stream) {
-    (void)stream;
-    return sf_putchar(character);
-}
-
-size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
-    (void)stream;
-    size_t total_bytes = size * nmemb;
-    sf_buffer_push((const char*)ptr, total_bytes);
-    return nmemb;
-}
-
-// Custom pthread wrapper configured specifically for Nintendo 3DS core/stack setup
-int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
-                      void *(*start_routine) (void *), void *arg) {
-    pthread_attr_t custom_attr;
-    
-    if (attr == NULL) {
-        pthread_attr_init(&custom_attr);
-    } else {
-        custom_attr = *attr;
-    }
-    
-    // Configured for 3DS System thread allocations:
-    // pthread_attr_setstacksize(&custom_attr, 1024 * 64); // Allocate stable 64KB stack
-    
-    int result = pthread_create(thread, &custom_attr, start_routine, arg);
-    
-    if (attr == NULL) {
-        pthread_attr_destroy(&custom_attr);
-    }
-    
-    return result;
-}
-
-#endif // THREEDS_BRIDGE_IMPLEMENTATION
