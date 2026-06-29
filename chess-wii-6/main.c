@@ -279,7 +279,7 @@ void start_engine() {
     engine_printf_hook = engine_printf;
     engine_getline_hook = engine_getline;
 
-    engine_thread_stack = memalign(32, 128 * 1024);
+    engine_thread_stack = memalign(32, 256 * 1024);
     
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
     KThreadResume(&engine_thread);
