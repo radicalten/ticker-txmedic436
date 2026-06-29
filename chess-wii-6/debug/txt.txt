@@ -3,3 +3,25 @@
 
 p1: 
 I have this error when running a wii program: Invalid write to 0x00000008, PC = 0x8008d5c8, can you help me fix and debug this program? I will share my main.c and thread.c files. 
+
+#this didn't work, lets try a different track. currently I have a host of compilation warnings I am ignoring it would be wise to reconcile those. starting a new thread with gemini 3.5 flash only. 
+
+#The errors:
+# chess-wii-6/types.h:393:9: note: this is the location of the previous definition
+  393 | #define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
+      |         ^~~~~~~
+# chess-wii-6/misc.h:45:9: warning: 'getline' redefined
+   45 | #define getline cfish_getline
+      |         ^~~~~~~
+
+
+p2: 
+I have the following errors for my c program for wii, can you help reconcile these two files? 
+chess-wii-6/types.h:393:9: note: this is the location of the previous definition
+  393 | #define getline(lineptr, n, stream) (engine_getline_hook ? engine_getline_hook(lineptr, n, stream) : cfish_getline(lineptr, n, stream))
+      |         ^~~~~~~
+chess-wii-6/misc.h:45:9: warning: 'getline' redefined
+   45 | #define getline cfish_getline
+      |         ^~~~~~~
+Here is types.h: 
+Here is misc.h
