@@ -298,6 +298,7 @@ void start_engine() {
     engine_printf_hook = engine_printf;
     engine_getline_hook = engine_getline;
 
+    engine_running = true; // FIXED: Set flag BEFORE thread starts
     engine_thread_stack = memalign(32, 512 * 1024);
     
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
