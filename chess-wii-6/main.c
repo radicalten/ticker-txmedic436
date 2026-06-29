@@ -169,6 +169,7 @@ int engine_printf(const char *format, ...) {
 // Redirected standard input reader for Cfish UCI thread (fgets)
 char* engine_fgets(char* str, int num, FILE* stream) {
     (void)stream;
+    if (!str || num <= 1) return NULL;
     int bytes_read = 0;
     while (bytes_read < num - 1) {
         char c;
