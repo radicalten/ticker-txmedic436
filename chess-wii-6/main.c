@@ -136,6 +136,7 @@ void fifo_write(SimpleFIFO *f, const char *str, int len) {
 }
 
 int fifo_read(SimpleFIFO *f, char *out, int max_len) {
+   if (!f || !out || max_len <= 0) return 0;
     LOCK(f->lock);
     int bytes_read = 0;
     while (f->tail != f->head && bytes_read < max_len) {
