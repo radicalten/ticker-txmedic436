@@ -9,7 +9,6 @@
 #include "thread.h"
 #include "types.h"
 #include "uci.h"
-#include "3ds_bridge.h"
 
 // --- HARDWARE-SAFE EMBEDDED DATA EMBEDDING ---
 #ifdef USE_EMBEDDED_BOOK
