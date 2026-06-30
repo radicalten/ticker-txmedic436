@@ -6,3 +6,5 @@ Taking main-test1-faster-v2.c by gemini 3.5 flash and feeding into claude 4.6 so
 
 can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
 main-test1-faster-v2.c
+
+#claude 4.6 sonnet created compilable and working code on citra seemed to have the same 25k nps avg there, need to test on console. 
