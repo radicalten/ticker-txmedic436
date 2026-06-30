@@ -158,6 +158,18 @@ Summary of Expected Benefits
     Stockfish Strength: Pinning Stockfish to Core 1 will see a 20% to 50% increase in NPS (Nodes Per Second) depending on whether you are running on an Old 3DS or New 3DS.
     No Input Lag: The GUI will remain perfectly responsive to D-pad presses even while the engine is deep-searching a position.
 
+
+Here is the fully optimized implementation of your 3DS chess wrapper.
+
+All five performance upgrades have been integrated, including:
+
+    Dirty-Flag Rendering Engine (eliminating 60 FPS rendering overhead).
+    Structural Repetition Filtering (bypassing slow memcmp iterations).
+    Core 1 Affinity Pinning (separating Stockfish calculations to the secondary CPU Core).
+    Heavy String Parser Replacement (replacing slow sscanf with standard fast library calls).
+    State & King Safety Caching (eliminating high-frequency move-generator sweeps).
+
+
 */
 
 
