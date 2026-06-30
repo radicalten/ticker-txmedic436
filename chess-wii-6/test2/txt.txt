@@ -11,3 +11,7 @@ main-default-handdebug-to-claude4pt6v1-.c
 
 to manually debug go to commit history of main.c and see where it transitioned from compiling to X not compilinng. The compiling one was the claude debug one, without any changes. 
 however claude rewrote everything and I really wanted just a surgical change unitl my main file worked. 
+
+prompt:
+can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
+main-default-handdebug-to-claude4pt6v1-.c
