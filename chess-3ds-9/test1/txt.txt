@@ -25,3 +25,4 @@ uci-default.c
 #testing showed that even the 2nd thread.c speed improvments also lead to crashing move 11 10s per move 
 
 #even with just the main.c improvement that can occasionally hit 29.5k nps on citra, so the other marginal improvements can be left out especially because they introduce a crash. 
+#by turn 14 10ms think eng v eng one king is in check and now the nps is spiking to 38knps
