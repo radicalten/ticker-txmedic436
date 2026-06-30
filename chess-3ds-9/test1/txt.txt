@@ -26,3 +26,4 @@ uci-default.c
 
 #even with just the main.c improvement that can occasionally hit 29.5k nps on citra, so the other marginal improvements can be left out especially because they introduce a crash. 
 #by turn 14 10ms think eng v eng one king is in check and now the nps is spiking to 38knps
+#move 22 still going 40k nps
