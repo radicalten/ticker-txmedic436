@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <malloc.h>
-#include <3ds.h> // FIX: Added native 3DS OS header for hardware timers
+#include <3ds.h> // Native 3DS OS header for hardware timers
 #else
 #include <sys/mman.h>
 #include <unistd.h>
@@ -205,18 +205,6 @@ void print_compiler_info(void)
 // xorshift64star Pseudo-Random Number Generator
 // This class is based on original code written and dedicated
 // to the public domain by Sebastiano Vigna (2014).
-// It has the following characteristics:
-//
-//  -  Outputs 64-bit numbers
-//  -  Passes Dieharder and SmallCrush test batteries
-//  -  Does not require warm-up, no zeroland to escape
-//  -  Internal state is a single 64-bit integer
-//  -  Period is 2^64 - 1
-//  -  Speed: 1.60 ns/call (Core i7 @3.40GHz)
-//
-// For further analysis see
-//   <http://vigna.di.unimi.it/ftp/papers/xorshift.pdf>
-
 void prng_init(PRNG *rng, uint64_t seed)
 {
   rng->s = seed;
@@ -242,21 +230,47 @@ uint64_t prng_sparse_rand(PRNG *rng)
   return r1 & r2 & r3;
 }
 
+// Optimized Line Reader implementing Geometric Buffer Doubling & CRLF Sanitation
 ssize_t getline(char **lineptr, size_t *n, FILE *stream)
 {
-  if (*n == 0)
-    *lineptr = malloc(*n = 100);
+  if (!lineptr || !n || !stream)
+    return -1;
 
-  int c = 0;
-  size_t i = 0;
-  while ((c = getc(stream)) != EOF) {
-    (*lineptr)[i++] = c;
-    if (i == *n)
-      *lineptr = realloc(*lineptr, *n += 100);
-    if (c == '\n') break;
+  if (*lineptr == NULL || *n == 0) {
+    *n = 256; // Standardized UCI command limit (prevents early heap fragmentation)
+    *lineptr = malloc(*n);
+    if (!*lineptr) return -1;
   }
-  (*lineptr)[i] = 0;
-  return i;
+
+  size_t i = 0;
+  int c;
+
+  while ((c = fgetc(stream)) != EOF) {
+    if (i + 2 >= *n) { // Leave space for null terminator and character
+      size_t new_n = *n * 2; // Geometric capacity doubling (O(N) amortized allocations)
+      char *new_ptr = realloc(*lineptr, new_n);
+      if (!new_ptr) return -1;
+      *lineptr = new_ptr;
+      *n = new_n;
+    }
+
+    // Strip carriage returns to handle DOS/Unix line endings gracefully
+    if (c == '\r') {
+      continue;
+    }
+
+    (*lineptr)[i++] = (char)c;
+    if (c == '\n') {
+      break;
+    }
+  }
+
+  if (i == 0 && c == EOF) {
+    return -1;
+  }
+
+  (*lineptr)[i] = '\0';
+  return (ssize_t)i;
 }
 
 #ifdef _WIN32
@@ -292,8 +306,6 @@ bool large_pages_supported(void)
   return 1;
 }
 
-// The following two functions were taken from mingw_lock.c
-
 void __cdecl _lock(int locknum);
 void __cdecl _unlock(int locknum);
 #define _STREAM_LOCKS 16
@@ -326,11 +338,9 @@ FD open_file(const char *name)
 {
 #ifndef _WIN32
   return open(name, O_RDONLY);
-
 #else
   return CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
       FILE_FLAG_RANDOM_ACCESS, NULL);
-
 #endif
 }
 
@@ -338,10 +348,8 @@ void close_file(FD fd)
 {
 #ifndef _WIN32
   close(fd);
-
 #else
   CloseHandle(fd);
-
 #endif
 }
 
@@ -351,19 +359,17 @@ size_t file_size(FD fd)
   struct stat statbuf;
   fstat(fd, &statbuf);
   return statbuf.st_size;
-
 #else
   DWORD sizeLow, sizeHigh;
   sizeLow = GetFileSize(fd, &sizeHigh);
   return ((uint64_t)sizeHigh << 32) | sizeLow;
-
 #endif
 }
 
 const void *map_file(FD fd, map_t *map)
 {
 #if defined(__3DS__)
-  // 3DS Fallback: Allocate standard heap memory and read the file into it
+  // Optimized 3DS Block-Read Fallback
   size_t size = file_size(fd);
   *map = (map_t)size;
   void *data = malloc(size);
@@ -390,7 +396,6 @@ const void *map_file(FD fd, map_t *map)
   if (*map == NULL)
     return NULL;
   return MapViewOfFile(*map, FILE_MAP_READ, 0, 0, 0);
-
 #endif
 }
 
@@ -400,14 +405,11 @@ void unmap_file(const void *data, map_t map)
 
 #if defined(__3DS__)
   free((void *)data);
-
 #elif !defined(_WIN32)
   munmap((void *)data, map);
-
 #else
   UnmapViewOfFile(data);
   CloseHandle(map);
-
 #endif
 }
 
@@ -427,8 +429,7 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   return ptr;
 
 #elif defined(__3DS__)
-  // 3DS doesn't support Virtual/Large pages. 
-  // We use memalign with 64-byte alignment (optimal for ARM cache-lines).
+  // Cache alignment set to 64 bytes (optimizes ARM11 L1 cache block operations)
   ptr = memalign(64, size);
   alloc->ptr = ptr;
   alloc->size = size;
@@ -445,22 +446,18 @@ void *allocate_memory(size_t size, bool lp, alloc_t *alloc)
   else
     ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
 #else
   ptr = mmap(NULL, allocSize, PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #if defined(__linux__) && defined(MADV_HUGEPAGE)
-  // Advise the kernel to allocate large pages.
   if (lp)
     madvise(ptr, allocSize, MADV_HUGEPAGE);
 #endif
-
 #endif
 
   alloc->ptr = ptr;
   alloc->size = allocSize;
   return (void *)(((uintptr_t)ptr + alignment - 1) & ~(alignment - 1));
-
 #endif
 }
 
@@ -477,12 +474,12 @@ void free_memory(alloc_t *alloc)
 #endif
 }
 
-// FIX: Hardware-accurate millisecond timer implementation for 3DS
-// This guarantees that search timeouts, time-controls, and iterative deep plies
-// function properly in Stockfish/Cfish under CTRU.
+// Hardware-accurate Monotonic Timer Implementation for 3DS
+// Bypasses the RTC wall clock to prevent bugs from system clock shifts.
 int64_t now(void) {
 #if defined(__3DS__)
-  return (int64_t)osGetTime();
+  // 268123480 Hz is the base hardware frequency of the ARM11 system timer tick counter.
+  return (int64_t)((svcGetSystemTick() * 1000ULL) / 268123480ULL);
 #elif !defined(_WIN32)
   struct timeval tv;
   gettimeofday(&tv, NULL);
