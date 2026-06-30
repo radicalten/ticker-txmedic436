@@ -5,4 +5,8 @@ Gemini 3.5 flash:
 prompt:
 can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
 main.c
+
+#WOW! it speed up and compiled perfectly. on citra I get 25-27k nps now. impressive speedup. makes me wonder if wii too could experience similar speedup? 200k nps inbound? 
+
+
 thread.c
