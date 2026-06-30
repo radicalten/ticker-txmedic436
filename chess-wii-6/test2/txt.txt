@@ -22,3 +22,5 @@ main-default-handdebug-to-claude4pt6v1-.c
 
 can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
 main-debug-v1-faster-v1.c
+
+#glm's version did not compile, claude after some compiler error help did. claude version also seemed to run at 100-130k nps but speeds up to 115-120k nps by move 20 which may be faster. its certainly not slower. roughly the same to slightly faster. i call this new one v2. 
