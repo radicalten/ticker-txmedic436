@@ -6,3 +6,9 @@ uci-fast
 
 only have marginal to no improvement, with all 4 nps is still roughly the same 28k nps, perhaps slightly higher. 
 But thread.c causes freezes and crashes for certain, so I will only implement the main-test-fast changes. and revert the others to default. 
+
+#upon testing was determined that main-faster itself cause stockfish not to load on console. 
+#tested also if the 3ds bridge merge with thread c is what caused it, and thankfully it was not that, without the main speedup, it runs and performs as normal 3.1k nps per usual. 
+The precise error with the faster main is:
+"setting up console registers... 
+[ERROR] Failed to spawn background Stockfish thread!"
