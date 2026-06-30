@@ -88,6 +88,13 @@ long long engine_nps = 0;
 int engine_score_type = -1; 
 int engine_score_val = 0;
 
+// Global Optimization Registers
+int ui_dirty = 1;               // Redraw GUI only when state changes
+int is_cached = 0;              // Safety status cache validity flag
+int cached_king_in_check = -1;  // Cached position of checked king (-1 if none)
+int cached_has_legal_moves = 1; // Cached checkmate/stalemate checker
+int cached_is_check = 0;        // Cached active side's check status
+
 PrintConsole topConsole, bottomConsole;
 
 // Forward Declarations
@@ -337,6 +344,7 @@ void process_engine_output(char *line) {
         if (strstr(line, "uciok") != NULL) {
             sf_send_command("isready");
             engine_state = ENGINE_STATE_WAIT_READYOK;
+            ui_dirty = 1;
             printf("[GUI] Received 'uciok' -> Sending 'isready'\n");
             fflush(stdout);
         }
@@ -348,6 +356,7 @@ void process_engine_output(char *line) {
             
             sf_send_command("ucinewgame");
             engine_state = ENGINE_STATE_READY;
+            ui_dirty = 1;
             printf("[GUI] Received 'readyok' -> Handshake Complete.\n");
             fflush(stdout);
         }
@@ -356,24 +365,21 @@ void process_engine_output(char *line) {
     if (strncmp(line, "info", 4) == 0) {
         char *nps_ptr = strstr(line, " nps ");
         if (nps_ptr) {
-            long long val;
-            if (sscanf(nps_ptr, " nps %lld", &val) == 1) {
-                engine_nps = val;
-            }
+            engine_nps = strtoll(nps_ptr + 5, NULL, 10);
+            ui_dirty = 1;
         }
 
         char *score_ptr = strstr(line, " score ");
         if (score_ptr) {
-            int score_val = 0;
-            char score_type[16];
-            if (sscanf(score_ptr, " score %15s %d", score_type, &score_val) == 2) {
-                if (strcmp(score_type, "cp") == 0) {
-                    engine_score_type = 0;
-                    engine_score_val = score_val * current_state.turn;
-                } else if (strcmp(score_type, "mate") == 0) {
-                    engine_score_type = 1;
-                    engine_score_val = score_val * current_state.turn;
-                }
+            char *p = score_ptr + 7; // Fast bypass sscanf
+            if (strncmp(p, "cp ", 3) == 0) {
+                engine_score_type = 0;
+                engine_score_val = atoi(p + 3) * current_state.turn;
+                ui_dirty = 1;
+            } else if (strncmp(p, "mate ", 5) == 0) {
+                engine_score_type = 1;
+                engine_score_val = atoi(p + 5) * current_state.turn;
+                ui_dirty = 1;
             }
         }
     }
@@ -383,6 +389,7 @@ void process_engine_output(char *line) {
         if (sscanf(line, "bestmove %15s", move_str) == 1) {
             if (strcmp(move_str, "(none)") == 0 || strcmp(move_str, "NULL") == 0) {
                 engine_thinking = 0;
+                ui_dirty = 1;
                 return;
             }
             
@@ -392,8 +399,10 @@ void process_engine_output(char *line) {
                 GuiBoardState next;
                 gui_make_move(&current_state, &next, m);
                 current_state = next;
+                is_cached = 0; // State modified: invalidate King/Safety Cache
             }
             engine_thinking = 0;
+            ui_dirty = 1;
         }
     }
 }
@@ -631,10 +640,13 @@ int gui_has_legal_moves(const GuiBoardState *state) {
 int gui_count_repetitions(const GuiBoardState *state) {
     int count = 1;
     for (int i = 0; i < history_count; i++) {
-        if (state->turn == history[i].turn &&
-            state->castle == history[i].castle &&
-            state->ep == history[i].ep &&
-            memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
+        // Fast early exits before executing expensive memcmp loops
+        if (state->turn != history[i].turn ||
+            state->castle != history[i].castle ||
+            state->ep != history[i].ep) {
+            continue;
+        }
+        if (memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
             count++;
         }
     }
@@ -698,10 +710,23 @@ void draw_ui(void) {
         sprintf(rp[i], "                  "); // Default clear padding
     }
 
-    // Set up Side Panel Status Parameters
-    int king = gui_find_king(&current_state, current_state.turn);
-    int is_ch = gui_is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = gui_has_legal_moves(&current_state);
+    // Lazy load the position safety evaluation registers when cache is dirty
+    if (!is_cached) {
+        int king = gui_find_king(&current_state, current_state.turn);
+        cached_is_check = (king != -1) && gui_is_square_attacked(&current_state, king, -current_state.turn);
+        cached_has_legal_moves = gui_has_legal_moves(&current_state);
+
+        int w_king = gui_find_king(&current_state, 1);
+        int b_king = gui_find_king(&current_state, -1);
+        cached_king_in_check = -1;
+        if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
+            cached_king_in_check = w_king;
+        } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
+            cached_king_in_check = b_king;
+        }
+        is_cached = 1;
+    }
+
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = gui_count_repetitions(&current_state);
@@ -711,13 +736,13 @@ void draw_ui(void) {
         strcpy(rp[0], "  [DRAW (50m-rule)]");
     } else if (repetitions >= 3) {
         strcpy(rp[0], "  [DRAW (3-fold)]");
-    } else if (!has_mov) {
-        if (is_ch) {
+    } else if (!cached_has_legal_moves) {
+        if (cached_is_check) {
             strcpy(rp[0], "  \x1b[1;31m[CHECKMATE!]\x1b[0m");
         } else {
             strcpy(rp[0], "  \x1b[1;36m[STALEMATE!]\x1b[0m");
         }
-    } else if (is_ch) {
+    } else if (cached_is_check) {
         if (current_state.turn == 1) {
             sprintf(rp[0], "  \x1b[1;32mWhite\x1b[0m (\x1b[1;31mCHECK!\x1b[0m)");
         } else {
@@ -815,15 +840,6 @@ void draw_ui(void) {
     }
     printf("%s\x1b[K\n", rp[0]);
 
-    int king_in_check = -1;
-    int w_king = gui_find_king(&current_state, 1);
-    int b_king = gui_find_king(&current_state, -1);
-    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
-    }
-
     // 3. Render 8 Board Ranks: 3 character rows per rank
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
@@ -869,7 +885,7 @@ void draw_ui(void) {
                     bg_color = "\x1b[48;5;208m"; // Bright orange cursor
                 } else if (is_selected) {
                     bg_color = "\x1b[48;5;34m";  // Forest Green selection
-                } else if (sq == king_in_check) {
+                } else if (sq == cached_king_in_check) {
                     bg_color = "\x1b[48;5;196m"; // Danger warnings red
                 } else if (is_prev_move) {
                     bg_color = is_light ? "\x1b[48;5;75m" : "\x1b[48;5;68m"; // history path
@@ -964,7 +980,7 @@ void handle_select(void) {
         return; 
     }
 
-    if (!gui_has_legal_moves(&current_state) || current_state.halfmoves >= 100 || gui_count_repetitions(&current_state) >= 3) {
+    if (!cached_has_legal_moves || current_state.halfmoves >= 100 || gui_count_repetitions(&current_state) >= 3) {
         return;
     }
 
@@ -973,6 +989,7 @@ void handle_select(void) {
         int p = current_state.board[sq];
         if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
             selected_sq = sq;
+            ui_dirty = 1;
         }
     } else {
         GuiMove m = {selected_sq, sq, 0};
@@ -993,6 +1010,7 @@ void handle_select(void) {
             engine_nps = 0;
             engine_score_type = -1;
             engine_score_val = 0;
+            is_cached = 0; // Reset cache
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -1001,6 +1019,7 @@ void handle_select(void) {
                 selected_sq = -1;
             }
         }
+        ui_dirty = 1;
     }
 }
 
@@ -1019,6 +1038,8 @@ void handle_undo(void) {
         step_back--;
     }
     selected_sq = -1;
+    is_cached = 0;  // Reset cache
+    ui_dirty = 1;
 }
 
 void handle_reset_board(void) {
@@ -1036,6 +1057,8 @@ void handle_reset_board(void) {
     cursor_c = 4;
     sf_send_command("ucinewgame");
     sf_send_command("isready");
+    is_cached = 0;  // Reset cache
+    ui_dirty = 1;
 }
 
 void handle_switch_sides(void) {
@@ -1047,6 +1070,7 @@ void handle_switch_sides(void) {
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
     else user_side = 1;
+    ui_dirty = 1;
 }
 
 // Ported dynamic lists from Desktop CLI adjusting parameters safely
@@ -1076,6 +1100,7 @@ void adjust_time_control(void) {
         }
         time_control_val = (found_idx == -1 || found_idx == nodes_count - 1) ? nodes_list[0] : nodes_list[found_idx + 1];
     }
+    ui_dirty = 1;
 }
 
 void gui_init_board(GuiBoardState *state) {
@@ -1095,6 +1120,8 @@ void gui_init_board(GuiBoardState *state) {
     state->ep = -1;
     state->halfmoves = 0;
     state->fullmoves = 1;
+    is_cached = 0;  // Invalidate GUI rules caches on initialization
+    ui_dirty = 1;
 }
 
 // ============================================================================
@@ -1128,7 +1155,8 @@ int main(int argc, char **argv) {
 
     Thread stockfish_thread;
     s32 prio = 0x3B; 
-    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, -1, false);
+    // Optimization: Thread affinity set to '1' instead of '-1' to pin the engine to Core 1.
+    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
 
     if (stockfish_thread == NULL) {
         consoleSelect(&bottomConsole);
@@ -1136,7 +1164,7 @@ int main(int argc, char **argv) {
         fflush(stdout);
     } else {
         consoleSelect(&bottomConsole);
-        printf("Background Engine Thread spawned successfully on Safe Core.\n\n");
+        printf("Background Engine Thread spawned successfully on Safe Core (Core 1).\n\n");
         fflush(stdout);
     }
 
@@ -1150,27 +1178,29 @@ int main(int argc, char **argv) {
 
         if (kDown & KEY_START) break; 
 
-        if (kDown & KEY_UP)    { if (cursor_r > 0) cursor_r--; }
-        if (kDown & KEY_DOWN)  { if (cursor_r < 7) cursor_r++; }
-        if (kDown & KEY_RIGHT) { if (cursor_c < 7) cursor_c++; }
-        if (kDown & KEY_LEFT)  { if (cursor_c > 0) cursor_c--; }
+        if (kDown & KEY_UP)    { if (cursor_r > 0) { cursor_r--; ui_dirty = 1; } }
+        if (kDown & KEY_DOWN)  { if (cursor_r < 7) { cursor_r++; ui_dirty = 1; } }
+        if (kDown & KEY_RIGHT) { if (cursor_c < 7) { cursor_c++; ui_dirty = 1; } }
+        if (kDown & KEY_LEFT)  { if (cursor_c > 0) { cursor_c--; ui_dirty = 1; } }
 
         if (kDown & KEY_A)      handle_select();
         if (kDown & KEY_B)      handle_undo();
         if (kDown & KEY_SELECT) handle_reset_board();
-        if (kDown & KEY_X)      board_orientation = -board_orientation;
+        if (kDown & KEY_X)      { board_orientation = -board_orientation; ui_dirty = 1; }
         if (kDown & KEY_Y)      handle_switch_sides();
 
         if (kDown & KEY_L) {
             time_control_type = (time_control_type + 1) % 3;
             time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+            ui_dirty = 1;
         }
         if (kDown & KEY_R) {
             adjust_time_control();
+            ui_dirty = 1;
         }
 
         int engine_active = 0;
-        if (engine_state == ENGINE_STATE_READY && gui_has_legal_moves(&current_state) && current_state.halfmoves < 100 && gui_count_repetitions(&current_state) < 3) {
+        if (engine_state == ENGINE_STATE_READY && cached_has_legal_moves && current_state.halfmoves < 100 && gui_count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
@@ -1178,11 +1208,17 @@ int main(int argc, char **argv) {
 
         if (engine_active && !engine_thinking) {
             engine_thinking = 1;
+            ui_dirty = 1;
             trigger_engine_move();
         }
 
         read_from_engine();
-        draw_ui();
+
+        // Dirty Framebuffer Check: Only execute slow print updates if states actually changed
+        if (ui_dirty) {
+            draw_ui();
+            ui_dirty = 0;
+        }
 
         gfxFlushBuffers();
         gfxSwapBuffers();
