@@ -18,7 +18,6 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "3ds_bridge.h"
 #include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
