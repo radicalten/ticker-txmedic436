@@ -20,7 +20,6 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
-#include <malloc.h> // Native memory alignment allocation
 
 #include "evaluate.h"
 #include "misc.h"
@@ -36,25 +35,6 @@ extern void benchmark(Position *pos, char *str);
 
 static const char StartFEN[] =
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-// Fast inline integer-to-string formatter (eliminates expensive sprintf overhead)
-static inline void fast_itoa(int val, char *buf) {
-    char *p = buf;
-    if (val < 0) {
-        *p++ = '-';
-        val = -val;
-    }
-    char temp[16];
-    int i = 0;
-    do {
-        temp[i++] = '0' + (val % 10);
-        val /= 10;
-    } while (val > 0);
-    while (i > 0) {
-        *p++ = temp[--i];
-    }
-    *p = '\0';
-}
 
 void position(Position *pos, char *str)
 {
@@ -98,6 +78,7 @@ void position(Position *pos, char *str)
       pos->st->pliesFromNull = 99;
 
     // FIX: Only slide the stack back if we actually exceeded 100 plies.
+    // This prevents pulling uninitialized heap garbage into the history evaluation indices.
     if (ply >= 100) {
         int k = (pos->st - (pos->stack + 100)) - max(7, pos->st->pliesFromNull);
         for (; k < 0; k++)
@@ -215,10 +196,9 @@ void uci_loop(int argc, char **argv)
   Threads.searching = false;
   Threads.sleeping = false;
 
-  // Use cache-aligned heap blocks (64-byte boundary alignment)
-  pos.stackAllocation = memalign(64, 63 + 215 * sizeof(Stack));
+  pos.stackAllocation = malloc(63 + 215 * sizeof(Stack));
   pos.stack = (Stack *)(((uintptr_t)pos.stackAllocation + 0x3f) & ~0x3f);
-  pos.moveList = memalign(64, 1000 * sizeof(ExtMove));
+  pos.moveList = malloc(1000 * sizeof(ExtMove));
   pos.st = pos.stack + 100;
   pos.st[-1].endMoves = pos.moveList;
 
@@ -226,7 +206,8 @@ void uci_loop(int argc, char **argv)
   for (int i = 1; i < argc; i++)
     buf_size += strlen(argv[i]) + 1;
 
-  // Enforce command allocation limit
+  // FIX: Increased command allocation limit from 1024 bytes to 8192 bytes.
+  // This prevents late-game desynchronizations when move history strings overflow the buffer.
   if (buf_size < 8192) buf_size = 8192;
 
   char *cmd = malloc(buf_size);
@@ -245,13 +226,16 @@ void uci_loop(int argc, char **argv)
         sf_recv_command(cmd, buf_size);
     }
 
-    // Safely strip Windows carriage returns (\r), Unix newlines (\n), and trailing spaces
+    // FIX: Safely strip Windows carriage returns (\r), Unix newlines (\n), and empty spaces 
+    // at the end of the line buffer. This stops the engine from rejecting the final move in
+    // a move list.
     size_t cmd_len = strlen(cmd);
     while (cmd_len > 0 && (cmd[cmd_len - 1] == '\n' || cmd[cmd_len - 1] == '\r' || cmd[cmd_len - 1] == ' ')) {
       cmd[cmd_len - 1] = 0;
       cmd_len--;
     }
 
+    // DIAGNOSTIC LOG: Print exactly what command the engine received back to GUI
     printf("[ENGINE_RECV] %s\n", cmd);
 
     token = cmd;
@@ -302,9 +286,12 @@ void uci_loop(int argc, char **argv)
       search_clear();
     } 
     else if (strcmp(token, "isready") == 0) {
+      // DIAGNOSTIC LOGS: Trace execution paths inside the isready command handler
       printf("[DIAGNOSTIC] Engine entering 'isready' execution block...\n");
+      
       printf("[DIAGNOSTIC] Resizing memory/threads via process_delayed_settings()...\n");
       process_delayed_settings();
+      
       printf("[DIAGNOSTIC] process_delayed_settings() successfully completed!\n");
       printf("readyok\n");
       printf("[DIAGNOSTIC] Sent 'readyok\\n' to bridge output.\n");
@@ -340,13 +327,12 @@ void uci_loop(int argc, char **argv)
 
 char *uci_value(char *str, Value v)
 {
-  if (abs(v) < VALUE_MATE_IN_MAX_PLY) {
-    strcpy(str, "cp ");
-    fast_itoa(v * 100 / PawnValueEg, str + 3);
-  } else {
-    strcpy(str, "mate ");
-    fast_itoa((v > 0 ? VALUE_MATE - v + 1 : -VALUE_MATE - v) / 2, str + 5);
-  }
+  if (abs(v) < VALUE_MATE_IN_MAX_PLY)
+    sprintf(str, "cp %d", v * 100 / PawnValueEg);
+  else
+    sprintf(str, "mate %d",
+                 (v > 0 ? VALUE_MATE - v + 1 : -VALUE_MATE - v) / 2);
+
   return str;
 }
 
@@ -355,92 +341,48 @@ char *uci_square(char *str, Square s)
   str[0] = 'a' + file_of(s);
   str[1] = '1' + rank_of(s);
   str[2] = 0;
+
   return str;
 }
 
-// Optimized array-writing coordinate formatter (removes strcpy/strcat dependencies)
 char *uci_move(char *str, Move m, int chess960)
 {
-  if (m == 0) {
-    strcpy(str, "(none)");
-    return str;
-  }
-  if (m == MOVE_NULL) {
-    strcpy(str, "0000");
-    return str;
-  }
-
+  char buf1[8], buf2[8];
   Square from = from_sq(m);
   Square to = to_sq(m);
 
-  if (type_of_m(m) == CASTLING && !chess960) {
-    to = make_square(to > from ? FILE_G : FILE_C, rank_of(from));
-  }
+  if (m == 0)
+    return "(none)";
 
-  str[0] = 'a' + file_of(from);
-  str[1] = '1' + rank_of(from);
-  str[2] = 'a' + file_of(to);
-  str[3] = '1' + rank_of(to);
+  if (m == MOVE_NULL)
+    return "0000";
+
+  if (type_of_m(m) == CASTLING && !chess960)
+    to = make_square(to > from ? FILE_G : FILE_C, rank_of(from));
+
+  strcat(strcpy(str, uci_square(buf1, from)), uci_square(buf2, to));
 
   if (type_of_m(m) == PROMOTION) {
-    str[4] = " pnbrqk"[promotion_type(m)];
-    str[5] = '\0';
-  } else {
-    str[4] = '\0';
+    str[strlen(str) + 1] = 0;
+    str[strlen(str)] = " pnbrqk"[promotion_type(m)];
   }
 
   return str;
 }
 
-// Extremely optimized direct coordinate matcher (eliminates format-to-string lookup loops)
 Move uci_to_move(const Position *pos, char *str)
 {
-  size_t len = strlen(str);
-  if (len < 4) return 0;
-
-  int f_from = str[0] - 'a';
-  int r_from = str[1] - '1';
-  int f_to   = str[2] - 'a';
-  int r_to   = str[3] - '1';
-
-  // Sanity check coordinates
-  if (f_from < 0 || f_from > 7 || r_from < 0 || r_from > 7) return 0;
-  if (f_to   < 0 || f_to   > 7 || r_to   < 0 || r_to   > 7) return 0;
-
-  int promo = 0;
-  if (len == 5) {
-    char p = tolower(str[4]);
-    if (p == 'n') promo = KNIGHT;
-    else if (p == 'b') promo = BISHOP;
-    else if (p == 'r') promo = ROOK;
-    else if (p == 'q') promo = QUEEN;
-  }
+  if (strlen(str) == 5)
+    str[4] = tolower(str[4]);
 
   ExtMove list[MAX_MOVES];
   ExtMove *last = generate_legal(pos, list);
 
-  for (ExtMove *m = list; m < last; m++) {
-    Move move = m->move;
-    Square m_from = from_sq(move);
-    Square m_to = to_sq(move);
+  char buf[16];
 
-    if (file_of(m_from) == f_from && rank_of(m_from) == r_from) {
-      Square match_to = m_to;
-      if (type_of_m(move) == CASTLING && !pos->chess960) {
-        match_to = make_square(m_to > m_from ? FILE_G : FILE_C, rank_of(m_from));
-      }
-
-      if (file_of(match_to) == f_to && rank_of(match_to) == r_to) {
-        if (type_of_m(move) == PROMOTION) {
-          if (promotion_type(move) == promo) {
-            return move;
-          }
-        } else if (promo == 0) {
-          return move;
-        }
-      }
-    }
-  }
+  for (ExtMove *m = list; m < last; m++)
+    if (strcmp(str, uci_move(buf, m->move, pos->chess960)) == 0)
+      return m->move;
 
   return 0;
 }
