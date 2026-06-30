@@ -12,3 +12,11 @@ Excellent can you evaluate this file for speedups as well?:
 thread-default.c
 
 #this compiles and seems to work too, marginal improvement on citra gets 26-29k nps
+
+Excellent can you evaluate this file for speedups as well?: 
+misc-default.c
+
+#this compiled and seemed to work too, another marginal improvement this time 27-29k nps could be randomness, or perhaps it really is just ever so slightly faster
+
+Excellent can you evaluate this file for speedups as well?: 
+uci-default.c
