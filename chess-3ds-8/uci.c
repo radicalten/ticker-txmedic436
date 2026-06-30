@@ -16,7 +16,6 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "3ds_bridge.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
