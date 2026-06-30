@@ -26,7 +26,6 @@
 #include "pawns.h"
 #include "position.h"
 #include "thread.h"
-#include "3ds_bridge.h"
 
 #define V(v) ((Value)(v))
 #define S(mg, eg) make_score(mg, eg)
