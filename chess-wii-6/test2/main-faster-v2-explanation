@@ -1,0 +1,546 @@
+Prompt: claude 4.6 sonnet:
+can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
+main-debug-v1-faster-v1.c
+
+
+# Chess Engine GUI Code Analysis for Nintendo Wii
+
+## Overview
+
+This is a well-structured GUI wrapper around a Cfish/Stockfish engine port. I'll analyze each component for bottlenecks and suggest concrete improvements.
+
+---
+
+## 🔴 Critical Performance Issues
+
+### 1. `has_legal_moves()` — O(64²) Legal Move Generation with Full Board Copy Per Call
+
+```c
+// CURRENT: 4096 iterations, each doing a full BoardState copy + attack scan
+int has_legal_moves(const BoardState *state) {
+    for (int f = 0; f < 64; f++) {
+        if (state->board[f] == 0) continue;
+        if ((state->turn == 1 && state->board[f] < 0) || ...) continue;
+        for (int t = 0; t < 64; t++) {
+            GuiMove m = {f, t, 0};
+            if (is_legal_gui_move(state, m)) return 1;  // BoardState copy every call!
+        }
+    }
+    return 0;
+}
+```
+
+**Problem:** `is_legal_gui_move` calls `make_gui_move` which copies the entire `BoardState` struct (64 ints + metadata = ~272 bytes) on every iteration. In the worst case, this is **4096 struct copies** before returning. This is called every frame via `update_gui_cache()`.
+
+```c
+// OPTIMIZED: Early-exit piece iteration + skip impossible targets
+int has_legal_moves(const BoardState *state) {
+    // Pre-collect own piece squares to avoid scanning empty squares twice
+    int own_pieces[16];
+    int own_count = 0;
+    
+    for (int f = 0; f < 64 && own_count < 16; f++) {
+        int p = state->board[f];
+        if (p == 0) continue;
+        if (state->turn == 1 ? p > 0 : p < 0) {
+            own_pieces[own_count++] = f;
+        }
+    }
+    
+    for (int pi = 0; pi < own_count; pi++) {
+        int f = own_pieces[pi];
+        int abs_p = abs(state->board[f]);
+        
+        for (int t = 0; t < 64; t++) {
+            // Skip squares occupied by own pieces before making a copy
+            int tgt = state->board[t];
+            if (tgt != 0 && (state->turn == 1 ? tgt > 0 : tgt < 0)) continue;
+            
+            GuiMove m = {f, t, 0};
+            if (abs_p == 1 && (t / 8 == 0 || t / 8 == 7)) m.promo = 5;
+            if (is_legal_gui_move(state, m)) return 1;
+        }
+    }
+    return 0;
+}
+```
+
+**Further optimization** — make `make_gui_move` avoid a full copy using a delta approach:
+
+```c
+// Store only the deltas needed to verify legality, avoid full struct copy
+int is_legal_gui_move_nocopy(const BoardState *state, GuiMove m) {
+    if (!is_pseudo_legal_move(state, m)) return 0;
+    
+    // Inline the minimum state changes needed for king-safety check
+    // instead of copying the whole BoardState
+    int saved_from = state->board[m.from];
+    int saved_to   = state->board[m.to];
+    int saved_ep_cap = 0;
+    int ep_cap_sq = -1;
+    
+    // Cast away const for temporary mutation (restore immediately after)
+    BoardState *s = (BoardState *)state;
+    
+    s->board[m.from] = 0;
+    s->board[m.to]   = (m.promo != 0) ? state->turn * m.promo : saved_from;
+    
+    // Handle en-passant capture square
+    if (abs(saved_from) == 1 && m.to == state->ep) {
+        ep_cap_sq    = m.to + (state->turn == 1 ? 8 : -8);
+        saved_ep_cap = s->board[ep_cap_sq];
+        s->board[ep_cap_sq] = 0;
+    }
+    
+    int king = find_king(s, state->turn);
+    int legal = (king != -1) && !is_square_attacked(s, king, -state->turn);
+    
+    // Restore state
+    s->board[m.from] = saved_from;
+    s->board[m.to]   = saved_to;
+    if (ep_cap_sq != -1) s->board[ep_cap_sq] = saved_ep_cap;
+    
+    return legal;
+}
+```
+
+> ⚠️ This mutation+restore pattern is valid **only** if the GUI runs single-threaded during move validation (which it does — the engine runs on a separate KThread).
+
+---
+
+### 2. `update_selected_dests_cache()` — Redundant Full Move Scan Every Selection
+
+```c
+// CURRENT: Called on every piece selection — 64 full legal move checks
+void update_selected_dests_cache() {
+    cached_gui.legal_dests_mask = 0ULL;
+    if (selected_sq == -1) return;
+    for (int sq = 0; sq < 64; sq++) {
+        GuiMove test_m = {selected_sq, sq, 0};
+        // ...
+        if (is_legal_gui_move(&current_state, test_m)) {  // 64x BoardState copy!
+            cached_gui.legal_dests_mask |= (1ULL << sq);
+        }
+    }
+}
+```
+
+**Optimization:** Combine with the no-copy legality check above. This alone cuts selection highlight calculation from ~272×64 = 17,408 bytes of copying down to 3 int saves/restores per check.
+
+---
+
+### 3. `count_repetitions()` — Called Every Frame Inside `draw_ui()`
+
+```c
+// CURRENT: Inside draw_ui(), called every render tick
+int repetitions = count_repetitions(&current_state);
+
+int count_repetitions(const BoardState *state) {
+    int count = 1;
+    for (int i = 0; i < history_count; i++) {
+        // memcmp of 64 ints on every history entry, every frame!
+        if (memcmp(state->board, history[i].board, sizeof(state->board)) == 0 && ...)
+            count++;
+    }
+    return count;
+}
+```
+
+**Fix:** Cache the repetition count alongside the other cached state and update only when the board changes:
+
+```c
+// Add to CachedGuiState:
+typedef struct {
+    bool has_legal_moves;
+    int  king_in_check_sq;
+    uint64_t legal_dests_mask;
+    int  repetition_count;      // NEW: Cached, not recalculated per frame
+} CachedGuiState;
+
+// In update_gui_cache():
+cached_gui.repetition_count = count_repetitions(&current_state);
+
+// In draw_ui():
+int repetitions = cached_gui.repetition_count;  // O(1) lookup
+```
+
+---
+
+### 4. `find_king()` — Linear Scan Called Repeatedly Per Move Check
+
+```c
+// Called inside is_legal_gui_move → is_square_attacked chain
+// Worst case: 64 iterations every move validation
+int find_king(const BoardState *state, int color) {
+    for (int i = 0; i < 64; i++) {
+        if (state->board[i] == color * 6) return i;
+    }
+    return -1;
+}
+```
+
+**Fix:** Cache king positions in `BoardState` and update on move:
+
+```c
+typedef struct {
+    int board[64];
+    int turn;
+    int castle;
+    int ep;
+    int halfmoves;
+    int fullmoves;
+    int white_king_sq;   // NEW: Always current
+    int black_king_sq;   // NEW: Always current
+} BoardState;
+
+// In make_gui_move(), after moving the piece:
+if (abs(p) == 6) {
+    if (dst->turn == -1) dst->white_king_sq = m.to;  // turn already flipped
+    else                 dst->black_king_sq = m.to;
+}
+
+// find_king becomes O(1):
+int find_king(const BoardState *state, int color) {
+    return (color == 1) ? state->white_king_sq : state->black_king_sq;
+}
+```
+
+---
+
+### 5. `fifo_write()` — Character-by-Character Loop
+
+```c
+// CURRENT: One character at a time with modulo per character
+void fifo_write(SimpleFIFO *f, const char *str, int len) {
+    int h = f->head;
+    int t = f->tail;
+    for (int i = 0; i < len; i++) {
+        int next = (h + 1) % FIFO_SIZE;  // Modulo every iteration!
+        if (next == t) break;
+        f->data[h] = str[i];
+        h = next;
+    }
+    __sync_synchronize();
+    f->head = h;
+}
+```
+
+**Fix:** Use `memcpy` for contiguous segments. The PowerPC 750CL (Broadway) has hardware-accelerated cache line fills:
+
+```c
+void fifo_write(SimpleFIFO *f, const char *str, int len) {
+    if (!f || !str || len <= 0) return;
+    
+    int h = f->head;
+    int t = f->tail;
+    
+    // Available space (leave 1 slot empty to distinguish full vs empty)
+    int avail = (t - h - 1 + FIFO_SIZE) % FIFO_SIZE;
+    if (len > avail) len = avail;
+    if (len == 0) return;
+    
+    // Contiguous space to end of buffer
+    int space_to_end = FIFO_SIZE - h;
+    
+    if (len <= space_to_end) {
+        // Single memcpy — no wraparound
+        memcpy(&f->data[h], str, len);
+    } else {
+        // Two memcpys: end of buffer + wrap to start
+        memcpy(&f->data[h], str, space_to_end);
+        memcpy(&f->data[0], str + space_to_end, len - space_to_end);
+    }
+    
+    __sync_synchronize();
+    f->head = (h + len) % FIFO_SIZE;
+}
+```
+
+Apply the same pattern to `fifo_read()`:
+
+```c
+int fifo_read(SimpleFIFO *f, char *out, int max_len) {
+    if (!f || !out || max_len <= 0) return 0;
+    
+    int t = f->head;  // snapshot head
+    int h = f->tail;
+    if (h == t) return 0;
+    
+    // Actually: tail is read pointer, head is write pointer
+    // Reusing variable names from original — keeping original semantics:
+    int available = (f->head - f->tail + FIFO_SIZE) % FIFO_SIZE;
+    int len = (available < max_len) ? available : max_len;
+    
+    int tail = f->tail;
+    int to_end = FIFO_SIZE - tail;
+    
+    if (len <= to_end) {
+        memcpy(out, &f->data[tail], len);
+    } else {
+        memcpy(out, &f->data[tail], to_end);
+        memcpy(out + to_end, &f->data[0], len - to_end);
+    }
+    
+    __sync_synchronize();
+    f->tail = (tail + len) % FIFO_SIZE;
+    return len;
+}
+```
+
+---
+
+### 6. `trigger_engine_move()` — String Building with `strlen` on Growing Buffer
+
+```c
+// CURRENT: strlen(cmd) recalculated every loop iteration
+static char cmd[16384];
+cmd[0] = '\0';
+strcpy(cmd, "position startpos moves");
+int len = strlen(cmd);  // OK here
+for (int i = 0; i < history_count; i++) {
+    char uci_m[10];
+    move_to_uci(move_history[i], uci_m);
+    int move_len = strlen(uci_m);  // strlen on short fixed string — minor
+    // ...
+    strcpy(cmd + len, uci_m);      // strcpy when we already know move_len
+    len += move_len;
+}
+```
+
+**Fix:** Use `memcpy` with known lengths since UCI moves are always 4-5 chars:
+
+```c
+void trigger_engine_move() {
+    reset_engine_metrics();
+    static char cmd[16384];
+    
+    // Use a write pointer instead of tracking len separately
+    char *ptr = cmd;
+    char *end = cmd + sizeof(cmd) - 2;  // Safety margin
+    
+    const char prefix[] = "position startpos moves";
+    memcpy(ptr, prefix, sizeof(prefix) - 1);
+    ptr += sizeof(prefix) - 1;
+    
+    for (int i = 0; i < history_count && ptr < end - 6; i++) {
+        char uci_m[8];
+        move_to_uci(move_history[i], uci_m);
+        // UCI moves: always "a1b2" (4) or "a1b2q" (5)
+        int mlen = (uci_m[4] != '\0') ? 5 : 4;
+        *ptr++ = ' ';
+        memcpy(ptr, uci_m, mlen);
+        ptr += mlen;
+    }
+    *ptr++ = '\n';
+    *ptr   = '\0';
+    
+    send_to_engine(cmd);
+    // ... go command unchanged
+}
+```
+
+---
+
+## 🟡 Moderate Issues
+
+### 7. `draw_ui()` — Excessive `printf` Calls (ANSI Escape Sequences)
+
+The Wii's `console_init` framebuffer console processes each `printf` call synchronously. Currently `draw_ui()` makes **50+ individual printf calls** per frame.
+
+```c
+// OPTIMIZED: Build entire frame into a single buffer, one fwrite call
+void draw_ui() {
+    static char frame_buf[8192];
+    int pos = 0;
+    
+    #define FB_APPEND(str) do { \
+        int _l = strlen(str); \
+        if (pos + _l < (int)sizeof(frame_buf) - 1) { \
+            memcpy(frame_buf + pos, str, _l); \
+            pos += _l; \
+        } \
+    } while(0)
+    
+    #define FB_PRINTF(fmt, ...) do { \
+        pos += snprintf(frame_buf + pos, sizeof(frame_buf) - pos, fmt, ##__VA_ARGS__); \
+    } while(0)
+    
+    FB_PRINTF("\033[H\r\n");
+    // ... build entire frame ...
+    
+    fwrite(frame_buf, 1, pos, stdout);
+    fflush(stdout);
+}
+```
+
+---
+
+### 8. `is_square_attacked()` — Stack Array Initialization Every Call
+
+```c
+// CURRENT: These arrays are re-initialized on the stack every call
+int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
+int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
+```
+
+**Fix:** Mark as `static const` — the compiler will place them in `.rodata` and the linker will keep them in Wii RAM (MEM1), avoiding stack setup cost per call:
+
+```c
+int is_square_attacked(const BoardState *state, int sq, int attacker) {
+    int r = sq / 8, c = sq % 8;
+    
+    static const int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
+    static const int k_c[] = {-1,  1, -2,  2, -2, 2, -1, 1};
+    static const int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    static const int kg_c[] = {-1,  0,  1,-1, 1,-1, 0, 1};
+    static const int d_r[]  = {-1, -1, 1, 1};
+    static const int d_c[]  = {-1,  1,-1, 1};
+    static const int s_r[]  = {-1, 1, 0, 0};
+    static const int s_c[]  = { 0, 0,-1, 1};
+    // ... rest unchanged
+```
+
+---
+
+### 9. `engine_getline()` / `engine_fgets()` — 1ms Sleep on Empty Buffer is Too Coarse
+
+```c
+// CURRENT: Burns a 1ms timeslice waiting for engine output
+} else {
+    KThreadSleepMs(1);
+}
+```
+
+The Wii's Broadway CPU at 729MHz with a 16ms GUI loop means 1ms sleeps in the engine's UCI read loop cause **unnecessary latency spikes** on the engine thread. Since the engine thread is **blocked waiting for GUI input** (not the other way around), and the GUI only sends commands between moves, this is acceptable but could use a yield hint:
+
+```c
+} else {
+    // If we're in the middle of a command, keep tight loop
+    // If buffer is fully empty and we haven't started reading, yield
+    if (bytes_read == 0) {
+        KThreadSleepMs(1);  // Full yield when idle
+    }
+    // else: tight spin for partial reads (unlikely but safe)
+}
+```
+
+---
+
+### 10. `move_to_pgn()` — Calls `has_legal_moves()` for Check/Checkmate Detection
+
+```c
+// In move_to_pgn, called from print_recent_moves, called from draw_ui every frame:
+if (!has_legal_moves(&next)) {   // O(64²) scan just for the # symbol!
+    strcat(buf, "#");
+}
+```
+
+**Fix:** Cache PGN strings when moves are made, not recalculated during rendering:
+
+```c
+// Add to move history storage:
+char pgn_cache[MAX_HISTORY][16];  // Pre-computed PGN strings
+bool pgn_valid[MAX_HISTORY];
+
+// Compute once in push_state():
+void push_state(const BoardState *state, GuiMove m) {
+    if (history_count < MAX_HISTORY - 1) {
+        history[history_count] = *state;
+        move_history[history_count] = m;
+        move_to_pgn(state, m, pgn_cache[history_count]);  // Compute once
+        pgn_valid[history_count] = true;
+        history_count++;
+    }
+}
+
+// In print_recent_moves — O(1) string lookup:
+if (w_idx < history_count && pgn_valid[w_idx]) {
+    printf("%-6s", pgn_cache[w_idx]);
+}
+```
+
+---
+
+## 🟢 Minor / Platform-Specific Issues
+
+### 11. Division/Modulo in Hot Loops — Replace with Bitwise ops
+
+The Wii's Broadway CPU (PPC 750CL) has **no hardware integer divide instruction**. All `/` and `%` operations are software-emulated and take **~20 cycles** each.
+
+```c
+// EXPENSIVE on Broadway PPC:
+int r = sq / 8;   // ~20 cycles
+int c = sq % 8;   // ~20 cycles
+
+// FREE on PPC (single-cycle shift/AND):
+int r = sq >> 3;   // 1 cycle
+int c = sq & 7;    // 1 cycle
+```
+
+Apply throughout `is_square_attacked()`, `is_pseudo_legal_move()`, `update_selected_dests_cache()`, and `draw_ui()`:
+
+```c
+// Before:
+int fr = m.from / 8, fc = m.from % 8;
+int tr = m.to   / 8, tc = m.to   % 8;
+
+// After:
+int fr = m.from >> 3, fc = m.from & 7;
+int tr = m.to   >> 3, tc = m.to   & 7;
+```
+
+---
+
+### 12. `FIFO_SIZE` Modulo — Replace with Power-of-2 Mask
+
+`FIFO_SIZE` is already 16384 (2¹⁴), so `% FIFO_SIZE` can be replaced with `& (FIFO_SIZE-1)`:
+
+```c
+#define FIFO_MASK (FIFO_SIZE - 1)
+
+// Before:
+int next = (h + 1) % FIFO_SIZE;
+
+// After (1 cycle vs ~20 cycles on Broadway):
+int next = (h + 1) & FIFO_MASK;
+```
+
+---
+
+### 13. `BoardState` Alignment for `memcmp`/`memcpy`
+
+The Broadway CPU prefers 32-byte aligned data for cache line operations:
+
+```c
+// Add alignment attribute:
+typedef struct __attribute__((aligned(32))) {
+    int board[64];
+    int turn;
+    int castle;
+    int ep;
+    int halfmoves;
+    int fullmoves;
+} BoardState;
+```
+
+This ensures `memcmp` in `count_repetitions` and `memcpy` in `make_gui_move` operate on cache-line-aligned data, avoiding split cache line penalties.
+
+---
+
+## Summary Table
+
+| Issue | Location | Impact | Fix Complexity |
+|---|---|---|---|
+| BoardState copy per legal check | `is_legal_gui_move` | 🔴 High | Medium |
+| `find_king` O(64) per call | `find_king` | 🔴 High | Low |
+| `count_repetitions` per frame | `draw_ui` | 🔴 High | Low |
+| `has_legal_moves` O(64²) | `has_legal_moves` | 🔴 High | Medium |
+| FIFO byte-by-byte copy | `fifo_write/read` | 🟡 Medium | Low |
+| PGN recomputed per frame | `print_recent_moves` | 🟡 Medium | Low |
+| 50+ printf per frame | `draw_ui` | 🟡 Medium | Medium |
+| Stack arrays in hot loop | `is_square_attacked` | 🟡 Medium | Trivial |
+| Division instead of shift | Throughout | 🟢 Low | Trivial |
+| FIFO modulo vs bitmask | `fifo_write/read` | 🟢 Low | Trivial |
+| `BoardState` alignment | Struct definition | 🟢 Low | Trivial |
+
+The highest-priority fixes are **caching `find_king`**, **caching repetition count**, and **eliminating BoardState copies in legality checks**, as these compound — every `has_legal_moves` call (itself called every cache update) triggers dozens of `find_king` + `make_gui_move` + `is_square_attacked` chains.
