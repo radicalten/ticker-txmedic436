@@ -9,3 +9,4 @@ main-test1-faster-v2.c
 
 #claude 4.6 sonnet created compilable and working code on citra seemed to have the same 25k nps avg there, need to test on console. 
 #testing on 3ds depth 20 it appears to be the same nps as before here 8.4k nps on move 3, will let it run to see if it picks up beyond that. 
+#by move 4 gets up to 9.3-9.6k so there is a good but small improvement there. it seems to settle on 9.3k nps, so instead of 9.1k nps we can say the average is 9.3k nps. a good but small increase. 
