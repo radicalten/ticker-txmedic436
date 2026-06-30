@@ -1,1 +1,5 @@
-
+This update removes 3ds_bridge.h and 3ds_bridge.c
+surprisingly it works. good work gemini 3.5 flash. 
+The work was done in chess-3ds-7 and ported here to chess-3ds-8 for safekeeping
+will now make a chess-3ds-9 for testing again. next goal is to speedup nps
+on citra emulator is 12-15k nps 3.2k nps on Original 3ds console 
