@@ -1,0 +1,54 @@
+prompt:
+if we go back to the main thread, when running on console I get this error: setting up console registers...
+[ERROR] Failed to spawn background Stockfish thread!
+
+This error occurs because of OS-level permissions on the Nintendo 3DS.
+
+When you run your program as a 3DSX file (via the Homebrew Launcher) or on an Old 3DS console, the operating system strictly forbids homebrew threads from accessing Core 1 (the System Core). Because Core 1 access is restricted in these environments, calling threadCreate with a hardcoded affinity of 1 fails and returns NULL.
+
+We can fix this by implementing a cascading core fallback system. This system attempts to use Core 1 for maximum performance (ideal for CIA builds and New 3DS models) but dynamically falls back to Core 0 or the default OS scheduler if Core 1 is denied.
+The Fix
+
+Replace the thread creation block inside your main function (around line 770 in your original main.c) with this robust version:
+
+Thread stockfish_thread = NULL;
+    s32 prio = 0x3B; 
+
+    // STEP 1: Try pinning to Core 1 (System Core) for maximum search speed (CIA / New 3DS)
+    stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
+
+    if (stockfish_thread == NULL) {
+        consoleSelect(&bottomConsole);
+        printf("[SYSTEM] Core 1 access denied. Attempting fallback to Core 0...\n");
+        fflush(stdout);
+
+        // STEP 2: Fallback to Core 0 (App Core) if Core 1 is restricted (Homebrew Launcher / Old 3DS)
+        stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 0, false);
+    }
+
+    if (stockfish_thread == NULL) {
+        consoleSelect(&bottomConsole);
+        printf("[SYSTEM] Core 0 allocation failed. Attempting default OS scheduler...\n");
+        fflush(stdout);
+
+        // STEP 3: Ultimate fallback to system default scheduler (-1)
+        stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, -1, false);
+    }
+
+    // Final safety verification
+    if (stockfish_thread == NULL) {
+        consoleSelect(&bottomConsole);
+        printf("\x1b[1;31m[ERROR] Failed to spawn background Stockfish thread on any CPU Core!\x1b[0m\n");
+        fflush(stdout);
+    } else {
+        consoleSelect(&bottomConsole);
+        printf("[SUCCESS] Background Engine Thread spawned successfully.\n\n");
+        fflush(stdout);
+    }
+
+
+    Why This Works
+
+    Dynamic Core Selection: If you build your application as a CIA or run it on a New 3DS, it will still take advantage of Core 1 for maximum NPS (Nodes Per Second) without stealing GUI cycles.
+    Guaranteed Booting: On an Old 3DS or when launching from the Homebrew Launcher, the code immediately falls back to Core 0, allowing the game to boot successfully.
+    Fluid UI Maintenance: Because the background Stockfish thread priority is set to 0x3B (lower priority) and your main GUI thread runs at default priority (higher priority), your main D-pad inputs and screen draws will always preempt the engine. Even when sharing Core 0, the interface will remain responsive and free of input lag.
