@@ -1,4 +1,47 @@
 /*
+prompt: Excellent can you evaluate this file for speedups as well?: 
+thread-default.c
+Based on a performance evaluation of this bridge and thread management file, there are several critical bottlenecks that are severely throttling both Stockfish's search speed (NPS) and the coordination latency between your GUI and the engine.
+On the 3DS ARM11 processor (which has an in-order execution pipeline, no hardware integer division, and slow cross-core cache synchronization), these bottlenecks are highly impactful.
+
+Key Bottlenecks Identified
+1. Per-Character Memory Barriers (A Massive CPU Bottleneck)
+
+In queue_push_char, your code executes __sync_synchronize() twice per character:
+
+q->data[q->head] = c;
+__sync_synchronize();
+q->head = next_head;
+__sync_synchronize();
+
+
+__sync_synchronize() compiles to a full hardware data memory barrier (DMB or DSB instruction on ARM). When Stockfish prints search info or PV moves, it sends thousands of characters. Doing two hardware pipeline flushes per character stalls the ARM11 CPU core continually.
+2. Slow Modulo Division (%) on ARM11
+
+The expression (q->head + 1) % MSG_QUEUE_SIZE uses a modulo operator. Because the ARM11 architecture inside the 3DS does not have a hardware integer division unit, this operation compiles to a slow software division helper function call (__aeabi_uidivmod), wasting dozens of clock cycles per byte.
+3. Low-Performance Thread Signaling (The 1ms Polling Latency)
+
+In thread_idle_loop and synchronization helpers, threads poll the pos->action state using a sleep loop:
+
+
+while (pos->action == THREAD_SLEEP) {
+    __sync_synchronize();       
+    svcSleepThread(1000000ULL); // Sleep 1ms
+}
+
+Sleeping for 1 millisecond means that when the engine decides to search, the helper threads can take up to 1,000 microseconds just to wake up and start helper tasks. For fast searches, this latency cripples parallel efficiency.
+Optimizations Implemented in the Updated Code
+
+    Power-of-Two Fast Bitwise Masking: Defined MSG_QUEUE_MASK as (MSG_QUEUE_SIZE - 1). Replaced all modulo division operations (% MSG_QUEUE_SIZE) with immediate bitwise AND masking (& MSG_QUEUE_MASK). This compiles to a single-cycle assembly instruction instead of a software division call.
+    String/Block-Based Queue Buffering: Rewrote the bridge queue mechanics. Introduced queue_push_string to copy entire chunks of text at once using highly optimized, assembly-backed library functions (memcpy), applying only a single memory barrier at the end of the block instead of looping barriers.
+    Instant OS-Level Event Signaling (LightEvent): Replaced the 1ms polling loops inside the thread management routines with native 3DS LightEvent structures initialized in RESET_ONESHOT (auto-clearing) mode. Threads now sleep with zero CPU consumption and wake up instantly (sub-microsecond latency) when signaled by the main search controller.
+    Guarded Stack Allocation Security: Changed helper thread stack allocation back from a highly unstable 4KB to a secure 48KB allocation pool. Stockfish's deep recursive search algorithms easily overflow 4KB on helper threads, which leads to silent memory corruption and crashes.
+
+*/
+
+
+
+/*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
