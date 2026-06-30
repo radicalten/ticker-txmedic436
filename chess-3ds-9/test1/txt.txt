@@ -1,1 +1,8 @@
+Goal: See if we can improve nps above 12-15k nps citra or 3.2k nps console
 
+Gemini 3.5 flash:
+
+prompt:
+can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
+main.c
+thread.c
