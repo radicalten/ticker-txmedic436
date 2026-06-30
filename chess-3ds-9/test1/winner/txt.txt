@@ -12,3 +12,7 @@ But thread.c causes freezes and crashes for certain, so I will only implement th
 The precise error with the faster main is:
 "setting up console registers... 
 [ERROR] Failed to spawn background Stockfish thread!"
+
+#
+prompt: if we go back to the main thread, when running on console I get this error: setting up console registers... 
+[ERROR] Failed to spawn background Stockfish thread!
