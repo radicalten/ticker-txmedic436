@@ -1,0 +1,13 @@
+#Going to try to apply the prompt that got the speedup from
+3.1k nps to 9.2 knps Old 3ds console 12-15k -> 25-29k nps citra
+
+#can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
+#main-default.c
+
+Will also try to continue debugging main.c as it is. it work, but it currently writes some garbage graphics in the form of green lines at the bottom of the screen
+
+source:
+main-claude4pt6son-debug-v1.c
+
+to manually debug go to commit history of main.c and see where it transitioned from compiling to X not compilinng. The compiling one was the claude debug one, without any changes. 
+however claude rewrote everything and I really wanted just a surgical change unitl my main file worked. 
