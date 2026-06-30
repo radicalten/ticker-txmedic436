@@ -23,3 +23,5 @@ uci-default.c
 
 #marginal improvment at best or even potential regression. 26-28k nps. Also the citra froze. I think it also froze with the misc.c change too. when actually implementing I will only use the main-test-faster-v1 or main-faster-v1 with thread-faster-v1. (even the thread faster was only a marginal improvement in the granad scheme of things, and I don't know if it is crash free. 
 #testing showed that even the 2nd thread.c speed improvments also lead to crashing move 11 10s per move 
+
+#even with just the main.c improvement that can occasionally hit 29.5k nps on citra, so the other marginal improvements can be left out especially because they introduce a crash. 
