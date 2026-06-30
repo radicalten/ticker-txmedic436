@@ -15,3 +15,5 @@ however claude rewrote everything and I really wanted just a surgical change uni
 prompt:
 can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
 main-default-handdebug-to-claude4pt6v1-.c
+
+#gemini 3.5 flash did well here increasing from 80-100k nps 90k nps avg to 100-130k nps  105k nps avg. 
