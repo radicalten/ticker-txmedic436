@@ -30,7 +30,7 @@
 // Nintendo Wii DevkitPro Hardware Headers
 #include <gccore.h>
 #include <wiiuse/wpad.h>
-#include <fat.h> // Added for SD/USB filesystem initialization
+#include <fat.h> 
 
 #include "bitboard.h"
 #include "endgame.h"
@@ -83,7 +83,7 @@ int time_control_type = 0;
 int time_control_val = 1;    
 
 int engine_thinking = 0;
-bool gui_mode_active = true; // FIXED: gui_mode_active starts true so engine_printf routes to the FIFO from the very first call, avoiding a race condition
+bool gui_mode_active = true; 
 
 // Handshake Tracking
 bool engine_recvd_uciok = false;
@@ -103,13 +103,24 @@ int engine_score_val = 0;
 
 char engine_pv[1024] = "";   
 
-// Thread-safe In-Memory FIFOs to emulate standard OS pipes
+// =============================================================================
+// OPTIMIZATION 1: Cached Game State Structure
+// =============================================================================
+typedef struct {
+    bool has_legal_moves;
+    int king_in_check_sq;      // Square (0-63) of the active king in check, or -1
+    uint64_t legal_dests_mask; // 64-bit mask representing target legal moves for selected_sq
+} CachedGuiState;
+
+CachedGuiState cached_gui;
+bool gui_needs_redraw = true; // OPTIMIZATION 2: Event-driven render flag
+
+// Thread-safe In-Memory Lock-Free SPSC Ring-Buffers (No mutex overhead!)
 #define FIFO_SIZE 16384
 typedef struct {
     char data[FIFO_SIZE];
-    int head;
-    int tail;
-    LOCK_T lock;
+    volatile int head;
+    volatile int tail;
 } SimpleFIFO;
 
 SimpleFIFO gui_to_eng_pipe;
@@ -117,35 +128,45 @@ SimpleFIFO eng_to_gui_pipe;
 
 KThread engine_thread;
 void* engine_thread_stack = NULL;
-static volatile bool engine_running = false; // FIXED: engine_running flag lets engine_fgets/engine_getline exit cleanly when the engine is told to stop, preventing infinite loops.
+static volatile bool engine_running = false; 
 
 void fifo_init(SimpleFIFO *f) {
     memset(f, 0, sizeof(SimpleFIFO));
-    LOCK_INIT(f->lock);
+    f->head = 0;
+    f->tail = 0;
 }
 
+// OPTIMIZATION 3: Lock-Free Single-Producer Single-Consumer Write
 void fifo_write(SimpleFIFO *f, const char *str, int len) {
     if (!f || !str || len <= 0) return;
-    LOCK(f->lock);
+    int h = f->head;
+    int t = f->tail;
     for (int i = 0; i < len; i++) {
-        int next = (f->head + 1) % FIFO_SIZE;
-        if (next != f->tail) {
-            f->data[f->head] = str[i];
-            f->head = next;
+        int next = (h + 1) % FIFO_SIZE;
+        if (next == t) {
+            break; // Buffer is completely full
         }
+        f->data[h] = str[i];
+        h = next;
     }
-    UNLOCK(f->lock);
+    __sync_synchronize(); // PPC hardware memory barrier (lwsync)
+    f->head = h;
 }
 
+// OPTIMIZATION 3: Lock-Free Single-Producer Single-Consumer Read
 int fifo_read(SimpleFIFO *f, char *out, int max_len) {
-   if (!f || !out || max_len <= 0) return 0;
-    LOCK(f->lock);
+    if (!f || !out || max_len <= 0) return 0;
+    int t = f->tail;
+    int h = f->head;
+    if (t == h) return 0; // Buffer is completely empty
+
     int bytes_read = 0;
-    while (f->tail != f->head && bytes_read < max_len) {
-        out[bytes_read++] = f->data[f->tail];
-        f->tail = (f->tail + 1) % FIFO_SIZE;
+    while (t != h && bytes_read < max_len) {
+        out[bytes_read++] = f->data[t];
+        t = (t + 1) % FIFO_SIZE;
     }
-    UNLOCK(f->lock);
+    __sync_synchronize(); // PPC hardware memory barrier (lwsync)
+    f->tail = t;
     return bytes_read;
 }
 
@@ -172,16 +193,16 @@ char* engine_fgets(char* str, int num, FILE* stream) {
     if (!str || num <= 1) return NULL;
     int bytes_read = 0;
     while (bytes_read < num - 1) {
-            if (!engine_running) {
+        if (!engine_running) {
             if (bytes_read == 0) return NULL;
             break;
-          }
+        }
         char c;
         if (fifo_read(&gui_to_eng_pipe, &c, 1) > 0) {
             str[bytes_read++] = c;
             if (c == '\n') break;
         } else {
-            KThreadSleepMs(1); // FIXED: Prevents 100% CPU starvation spinning
+            KThreadSleepMs(1); 
         }
     }
     if (bytes_read == 0) return NULL;
@@ -201,7 +222,7 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
 
     int i = 0;
     while (1) {
-      if (!engine_running) {
+        if (!engine_running) {
             if (i == 0) return -1;
             break;
         }
@@ -222,7 +243,7 @@ ssize_t engine_getline(char **lineptr, size_t *n, FILE *stream) {
             (*lineptr)[i++] = c;
             if (c == '\n') break;
         } else {
-            KThreadSleepMs(1); // FIXED: Prevents 100% CPU starvation spinning
+            KThreadSleepMs(1); 
         }
     }
     (*lineptr)[i] = '\0';
@@ -244,6 +265,38 @@ void move_to_pgn(const BoardState *state, GuiMove m, char *buf);
 void reset_engine_metrics();
 void adjust_time_control();
 
+// Cache management functions
+void update_selected_dests_cache() {
+    cached_gui.legal_dests_mask = 0ULL;
+    if (selected_sq == -1) return;
+    for (int sq = 0; sq < 64; sq++) {
+        GuiMove test_m = {selected_sq, sq, 0};
+        int p = current_state.board[selected_sq];
+        if (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
+            test_m.promo = 5;
+        }
+        if (is_legal_gui_move(&current_state, test_m)) {
+            cached_gui.legal_dests_mask |= (1ULL << sq);
+        }
+    }
+}
+
+void update_gui_cache() {
+    cached_gui.has_legal_moves = has_legal_moves(&current_state);
+    
+    int king_in_check = -1;
+    int w_king = find_king(&current_state, 1);
+    int b_king = find_king(&current_state, -1);
+    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
+        king_in_check = w_king;
+    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
+        king_in_check = b_king;
+    }
+    cached_gui.king_in_check_sq = king_in_check;
+    
+    update_selected_dests_cache();
+}
+
 void gui_cleanup() {
     printf("\033[?25h\033[2J\033[H"); 
     fflush(stdout);
@@ -252,7 +305,7 @@ void gui_cleanup() {
 void init_wii_console() {
     VIDEO_Init();
     WPAD_Init();
-    fatInitDefault(); // FIXED: Initialise SD/USB FAT storage for NNUE & book files
+    fatInitDefault(); 
     
     GXRModeObj *rmode = VIDEO_GetPreferredMode(NULL);
     void *xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
@@ -298,7 +351,7 @@ void start_engine() {
     engine_printf_hook = engine_printf;
     engine_getline_hook = engine_getline;
 
-    engine_running = true; // FIXED: Set flag BEFORE thread starts
+    engine_running = true; 
     engine_thread_stack = memalign(32, 512 * 1024);
     
     KThreadPrepare(&engine_thread, engine_thread_main, NULL, engine_thread_stack, 0x3f);
@@ -578,8 +631,11 @@ void process_engine_output(char *line) {
                 BoardState next;
                 make_gui_move(&current_state, &next, m);
                 current_state = next;
+                
+                update_gui_cache(); // OPTIMIZATION 1: Update cached board states
             }
             engine_thinking = 0;
+            gui_needs_redraw = true; // Draw the calculated move immediately
         }
     }
 }
@@ -876,9 +932,11 @@ void draw_ui() {
     printf("\033[H\r\n"); 
 
     const char *turn_str = (current_state.turn == 1) ? "\033[1;33mWhite\033[0m" : "\033[1;35mBlack\033[0m";
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
+    
+    // OPTIMIZATION 1: Uses fast cached state lookups
+    int is_ch = (cached_gui.king_in_check_sq != -1);
+    int has_mov = cached_gui.has_legal_moves;
+    
     const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
     const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
     int repetitions = count_repetitions(&current_state);
@@ -917,15 +975,6 @@ void draw_ui() {
     print_side_panel_line(0);
     printf("\033[K\r\n");
 
-    int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
-    }
-
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         printf("  %d ", rank_lbl);
@@ -948,22 +997,14 @@ void draw_ui() {
                 }
             }
 
-            int is_legal_dest = 0;
-            if (selected_sq != -1) {
-                GuiMove test_m = {selected_sq, sq, 0};
-                if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
-                    test_m.promo = 5;
-                }
-                if (is_legal_gui_move(&current_state, test_m)) {
-                    is_legal_dest = 1;
-                }
-            }
+            // OPTIMIZATION 1: Instant bit-mask check (No calculation overhead in drawing thread)
+            int is_legal_dest = (cached_gui.legal_dests_mask & (1ULL << sq)) ? 1 : 0;
 
             if (is_cursor) {
                 bg_color = "\033[48;5;208m"; 
             } else if (is_selected) {
                 bg_color = "\033[48;5;34m";  
-            } else if (sq == king_in_check) {
+            } else if (sq == cached_gui.king_in_check_sq) {
                 bg_color = "\033[48;5;196m"; 
             } else if (is_prev_move) {
                 bg_color = is_light ? "\033[48;5;75m" : "\033[48;5;68m"; 
@@ -1003,12 +1044,8 @@ void draw_ui() {
     print_side_panel_line(9);
     printf("\033[K\r\n\r\n");
 
-    // UPDATED: Controls description to map '2' to perspective toggling
     printf(" \033[38;5;245m[D-PAD] Move | [A] Select | [B] Undo | [1] Cycle Level | [2] Flip | [+] Sides | [-] Cycle Type | [HOME] Quit\033[0m\033[K\r\n");
     
-    // ==========================================
-    // STREAMLINED ENGINE HUD (PV, NPS, EVAL)
-    // ==========================================
     printf(" \033[1;34mEngine State:\033[0m ");
     if (engine_thinking) {
         printf("\033[1;32mThinking\033[0m");
@@ -1123,11 +1160,10 @@ int get_promo_choice() {
 }
 
 void handle_select() {
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
+    if (!cached_gui.has_legal_moves || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
         return;
     }
 
-    // Block inputs if engine is searching, in engine-vs-engine mode, or on opponent's turn.
     if (engine_thinking) {
         return;
     }
@@ -1146,6 +1182,8 @@ void handle_select() {
         int p = current_state.board[sq];
         if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
             selected_sq = sq;
+            update_selected_dests_cache(); // OPTIMIZATION 1: Cache selection highlights
+            gui_needs_redraw = true;
         }
     } else {
         GuiMove m = {selected_sq, sq, 0};
@@ -1165,6 +1203,9 @@ void handle_select() {
             current_state = next;
             selected_sq = -1;
             reset_engine_metrics();
+            
+            update_gui_cache(); // OPTIMIZATION 1: Global Cache Update
+            gui_needs_redraw = true;
         } else {
             int target = current_state.board[sq];
             if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
@@ -1172,6 +1213,8 @@ void handle_select() {
             } else {
                 selected_sq = -1; 
             }
+            update_selected_dests_cache(); // OPTIMIZATION 1: Refresh destination highlights
+            gui_needs_redraw = true;
         }
     }
 }
@@ -1189,6 +1232,9 @@ void handle_undo() {
         step_back--;
     }
     selected_sq = -1;
+    
+    update_gui_cache(); // OPTIMIZATION 1: Refreshes caches back to this state
+    gui_needs_redraw = true;
 }
 
 void handle_reset_board() {
@@ -1203,6 +1249,9 @@ void handle_reset_board() {
     cursor_r = 6;
     cursor_c = 4;
     send_to_engine("ucinewgame\nisready\n");
+    
+    update_gui_cache(); // OPTIMIZATION 1: Reset global cached assets
+    gui_needs_redraw = true;
 }
 
 void handle_switch_sides() {
@@ -1215,6 +1264,9 @@ void handle_switch_sides() {
     else if (user_side == -1) user_side = 0;
     else if (user_side == 0) user_side = 2;
     else user_side = 1;
+    
+    update_gui_cache();
+    gui_needs_redraw = true;
 }
 
 void adjust_time_control() {
@@ -1258,28 +1310,30 @@ void handle_wii_input() {
     u32 pressed = WPAD_ButtonsDown(0);
 
     if (pressed & WPAD_BUTTON_UP) {
-        if (cursor_r > 0) cursor_r--;
+        if (cursor_r > 0) { cursor_r--; gui_needs_redraw = true; }
     }
     if (pressed & WPAD_BUTTON_DOWN) {
-        if (cursor_r < 7) cursor_r++;
+        if (cursor_r < 7) { cursor_r++; gui_needs_redraw = true; }
     }
     if (pressed & WPAD_BUTTON_LEFT) {
-        if (cursor_c > 0) cursor_c--;
+        if (cursor_c > 0) { cursor_c--; gui_needs_redraw = true; }
     }
     if (pressed & WPAD_BUTTON_RIGHT) {
-        if (cursor_c < 7) cursor_c++;
+        if (cursor_c < 7) { cursor_c++; gui_needs_redraw = true; }
     }
-    if (pressed & WPAD_BUTTON_A) { // UPDATED: Excluded button 2 so it doesn't double-trigger
+    if (pressed & WPAD_BUTTON_A) { 
         handle_select();
     }
-    if (pressed & WPAD_BUTTON_B) { // SWAPPED: B strictly handles Undo actions
+    if (pressed & WPAD_BUTTON_B) { 
         handle_undo();
     }
-    if (pressed & WPAD_BUTTON_1) { // SWAPPED: 1 cycles levels of current time control 
+    if (pressed & WPAD_BUTTON_1) { 
         adjust_time_control();
+        gui_needs_redraw = true;
     }
-    if (pressed & WPAD_BUTTON_2) { // UPDATED: Added mapping to toggle chessboard perspective
+    if (pressed & WPAD_BUTTON_2) { 
         board_orientation = (board_orientation == 1) ? -1 : 1;
+        gui_needs_redraw = true;
     }
     if (pressed & WPAD_BUTTON_PLUS) {
         handle_switch_sides();
@@ -1287,6 +1341,7 @@ void handle_wii_input() {
     if (pressed & WPAD_BUTTON_MINUS) {
         time_control_type = (time_control_type + 1) % 3;
         time_control_val = (time_control_type == 0) ? 1 : (time_control_type == 1 ? 1 : 512);
+        gui_needs_redraw = true;
     }
     if (pressed & WPAD_BUTTON_HOME) {
         exit(0);
@@ -1314,11 +1369,14 @@ void init_board(BoardState *state) {
 
 int run_gui_mode() {
     init_board(&current_state);
+    update_gui_cache(); // OPTIMIZATION 1: Generate starting game cache
     start_engine();
+
+    int live_ticks = 0;
 
     while (1) {
         int engine_active = 0;
-        if (has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
+        if (cached_gui.has_legal_moves && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
@@ -1327,11 +1385,28 @@ int run_gui_mode() {
         if (engine_active && !engine_thinking) {
             engine_thinking = 1;
             trigger_engine_move();
+            gui_needs_redraw = true;
         }
 
-        draw_ui();
         handle_wii_input();
         read_from_engine();
+
+        // OPTIMIZATION 2: Throttle live-display updates to ~160ms intervals (10 frames)
+        // when the engine is actively thinking to preserve critical CPU cycles.
+        if (engine_thinking) {
+            live_ticks++;
+            if (live_ticks >= 10) {
+                gui_needs_redraw = true;
+                live_ticks = 0;
+            }
+        } else {
+            live_ticks = 0;
+        }
+
+        if (gui_needs_redraw) {
+            draw_ui();
+            gui_needs_redraw = false;
+        }
         
         KThreadSleepMs(16); 
     }
