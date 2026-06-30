@@ -1,3 +1,167 @@
+/* prompt: can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?: 
+main-default.c
+
+Response from gemini 3.5 flash: (which tested and works btw from 12-15k nps to 25-27k nps in citra)
+
+
+Based on an evaluation of your chess engine GUI and its integration with Stockfish for the Nintendo 3DS, there are several significant bottlenecks.
+
+Because the 3DS has a relatively slow ARM11 CPU (especially on Old 3DS models) and console-based rendering (printf with ANSI colors) is extremely heavy, your program is currently wasting massive amounts of CPU cycles.
+
+Here is a detailed evaluation and the specific optimizations you can implement to achieve major speedups.
+
+
+1. The Biggest Bottleneck: Dirty-Flag Rendering (Up to 10x GUI Speedup)
+
+Currently, your code calls draw_ui() on every single frame of the main loop at 60 FPS (throttled by gspWaitForVBlank()).
+
+Printing ANSI escape sequences for a 3-row-per-square board (192 individual text blocks with color formatting) is incredibly slow on the 3DS. It forces the system to continually parse formatting strings, parse fonts, and update framebuffers even when nothing has changed.
+Solution:
+
+Introduce a global ui_dirty flag. Only redraw the screen when a user inputs a move, moves the cursor, or when the engine outputs a new evaluation/move.
+
+// Add this global variable
+int ui_dirty = 1; 
+
+// In handle_select(), handle_undo(), handle_reset_board(), adjust_time_control():
+// Add "ui_dirty = 1;" at the end of these functions.
+
+// In your input scanner:
+if (kDown & KEY_UP)    { if (cursor_r > 0) { cursor_r--; ui_dirty = 1; } }
+if (kDown & KEY_DOWN)  { if (cursor_r < 7) { cursor_r++; ui_dirty = 1; } }
+// ... repeat for KEY_LEFT, KEY_RIGHT, KEY_X, KEY_Y, KEY_L, KEY_R ...
+
+// In process_engine_output() when state changes or eval updates:
+if (strncmp(line, "info", 4) == 0 || strncmp(line, "bestmove", 8) == 0) {
+    // ... parse variables ...
+    ui_dirty = 1; 
+}
+
+// In the main loop:
+if (ui_dirty) {
+    draw_ui();
+    ui_dirty = 0; // Reset
+}
+
+
+2. Optimizing gui_count_repetitions (Eliminating Slow memcmp Loops)
+
+Your current repetition checking performs a deep 256-byte memory comparison (memcmp) on the board array for every move in the history stack, up to 2048 times. This is evaluated inside draw_ui() on every frame.
+Solution:
+
+Perform cheap checks first (like turn or piece counts) before resorting to memcmp. Better yet, use a fast custom hashing check. Here is a highly optimized version that exits early on simple mismatches:
+
+int gui_count_repetitions(const GuiBoardState *state) {
+    int count = 1;
+    for (int i = 0; i < history_count; i++) {
+        // Fast-path exits before comparing the full board state
+        if (state->turn != history[i].turn || 
+            state->castle != history[i].castle || 
+            state->ep != history[i].ep) {
+            continue;
+        }
+        
+        // Only run memcmp if structural elements match
+        if (memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+3. CPU Core Pinning & Thread Affinity (Massive Engine Speedup)
+
+Your background thread is currently spawned with prio = 0x3B and affinity -1:
+
+
+stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, -1, false);
+
+An affinity of -1 means the 3DS OS is left to schedule threads across cores dynamically. Since the main GUI thread runs on Core 0, running Stockfish on Core 0 as well causes severe thread contention, starving Stockfish of search speed (Nodes Per Second / NPS) and causing input lag in the GUI.
+Solution:
+
+Pin Stockfish to the System Core (Core 1). On the Old 3DS, Core 1 has plenty of free headroom for homebrew apps. On the New 3DS, this will give Stockfish a dedicated core:
+
+// Change affinity from -1 to 1 (forces CPU Core 1)
+stockfish_thread = threadCreate(stockfish_thread_func, NULL, ENGINE_STACK_SIZE, prio, 1, false);
+
+4. Replacing Heavy String Parsers in read_from_engine()
+
+Inside the main loop, read_from_engine() reads Stockfish outputs line-by-line and feeds them into process_engine_output(), which uses heavy Standard C functions like sscanf and strstr. On the 3DS's ARM11 processor, parsing large lines of text using formatting engines is highly inefficient.
+Solution:
+
+Write custom lightweight string matching functions instead of utilizing sscanf. For example:
+
+
+// Highly optimized replacement for parsing engine evaluations
+void fast_parse_score(char *score_ptr) {
+    char *p = score_ptr + 7; // skip " score "
+    char type[16];
+    int i = 0;
+    while (*p && *p != ' ' && i < 15) {
+        type[i++] = *p++;
+    }
+    type[i] = '\0';
+    
+    if (*p == ' ') p++; // skip space
+    int score_val = atoi(p); // Much faster than sscanf
+
+    if (strcmp(type, "cp") == 0) {
+        engine_score_type = 0;
+        engine_score_val = score_val * current_state.turn;
+    } else if (strcmp(type, "mate") == 0) {
+        engine_score_type = 1;
+        engine_score_val = score_val * current_state.turn;
+    }
+}
+
+5. Optimizing Move Generator / Legality Checks
+
+gui_is_square_attacked is executed dozens of times per frame during UI draws (for check styling, rendering legal target dots, and checking king safety).
+
+Within gui_is_square_attacked, your code checks rook, bishop, and queen attacks with two sequential, complex while-loops:
+
+int d_r[] = {-1, -1, 1, 1}; // Bishop-like directions
+int d_c[] = {-1, 1, -1, 1};
+// ... loop ...
+int s_r[] = {-1, 1, 0, 0};  // Rook-like directions
+int s_c[] = {0, 0, -1, 1};
+// ... loop ...
+
+Solution:
+
+We can combine the sliding piece calculations into a single loop using 8 directional offset vectors, or check if the piece is actually present on the board before looping. Since Queen acts as both Rook and Bishop, you can check both states at once.
+
+Furthermore, we can cache the check-status of the king for the current board state rather than re-evaluating it for every rendering sub-row in draw_ui():
+
+// Cache these values globally 
+int cached_king_in_check = -1;
+int is_cached = 0;
+
+// Set is_cached = 0 whenever current_state changes.
+// Inside draw_ui(), replace the recalculation loops with:
+if (!is_cached) {
+    int w_king = gui_find_king(&current_state, 1);
+    int b_king = gui_find_king(&current_state, -1);
+    cached_king_in_check = -1;
+    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
+        cached_king_in_check = w_king;
+    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
+        cached_king_in_check = b_king;
+    }
+    is_cached = 1;
+}
+// Now use cached_king_in_check during rendering!
+
+Summary of Expected Benefits
+
+    Frame rate stability: Stablizes at a locked 60 FPS instead of dropping frames during engine calculations.
+    Stockfish Strength: Pinning Stockfish to Core 1 will see a 20% to 50% increase in NPS (Nodes Per Second) depending on whether you are running on an Old 3DS or New 3DS.
+    No Input Lag: The GUI will remain perfectly responsive to D-pad presses even while the engine is deep-searching a position.
+
+*/
+
+
+
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
