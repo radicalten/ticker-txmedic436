@@ -19,7 +19,6 @@
 */
 
 #include "types.h"
-#include "3ds_bridge.h"
 
 Value PieceValue[2][16] = {
   { 0, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg },
