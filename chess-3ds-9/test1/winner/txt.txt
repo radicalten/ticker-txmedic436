@@ -1,1 +1,8 @@
+main-test1-faster-v1.c speeds up on citra from 12-15k nps 10s think to 20-29k nps 28k nps avg 
 
+thread-fast
+misc-fast
+uci-fast
+
+only have marginal to no improvement, with all 4 nps is still roughly the same 28k nps, perhaps slightly higher. 
+But thread.c causes freezes and crashes for certain, so I will only implement the main-test-fast changes. and revert the others to default. 
