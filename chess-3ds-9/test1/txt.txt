@@ -20,3 +20,5 @@ misc-default.c
 
 Excellent can you evaluate this file for speedups as well?: 
 uci-default.c
+
+#marginal improvment at best or even potential regression. 26-28k nps. Also the citra froze. I think it also froze with the misc.c change too. when actually implementing I will only use the main-test-faster-v1 or main-faster-v1 with thread-faster-v1. (even the thread faster was only a marginal improvement in the granad scheme of things, and I don't know if it is crash free. 
