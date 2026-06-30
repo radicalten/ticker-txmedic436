@@ -10,3 +10,5 @@ main-default.c
 
 Excellent can you evaluate this file for speedups as well?: 
 thread-default.c
+
+#this compiles and seems to work too, marginal improvement on citra gets 26-29k nps
