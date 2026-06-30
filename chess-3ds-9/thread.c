@@ -45,7 +45,6 @@
 
 // Expanded to 64KB to easily handle heavy Stockfish PV search info outputs
 #define MSG_QUEUE_SIZE 65536
-#define MSG_QUEUE_MASK (MSG_QUEUE_SIZE - 1)
 
 typedef struct {
     char data[MSG_QUEUE_SIZE];
@@ -56,9 +55,6 @@ typedef struct {
 
 static MsgQueue q_gui_to_engine;
 static MsgQueue q_engine_to_gui;
-
-// OS-Level Thread Event registers for instant sub-microsecond core signaling
-static LightEvent thread_events[128];
 
 // Undefine target library macros to avoid infinite loops inside overrides
 #undef printf
@@ -81,35 +77,29 @@ void sf_bridge_init(void) {
     LightLock_Init(&q_engine_to_gui.lock);
 }
 
-// Thread-safe block copier to push strings to the message queue.
-// Drastically faster than char-by-char copies; implements a single memory barrier at exit.
-static void queue_push_string(MsgQueue *q, const char *str, size_t len) {
-    int h = q->head;
-    int t = q->tail;
-
-    for (size_t i = 0; i < len; i++) {
-        int next_head = (h + 1) & MSG_QUEUE_MASK;
-        if (next_head == t) {
-            // Buffer overflow! Discard the oldest character to keep pointers valid
-            t = (t + 1) & MSG_QUEUE_MASK;
-        }
-        q->data[h] = str[i];
-        h = next_head;
+// Thread-safe helper to push characters.
+// Safely drops the oldest unread byte if the buffer fills up, preventing state corruption.
+static void queue_push_char(MsgQueue *q, char c) {
+    int next_head = (q->head + 1) % MSG_QUEUE_SIZE;
+    if (next_head == q->tail) {
+        // Buffer overflow! Discard the oldest character to keep pointers valid
+        q->tail = (q->tail + 1) % MSG_QUEUE_SIZE;
     }
+    q->data[q->head] = c;
 
-    // Write-barrier: Commit memory cache updates across cores in one operation
+    // ARM Memory Fence: Ensure the data is written to RAM before another CPU
+    // core can read the updated 'head' index pointer.
     __sync_synchronize();
-    q->head = h;
-    q->tail = t;
+    q->head = next_head;
     __sync_synchronize();
 }
 
 void sf_send_command(const char *cmd) {
-    size_t len = strlen(cmd);
     LightLock_Lock(&q_gui_to_engine.lock);
-    queue_push_string(&q_gui_to_engine, cmd, len);
-    char nl = '\n';
-    queue_push_string(&q_gui_to_engine, &nl, 1);
+    for (int i = 0; cmd[i] != '\0'; i++) {
+        queue_push_char(&q_gui_to_engine, cmd[i]);
+    }
+    queue_push_char(&q_gui_to_engine, '\n');
     LightLock_Unlock(&q_gui_to_engine.lock);
 }
 
@@ -119,19 +109,16 @@ void sf_recv_command(char *buf, size_t max_len) {
         LightLock_Lock(&q_gui_to_engine.lock);
         __sync_synchronize(); // Force synchronization across ARM L1/L2 caches
         
-        int h = q_gui_to_engine.head;
-        int t = q_gui_to_engine.tail;
-
-        if (h != t) {
+        if (q_gui_to_engine.head != q_gui_to_engine.tail) {
             // Scan queue to ensure a complete newline-terminated line is available
             int has_newline = 0;
-            int temp_tail = t;
-            while (temp_tail != h) {
+            int temp_tail = q_gui_to_engine.tail;
+            while (temp_tail != q_gui_to_engine.head) {
                 if (q_gui_to_engine.data[temp_tail] == '\n') {
                     has_newline = 1;
                     break;
                 }
-                temp_tail = (temp_tail + 1) & MSG_QUEUE_MASK;
+                temp_tail = (temp_tail + 1) % MSG_QUEUE_SIZE;
             }
 
             // Only extract and return data if we have the complete line
@@ -139,14 +126,17 @@ void sf_recv_command(char *buf, size_t max_len) {
                 size_t i = 0;
                 int truncated = 0;
                 
-                while (h != t) {
-                    char c = q_gui_to_engine.data[t];
-                    t = (t + 1) & MSG_QUEUE_MASK;
+                while (q_gui_to_engine.head != q_gui_to_engine.tail) {
+                    char c = q_gui_to_engine.data[q_gui_to_engine.tail];
+                    q_gui_to_engine.tail = (q_gui_to_engine.tail + 1) % MSG_QUEUE_SIZE;
                     
                     if (c == '\n') {
                         break;
                     }
                     
+                    // FIX: If the command is too large, we store what we can up to (max_len - 1)
+                    // but we CONTINUE to drain and discard the rest of this command line.
+                    // This keeps the parser safe and prevents stale buffer corruption.
                     if (i < max_len - 1) {
                         buf[i++] = c;
                     } else {
@@ -154,7 +144,6 @@ void sf_recv_command(char *buf, size_t max_len) {
                     }
                 }
                 buf[i] = '\0';
-                q_gui_to_engine.tail = t;
                 
                 if (truncated) {
                     sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
@@ -168,7 +157,7 @@ void sf_recv_command(char *buf, size_t max_len) {
         
         __sync_synchronize();
         LightLock_Unlock(&q_gui_to_engine.lock);
-        svcSleepThread(500000LL); // Wake up every 500us (0.5ms) for faster command processing
+        svcSleepThread(2000000LL); // Sleep 2ms to prevent CPU core starvation
     }
 }
 
@@ -179,15 +168,16 @@ int sf_printf(const char *format, ...) {
     int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
     va_end(args);
 
-    if (written > 0) {
-        LightLock_Lock(&q_engine_to_gui.lock);
-        queue_push_string(&q_engine_to_gui, temp_buf, (size_t)written);
-        LightLock_Unlock(&q_engine_to_gui.lock);
+    LightLock_Lock(&q_engine_to_gui.lock);
+    for (int i = 0; temp_buf[i] != '\0'; i++) {
+        queue_push_char(&q_engine_to_gui, temp_buf[i]);
     }
+    LightLock_Unlock(&q_engine_to_gui.lock);
     return written;
 }
 
 int sf_fprintf(FILE *stream, const char *format, ...) {
+    // If writing to standard out/err, redirect to our GUI message queue
     if (stream == stdout || stream == stderr) {
         char temp_buf[4096];
         va_list args;
@@ -195,13 +185,14 @@ int sf_fprintf(FILE *stream, const char *format, ...) {
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
         va_end(args);
 
-        if (written > 0) {
-            LightLock_Lock(&q_engine_to_gui.lock);
-            queue_push_string(&q_engine_to_gui, temp_buf, (size_t)written);
-            LightLock_Unlock(&q_engine_to_gui.lock);
+        LightLock_Lock(&q_engine_to_gui.lock);
+        for (int i = 0; temp_buf[i] != '\0'; i++) {
+            queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
+        LightLock_Unlock(&q_engine_to_gui.lock);
         return written;
     }
+    // Otherwise, write normally (e.g., to log files)
     va_list args;
     va_start(args, format);
     int written = vfprintf(stream, format, args);
@@ -214,11 +205,11 @@ int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
         char temp_buf[4096];
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, arg);
 
-        if (written > 0) {
-            LightLock_Lock(&q_engine_to_gui.lock);
-            queue_push_string(&q_engine_to_gui, temp_buf, (size_t)written);
-            LightLock_Unlock(&q_engine_to_gui.lock);
+        LightLock_Lock(&q_engine_to_gui.lock);
+        for (int i = 0; temp_buf[i] != '\0'; i++) {
+            queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
+        LightLock_Unlock(&q_engine_to_gui.lock);
         return written;
     }
     return vfprintf(stream, format, arg);
@@ -226,19 +217,20 @@ int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
 
 int sf_fflush(FILE *stream) {
     if (stream == stdout || stream == stderr) {
-        return 0; // Buffer writes are direct, flushing is a no-op
+        return 0; // Our queue is thread-safe and non-blocking, so flushing is a no-op
     }
     return fflush(stream);
 }
 
 int sf_puts(const char *str) {
-    size_t len = strlen(str);
     LightLock_Lock(&q_engine_to_gui.lock);
-    queue_push_string(&q_engine_to_gui, str, len);
-    char nl = '\n';
-    queue_push_string(&q_engine_to_gui, &nl, 1);
+    int i = 0;
+    for (; str[i] != '\0'; i++) {
+        queue_push_char(&q_engine_to_gui, str[i]);
+    }
+    queue_push_char(&q_engine_to_gui, '\n');
     LightLock_Unlock(&q_engine_to_gui.lock);
-    return (int)(len + 1);
+    return i + 1;
 }
 
 int sf_fputs(const char *str, FILE *stream) {
@@ -249,9 +241,8 @@ int sf_fputs(const char *str, FILE *stream) {
 }
 
 int sf_putchar(int character) {
-    char c = (char)character;
     LightLock_Lock(&q_engine_to_gui.lock);
-    queue_push_string(&q_engine_to_gui, &c, 1);
+    queue_push_char(&q_engine_to_gui, (char)character);
     LightLock_Unlock(&q_engine_to_gui.lock);
     return character;
 }
@@ -272,35 +263,34 @@ int sf_putc(int character, FILE *stream) {
 
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     size_t total_bytes = size * nmemb;
-    if (total_bytes == 0) return 0;
-
+    const char *char_ptr = (const char *)ptr;
+    
     LightLock_Lock(&q_engine_to_gui.lock);
-    queue_push_string(&q_engine_to_gui, (const char *)ptr, total_bytes);
+    for (size_t i = 0; i < total_bytes; i++) {
+        queue_push_char(&q_engine_to_gui, char_ptr[i]);
+    }
     LightLock_Unlock(&q_engine_to_gui.lock);
     return nmemb;
 }
 
-// Fast block extraction from queue with single lock sequence
+// Extracts raw stream chunks asynchronously for fast processing by main.c
 int sf_get_output(char *buf, size_t max_len) {
     LightLock_Lock(&q_engine_to_gui.lock);
     __sync_synchronize();
     
-    int h = q_engine_to_gui.head;
-    int t = q_engine_to_gui.tail;
-
-    if (h == t) {
+    if (q_engine_to_gui.head == q_engine_to_gui.tail) {
         __sync_synchronize();
         LightLock_Unlock(&q_engine_to_gui.lock);
         return 0;
     }
 
     size_t i = 0;
-    while (h != t && i < max_len - 1) {
-        buf[i++] = q_engine_to_gui.data[t];
-        t = (t + 1) & MSG_QUEUE_MASK;
+    while (q_engine_to_gui.head != q_engine_to_gui.tail && i < max_len - 1) {
+        char c = q_engine_to_gui.data[q_engine_to_gui.tail];
+        q_engine_to_gui.tail = (q_engine_to_gui.tail + 1) % MSG_QUEUE_SIZE;
+        buf[i++] = c;
     }
     buf[i] = '\0';
-    q_engine_to_gui.tail = t;
 
     __sync_synchronize();
     LightLock_Unlock(&q_engine_to_gui.lock);
@@ -312,11 +302,13 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     pthread_attr_t local_attr;
     pthread_attr_init(&local_attr);
 
-    // Enforce safe 48KB execution stack bounds to prevent overflow crashes
+    // FIX: Clean API-driven configuration of attributes.
+    // Rather than copying raw pointers and structures which causes heap conflicts,
+    // we fetch fields cleanly and set the mandatory 256KB execution stack.
     if (attr != NULL) {
         size_t stacksize = 0;
-        if (pthread_attr_getstacksize(attr, &stacksize) != 0 || stacksize < 48 * 1024) {
-            stacksize = 48 * 1024;
+        if (pthread_attr_getstacksize(attr, &stacksize) != 0 || stacksize < 256 * 1024) {
+            stacksize = 256 * 1024;
         }
         pthread_attr_setstacksize(&local_attr, stacksize);
         
@@ -325,13 +317,15 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
             pthread_attr_setdetachstate(&local_attr, detachstate);
         }
     } else {
-        pthread_attr_setstacksize(&local_attr, 48 * 1024);
+        pthread_attr_setstacksize(&local_attr, 256 * 1024);
     }
 
     int res = pthread_create(thread, &local_attr, start_routine, arg);
     pthread_attr_destroy(&local_attr);
     
+    // DIAGNOSTIC LOG: Print thread startup status to the bottom console
     sf_printf("[BRIDGE] Spawning search thread... Status: %d\n", res);
+
     return res;
 }
 
@@ -491,11 +485,8 @@ static void thread_create(int idx)
   Threads.initializing = true;
   __sync_synchronize();
 
-  // Set the structural events for immediate OS waking 
-  LightEvent_Init(&thread_events[idx], RESET_ONESHOT);
-
   pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 48 * 1024); // Changed from 4KB to safe 48KB pool to prevent overflows
+  pthread_attr_setstacksize(&attr, 4 * 1024); //changed from 256*1024 to 4*1024
   
   if (pthread_create(&thread, &attr, thread_init, (void *)(intptr_t)idx) != 0) {
     printf("\x1b[1;31m[ERROR] Failed to spawn pthread for Thread %d!\x1b[0m\n", idx);
@@ -511,9 +502,11 @@ static void thread_create(int idx)
   // Safe yield loop
   while (Threads.initializing) {
     __sync_synchronize();       
-    svcSleepThread(500000ULL); // Yield 500us
+    svcSleepThread(1000000ULL); // Yield 1ms
   }
 
+  // --- CRITICAL HARDWARE SAFETY FIX ---
+  // Guard pointer. Do not try to assign to a NULL structure if memory allocation failed!
   if (Threads.pos[idx] != NULL) {
     Threads.pos[idx]->nativeThread = thread;
   } else {
@@ -524,13 +517,11 @@ static void thread_create(int idx)
 
 static void thread_destroy(Position *pos)
 {
+  // --- HARDWARE SAFETY FIX ---
   if (!pos) return;
 
   pos->action = THREAD_EXIT;
   __sync_synchronize();
-  
-  // Instantly wake up the thread to process the termination request
-  LightEvent_Signal(&thread_events[pos->threadIdx]);
   
   pthread_join(pos->nativeThread, NULL);
 
@@ -554,7 +545,7 @@ void thread_wait_until_sleeping(Position *pos)
   
   while (pos->action != THREAD_SLEEP) {
     __sync_synchronize();       
-    svcSleepThread(100000ULL); // Reduced sleep block to 100us for faster engine response
+    svcSleepThread(1000000ULL); // Yield 1ms
   }
 
   if (pos->threadIdx == 0) {
@@ -568,7 +559,7 @@ void thread_wait(Position *pos, atomic_bool *condition)
   (void)pos;
   while (!atomic_load(condition)) {
     __sync_synchronize();       
-    svcSleepThread(100000ULL); // Yield 100us for lower thread response delays
+    svcSleepThread(1000000ULL); // Yield 1ms
   }
 }
 
@@ -580,9 +571,6 @@ void thread_wake_up(Position *pos, int action)
     pos->action = action;
     __sync_synchronize();       
   }
-  
-  // Signal event instantly to bypass sleep scheduling overheads
-  LightEvent_Signal(&thread_events[pos->threadIdx]);
 }
 
 static void thread_idle_loop(Position *pos)
@@ -591,8 +579,8 @@ static void thread_idle_loop(Position *pos)
 
   while (true) {
     while (pos->action == THREAD_SLEEP) {
-      // Replaced performance-killing svcSleepThread polling loops with OS-level event listeners
-      LightEvent_Wait(&thread_events[pos->threadIdx]);
+      __sync_synchronize();       
+      svcSleepThread(1000000ULL); // Sleep 1ms
     }
 
     if (pos->action == THREAD_EXIT) {
