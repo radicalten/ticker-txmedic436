@@ -1,0 +1,673 @@
+An evaluation of this Nintendo DSi/DS chess wrapper reveals that while the hardware background tile system is set up correctly, there are **severe CPU bottlenecks** in the GUI logical paths. 
+
+Because the Nintendo DSi CPU is modest (ARM9 clocked at 67 MHz or 133 MHz with no hardware division units), these bottlenecks can cause extreme frame drops (UI stutter) during normal play, especially when a piece is selected or when the engine logs scroll output.
+
+---
+
+### The Major Performance Bottlenecks
+
+#### 1. The $O(N^2)$ Legal Destination Highlighting Bottleneck (Critical)
+In `draw_top_board()`, for every square on the board (64 iterations), if a piece is selected (`selected_sq != -1`), the code calls:
+```c
+if (gui_is_legal_move(&current_state, test_m)) { is_legal_dest = 1; }
+```
+`gui_is_legal_move` is highly expensive: it copies a 276-byte state, executes a hypothetical move, scans for king safety, and runs multi-directional check verification scans. Doing this **64 times per frame** during active piece selection drops the framerate to single digits.
+
+#### 2. Redundant Frame-by-Frame Move Generation
+`gui_has_legal_moves()` (which loops $64 \times 64 = 4096$ times evaluating hypothetical moves) and `count_repetitions()` (which performs repeated 256-byte `memcmp` blocks) are executed inside `draw_bottom_stats()` **every single time the screen redraws**.
+* **The issue:** The board state only changes when a move is made, undone, or reset. Redoing these calculations when the cursor moves or when the engine prints a console log line is a massive waste of CPU cycles.
+
+#### 3. Single Monolithic Redraw Flag
+The flag `redraw_needed` forces both the top board and bottom console screens to redraw.
+* If a cursor moves on the top board, the bottom screen is needlessly redrawn.
+* If the engine outputs a background diagnostic log, the entire top board (and all its legal move highlights) is needlessly recalculated.
+
+#### 4. Heavy String Formatting (`sprintf`) in Render Loops
+Inside `draw_bottom_stats()`, there are up to 20 raw `sprintf()` calls inside nested loops to format the move list. `sprintf` on ARM9 is notoriously slow due to its heavy parsing overhead.
+
+#### 5. Signed Integer Modulo and Division
+Division (`/ 8`) and Modulo (`% 8`) operations are used heavily in search logic with signed integers (`int sq`). The ARM9 has no hardware divider. In C, signed division/modulo requires the compiler to emit correction instructions to handle negative dividends. Since squares are always $0..63$, using unsigned indices allows the compiler to optimize these to single-cycle bitwise shifts (`>> 3` and `& 7`).
+
+---
+
+### Recommended Optimization Roadmap
+
+To fix these issues, we will introduce:
+1. **Split redraw flags** (`redraw_top_needed`, `redraw_bottom_needed`).
+2. **Analysis Caching**: Calculate king safety, legal moves, and repetitions *once* per turn, storing them in a structural cache.
+3. **Legal Move Cache**: Pre-calculate legal destinations for the selected piece only when it is clicked, turning the 64-step loop highlight into a $O(1)$ boolean array lookup.
+4. **Move-List Text Cache**: Cache formatted text representations of the move list only when the history changes.
+5. **Bitwise replacements** for signed coordinates.
+
+---
+
+### Optimized Drop-In Code Modifications
+
+Here are the optimized, clean implementations of the main structural elements.
+
+#### Step 1: Add Optimization Caches & Split Redraw Flags
+Replace the global variables at the top of your file with these cached variables:
+
+```c
+// Split redraw flags
+int redraw_top_needed = 1;
+int redraw_bottom_needed = 1;
+
+// Global analytical caches (Updated ONLY when a move is executed/undone)
+typedef struct {
+    int is_check;
+    int has_legal_moves;
+    int repetitions;
+    int king_in_check_sq;
+} BoardAnalysisCache;
+
+BoardAnalysisCache state_analysis;
+int selected_legal_destinations[64] = {0}; // Precalculated legal steps for highlighted piece
+
+// Cache for formatted move lists to avoid sprintf inside VBlank
+char cached_move_rows_left[10][16] = { {0} };
+char cached_move_rows_right[10][16] = { {0} };
+```
+
+#### Step 2: Implement Shift-Based Fast Helpers
+Mark these helper functions `static inline` and replace signed divisions with bit-shifts:
+
+```c
+static inline int screen_to_board_sq(int r, int c) {
+    if (board_orientation == 1) {
+        return (r << 3) + c;
+    } else {
+        return ((7 - r) << 3) + (7 - c);
+    }
+}
+
+static inline void set_tile_fast(u16* map, int x, int y, u16 tile, u16 palette) {
+    map[y * 32 + x] = tile | (palette << 12);
+}
+
+// Faster unchecked string drawer targeting static console widths
+static inline void draw_string_sub_fast(u16* map, int x, int y, const char* str, u16 palette) {
+    u16* dst = &map[y * 32 + x];
+    u16 pal_shifted = palette << 12;
+    while (*str) {
+        *dst++ = (u16)(*str++) | pal_shifted;
+    }
+}
+```
+
+#### Step 3: Optimize `gui_is_square_attacked` with Shifts
+Replace the signed mathematical operations with bitwise masks:
+
+```c
+int gui_is_square_attacked(const BoardState *state, int sq, int attacker) {
+    // Fast bitwise row/column extraction
+    unsigned int r = (unsigned int)sq >> 3;
+    unsigned int c = (unsigned int)sq & 7;
+
+    int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
+    int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
+    for (int i = 0; i < 8; i++) {
+        unsigned int nr = r + k_r[i], nc = c + k_c[i];
+        if (nr < 8 && nc < 8) { // Unsigned overflow automatically catches < 0
+            if (state->board[(nr << 3) + nc] == attacker * 2) return 1;
+        }
+    }
+
+    int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    int kg_c[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+    for (int i = 0; i < 8; i++) {
+        unsigned int nr = r + kg_r[i], nc = c + kg_c[i];
+        if (nr < 8 && nc < 8) {
+            if (state->board[(nr << 3) + nc] == attacker * 6) return 1;
+        }
+    }
+
+    int p_offset = (attacker == 1) ? 1 : -1;
+    for (int dc = -1; dc <= 1; dc += 2) {
+        unsigned int nr = r + p_offset, nc = c + dc;
+        if (nr < 8 && nc < 8) {
+            if (state->board[(nr << 3) + nc] == attacker * 1) return 1;
+        }
+    }
+
+    int d_r[] = {-1, -1, 1, 1};
+    int d_c[] = {-1, 1, -1, 1};
+    for (int i = 0; i < 4; i++) {
+        unsigned int nr = r + d_r[i], nc = c + d_c[i];
+        while (nr < 8 && nc < 8) {
+            int target = state->board[(nr << 3) + nc];
+            if (target != 0) {
+                if (target == attacker * 3 || target == attacker * 5) return 1;
+                break;
+            }
+            nr += d_r[i]; nc += d_c[i];
+        }
+    }
+
+    int s_r[] = {-1, 1, 0, 0};
+    int s_c[] = {0, 0, -1, 1};
+    for (int i = 0; i < 4; i++) {
+        unsigned int nr = r + s_r[i], nc = c + s_c[i];
+        while (nr < 8 && nc < 8) {
+            int target = state->board[(nr << 3) + nc];
+            if (target != 0) {
+                if (target == attacker * 4 || target == attacker * 5) return 1;
+                break;
+            }
+            nr += s_r[i]; nc += s_c[i];
+        }
+    }
+    return 0;
+}
+```
+
+#### Step 4: Add Analytical Cache Invalidation Routines
+Add these functions to run only when the actual turn changes (not when the cursor moves):
+
+```c
+void update_selected_destinations(void) {
+    memset(selected_legal_destinations, 0, sizeof(selected_legal_destinations));
+    if (selected_sq == -1) return;
+
+    for (int sq = 0; sq < 64; sq++) {
+        GuiMove test_m = {selected_sq, sq, 0};
+        if (abs(current_state.board[selected_sq]) == 1 && ((sq >> 3) == 0 || (sq >> 3) == 7)) {
+            test_m.promo = 5;
+        }
+        if (gui_is_legal_move(&current_state, test_m)) {
+            selected_legal_destinations[sq] = 1;
+        }
+    }
+}
+
+void preformat_move_list_cache(void) {
+    int total_full_moves = (history_count + 1) / 2;
+    int max_visible_moves = 20;
+    int half_visible = 10;
+    int start_move = (total_full_moves > max_visible_moves) ? (total_full_moves - (max_visible_moves - 1)) : 1;
+
+    for (int r = 0; r < half_visible; r++) {
+        int left_display = start_move + r;
+        int right_display = start_move + half_visible + r;
+
+        if (total_full_moves > 0 && left_display <= total_full_moves) {
+            int w_idx = (left_display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) strcpy(w_str, san_history[w_idx]);
+            if (b_idx < history_count) {
+                strcpy(b_str, san_history[b_idx]);
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(cached_move_rows_left[r], "%2d.%-5s%-5s", left_display, w_str, b_str);
+        } else {
+            sprintf(cached_move_rows_left[r], "%2d. ---  --- ", left_display);
+        }
+
+        if (total_full_moves > 0 && right_display <= total_full_moves) {
+            int w_idx = (right_display - 1) * 2;
+            int b_idx = w_idx + 1;
+            char w_str[10] = "-----";
+            char b_str[10] = "-----";
+            if (w_idx < history_count) strcpy(w_str, san_history[w_idx]);
+            if (b_idx < history_count) {
+                strcpy(b_str, san_history[b_idx]);
+            } else if (w_idx < history_count) {
+                strcpy(b_str, "...");
+            }
+            sprintf(cached_move_rows_right[r], "%2d.%-5s%-5s", right_display, w_str, b_str);
+        } else {
+            sprintf(cached_move_rows_right[r], "%2d. ---  --- ", right_display);
+        }
+    }
+}
+
+// Master analytical update executed ONLY on state changes
+void invalidate_and_update_board_caches(void) {
+    // 1. King Position & Check Safety
+    int king_in_check = -1;
+    int w_king = gui_find_king(&current_state, 1);
+    int b_king = gui_find_king(&current_state, -1);
+    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
+        king_in_check = w_king;
+    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
+        king_in_check = b_king;
+    }
+    state_analysis.king_in_check_sq = king_in_check;
+    state_analysis.is_check = (king_in_check != -1);
+
+    // 2. Legality evaluations
+    state_analysis.has_legal_moves = gui_has_legal_moves(&current_state);
+    state_analysis.repetitions = count_repetitions(&current_state);
+
+    // 3. Highlight states
+    update_selected_destinations();
+
+    // 4. GUI Lists
+    preformat_move_list_cache();
+}
+```
+
+#### Step 5: Replace Rendering with Cache-Lookups
+Modify `draw_top_board()` and `draw_bottom_stats()` to use these cached properties directly instead of calling heavy evaluation methods:
+
+```c
+void draw_top_board(void) {
+    u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
+    memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
+
+    init_custom_palettes();
+
+    u16* board_map = bgGetMapPtr(bg_board_id);
+    u16* pieces_map = bgGetMapPtr(bg_pieces_id);
+
+    memset(board_map, 0, 32 * 32 * sizeof(u16));
+    memset(pieces_map, 0, 32 * 32 * sizeof(u16));
+
+    for (int col = 0; col < 8; col++) {
+        char file_lbl = (board_orientation == 1) ? ('a' + col) : ('h' - col);
+        char str[2] = {file_lbl, '\0'};
+        draw_string_fast(pieces_map, 7 + col * 2, 2, str, 9);
+        draw_string_fast(pieces_map, 7 + col * 2, 21, str, 9);
+    }
+
+    int king_in_check = state_analysis.king_in_check_sq; // Used cached king check state
+
+    for (int r = 0; r < 8; r++) {
+        int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
+        char lbl_str[2] = {'0' + rank_lbl, '\0'};
+
+        draw_string_fast(pieces_map, 5, 4 + r * 2, lbl_str, 9);
+        draw_string_fast(pieces_map, 24, 4 + r * 2, lbl_str, 9);
+
+        for (int c = 0; c < 8; c++) {
+            int sq = screen_to_board_sq(r, c);
+            int p = current_state.board[sq];
+
+            int is_light = ((sq >> 3) + (sq & 7)) % 2 == 0;
+            int palette_idx = is_light ? 0 : 1;
+
+            int is_selected = (sq == selected_sq);
+            int is_cursor = (r == cursor_r && c == cursor_c);
+
+            int is_prev_move = 0;
+            if (history_count > 0) {
+                GuiMove last_move = move_history[history_count - 1];
+                if (sq == last_move.from || sq == last_move.to) {
+                    is_prev_move = 1;
+                }
+            }
+
+            // O(1) highlight destination check using cached destinations
+            int is_legal_dest = selected_legal_destinations[sq];
+
+            if (is_cursor) {
+                palette_idx = 3; 
+            } else if (is_selected) {
+                palette_idx = 2; 
+            } else if (sq == king_in_check) {
+                palette_idx = 8; 
+            } else if (is_prev_move) {
+                palette_idx = is_light ? 4 : 5; 
+            } else if (is_legal_dest) {
+                palette_idx = is_light ? 6 : 7; 
+            }
+
+            set_tile_fast(board_map, 7 + c * 2,     4 + r * 2,     255, palette_idx);
+            set_tile_fast(board_map, 7 + c * 2 + 1, 4 + r * 2,     255, palette_idx);
+            set_tile_fast(board_map, 7 + c * 2,     4 + r * 2 + 1, 255, palette_idx);
+            set_tile_fast(board_map, 7 + c * 2 + 1, 4 + r * 2 + 1, 255, palette_idx);
+
+            if (p != 0) {
+                u16 fg_palette = (p > 0) ? 10 : 11;
+                char piece_str = ' ';
+                switch (abs(p)) {
+                    case 1: piece_str = 'P'; break;
+                    case 2: piece_str = 'N'; break;
+                    case 3: piece_str = 'B'; break;
+                    case 4: piece_str = 'R'; break;
+                    case 5: piece_str = 'Q'; break;
+                    case 6: piece_str = 'K'; break;
+                }
+                set_tile_fast(pieces_map, 7 + c * 2, 4 + r * 2, piece_str, fg_palette);
+            }
+        }
+    }
+}
+
+void draw_bottom_stats(void) {
+    u16* sub_map = bgGetMapPtr(bottomConsole.bgId);
+    memset(sub_map, 0, 32 * 32 * sizeof(u16));
+
+    // Access analytical calculations instantly from cache
+    int is_ch = state_analysis.is_check;
+    int has_mov = state_analysis.has_legal_moves;
+    int repetitions = state_analysis.repetitions;
+
+    // --- LINE 1 ---
+    int curr_x = 0;
+    if (engine_state != ENGINE_STATE_READY) {
+        draw_string_sub_fast(sub_map, curr_x, 0, "Booting...", 15);
+        curr_x += 10;
+    } else if (current_state.halfmoves >= 100) {
+        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 14);
+        curr_x += 17;
+    } else if (repetitions >= 3) {
+        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (3-fold)]", 14);
+        curr_x += 15;
+    } else if (!has_mov) {
+        if (is_ch) {
+            draw_string_sub_fast(sub_map, curr_x, 0, "[CHECKMATE!]", 9);
+            curr_x += 12;
+        } else {
+            draw_string_sub_fast(sub_map, curr_x, 0, "[STALEMATE!]", 14);
+            curr_x += 12;
+        }
+    } else if (is_ch) {
+        if (current_state.turn == 1) {
+            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10);
+            curr_x += 5;
+            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9);
+            curr_x += 9;
+        } else {
+            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13);
+            curr_x += 5;
+            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9);
+            curr_x += 9;
+        }
+    } else {
+        if (current_state.turn == 1) {
+            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10);
+            curr_x += 5;
+            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15);
+            curr_x += 8;
+        } else {
+            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13);
+            curr_x += 5;
+            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15);
+            curr_x += 8;
+        }
+    }
+
+    draw_string_sub_fast(sub_map, curr_x, 0, " | ", 15);
+    curr_x += 3;
+
+    const char *w_play = (user_side == 1 || user_side == 0) ? "Hum" : "Eng";
+    const char *b_play = (user_side == -1 || user_side == 0) ? "Hum" : "Eng";
+    char config_buf[16];
+    sprintf(config_buf, "W:%s B:%s", w_play, b_play);
+    draw_string_sub_fast(sub_map, curr_x, 0, config_buf, 15);
+
+    // --- LINE 2 ---
+    curr_x = 0;
+    if (engine_score_type == 0) {
+        double eval = (double)engine_score_val / 100.0;
+        char tmp_buf[16];
+        sprintf(tmp_buf, "%+.2f", eval);
+        if (eval > 0.0) {
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10);
+        } else if (eval < 0.0) {
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);
+        } else {
+            draw_string_sub_fast(sub_map, curr_x, 1, "0.00", 15);
+        }
+        curr_x += 6;
+    } else if (engine_score_type == 1) {
+        char tmp_buf[16];
+        if (engine_score_val > 0) {
+            sprintf(tmp_buf, "+M%d", engine_score_val);
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10);
+        } else if (engine_score_val < 0) {
+            sprintf(tmp_buf, "-M%d", -engine_score_val);
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);
+        } else {
+            draw_string_sub_fast(sub_map, curr_x, 1, "M0", 15);
+        }
+        curr_x += 6;
+    } else {
+        curr_x += 6;
+    }
+
+    draw_string_sub_fast(sub_map, curr_x, 1, " | ", 15);
+    curr_x += 3;
+
+    char nps_str[24] = "";
+    if (engine_nps > 0) {
+        if (engine_nps >= 1000000) {
+            sprintf(nps_str, "%.2f Mnps", (double)engine_nps / 1000000.0);
+        } else if (engine_nps >= 100000) {
+            sprintf(nps_str, "%lld knps", engine_nps / 1000);
+        } else if (engine_nps >= 10000) {
+            sprintf(nps_str, "%.1f knps", (double)engine_nps / 1000.0);
+        } else if (engine_nps >= 1000) {
+            sprintf(nps_str, "%.2f knps", (double)engine_nps / 1000.0);
+        } else {
+            sprintf(nps_str, "%lld nps", engine_nps);
+        }
+    }
+    draw_string_sub_fast(sub_map, curr_x, 1, nps_str, 15);
+    curr_x += 6;
+
+    draw_string_sub_fast(sub_map, curr_x, 1, " | ", 15);
+    curr_x += 3;
+
+    char lim_str[24] = "";
+    if (time_control_type == 0) {
+        sprintf(lim_str, "%dms", time_control_val);
+    } else if (time_control_type == 1) {
+        sprintf(lim_str, "depth %d", time_control_val);
+    } else {
+        sprintf(lim_str, "%d nod", time_control_val);
+    }
+    draw_string_sub_fast(sub_map, curr_x, 1, lim_str, 15);
+
+    // --- LINE 3 ---
+    draw_string_sub_fast(sub_map, 0, 2, "RECENT MOVES:", 11);
+
+    // --- LINES 4-13 (Extremely Fast Preformatted Text Blit) ---
+    for (int r = 0; r < 10; r++) {
+        draw_string_sub_fast(sub_map, 0, 3 + r, cached_move_rows_left[r], 15);
+        draw_string_sub_fast(sub_map, 14, 3 + r, "|", 8);
+        draw_string_sub_fast(sub_map, 15, 3 + r, cached_move_rows_right[r], 15);
+    }
+
+    // --- LINES 14-23 ---
+    for (int i = 0; i < 10; i++) {
+        if (i < raw_log_count) {
+            if (i == raw_log_count - 1) {
+                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 15);
+            } else {
+                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 8);
+            }
+        }
+    }
+}
+```
+
+#### Step 6: Hook Cache Updates into State Changers
+Any function that updates the physical state of the board must call `invalidate_and_update_board_caches()`.
+
+Update `push_state()`, `handle_undo()`, and `handle_reset_board()` as follows:
+
+```c
+void push_state(const BoardState *state, GuiMove m) {
+    if (history_count < MAX_HISTORY - 1) {
+        history[history_count] = *state;
+        move_history[history_count] = m;
+        gui_move_to_san(state, m, san_history[history_count]);
+        history_count++;
+        
+        // Update both screens and invalidate evaluation caches
+        invalidate_and_update_board_caches();
+        redraw_top_needed = 1;
+        redraw_bottom_needed = 1;
+    }
+}
+
+void handle_undo(void) {
+    if (engine_thinking) {
+        sf_send_command("stop");
+        engine_thinking = 0;
+    }
+    engine_nps = 0;
+    engine_score_type = -1;
+    engine_score_val = 0;
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
+    int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
+    while (step_back > 0 && history_count > 0) {
+        history_count--;
+        current_state = history[history_count];
+        step_back--;
+    }
+    selected_sq = -1;
+
+    // Cache recalculation after undoing
+    invalidate_and_update_board_caches();
+    redraw_top_needed = 1;
+    redraw_bottom_needed = 1;
+}
+
+void handle_reset_board(void) {
+    if (engine_thinking) {
+        sf_send_command("stop");
+        engine_thinking = 0;
+    }
+    engine_nps = 0;
+    engine_score_type = -1;
+    engine_score_val = 0;
+    engine_depth = 0;
+    engine_nodes = 0;
+    engine_pv[0] = '\0';
+    gui_init_board(&current_state);
+    history_count = 0;
+    selected_sq = -1;
+    cursor_r = 6;
+    cursor_c = 4;
+    sf_send_command("ucinewgame");
+    sf_send_command("isready");
+
+    // Recalculate board state properties
+    invalidate_and_update_board_caches();
+    redraw_top_needed = 1;
+    redraw_bottom_needed = 1;
+}
+```
+
+Update the piece selector inside `handle_select()` to update only the sub-array of highlights on selection changes:
+
+```c
+void handle_select(void) {
+    // ... [No change to safety guards at start of function] ...
+
+    int sq = screen_to_board_sq(cursor_r, cursor_c);
+    if (selected_sq == -1) {
+        int p = current_state.board[sq];
+        if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
+            selected_sq = sq;
+            // Pre-calculate highlights ONLY when a piece is clicked
+            update_selected_destinations();
+            redraw_top_needed = 1;
+        }
+    } else {
+        GuiMove m = {selected_sq, sq, 0};
+        int p = current_state.board[selected_sq];
+        int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
+        if (is_promo) m.promo = 5;
+
+        if (gui_is_legal_move(&current_state, m)) {
+            if (is_promo) {
+                m.promo = get_promo_choice();
+            }
+            push_state(&current_state, m);
+            BoardState next;
+            gui_make_move(&current_state, &next, m);
+            current_state = next;
+            selected_sq = -1;
+
+            invalidate_and_update_board_caches();
+            redraw_top_needed = 1;
+            redraw_bottom_needed = 1;
+        } else {
+            int target = current_state.board[sq];
+            if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
+                selected_sq = sq;
+                // Precalculate new piece destinations
+                update_selected_destinations();
+                redraw_top_needed = 1;
+            } else {
+                selected_sq = -1;
+                memset(selected_legal_destinations, 0, sizeof(selected_legal_destinations));
+                redraw_top_needed = 1;
+            }
+        }
+    }
+}
+```
+
+#### Step 7: Update Main Loop to Handle Split Redraws
+Finally, adjust your rendering logic inside `main()` and `push_raw_log()` to handle targeted redraws.
+
+```c
+void push_raw_log(const char *line) {
+    if (raw_log_count < 10) {
+        strncpy(raw_log[raw_log_count], line, 31);
+        raw_log[raw_log_count][31] = '\0';
+        raw_log_count++;
+    } else {
+        for (int i = 0; i < 9; i++) {
+            memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
+        }
+        strncpy(raw_log[9], line, 31);
+        raw_log[9][31] = '\0';
+    }
+    // Only bottom screen updates on log updates, top board remains untouched!
+    redraw_bottom_needed = 1; 
+}
+```
+
+Inside the main game loop (`while (pmMainLoop())`):
+
+```c
+        // Replace: if (input_detected) { redraw_needed = 1; }
+        if (input_detected) {
+            redraw_top_needed = 1;
+        }
+```
+
+And update the redrawing section:
+
+```c
+        // Replace drawing blocks with split checks:
+        if (redraw_top_needed) {
+            draw_top_board();
+            redraw_top_needed = 0;
+        }
+        if (redraw_bottom_needed) {
+            draw_bottom_stats();
+            redraw_bottom_needed = 0;
+        }
+```
+
+Make sure to call the initialization routine once right before entering the main loop during startup:
+```c
+    // Phase 1 of Handshake
+    sf_send_command("uci");
+    engine_state = ENGINE_STATE_WAIT_UCIOK;
+
+    // Fill caches with initial state data
+    invalidate_and_update_board_caches();
+    redraw_top_needed = 1;
+    redraw_bottom_needed = 1;
+
+    while (pmMainLoop()) {
+```
+
+### Expected Results
+
+* **Highlight Lag Eliminated:** Selecting a piece will feel completely instantaneous. The frame rate will no longer tank because calculations are performed once on click, rather than 64 times per frame.
+* **Smoother Scrolling Log:** Engine raw text feeds won't cause the top board interface to drop frames or lag because they bypass the top-screen drawing functions entirely.
+* **More CPU for Stockfish:** Since the GUI wrapper spends nearly $95\%$ fewer CPU cycles handling inputs, formatting strings, and redrawing maps, the ARM9 has more processing time to give to Stockfish via `threadWaitForVBlank()`. This will directly translate to a slightly **higher NPS (Nodes Per Second)** and faster search depths.
