@@ -63,6 +63,17 @@ void position(Position *pos, char *str)
 
     for (moves = strtok(moves, " \t"); moves; moves = strtok(NULL, " \t")) {
       // FIX: Yield CPU to the GUI during long, cycle-heavy historical move list parsing
+      //
+      // NOTE: Deliberately left as a per-move yield rather than batched
+      // (e.g. every 8-16 moves). Since the GUI thread and this UCI command
+      // thread share the same priority and Calico does not time-slice
+      // equal-priority threads, this yield is what allows the GUI to redraw
+      // and scan input during what would otherwise be a single long,
+      // blocking replay of the entire game history before every search on
+      // long games. Removing or coarsening this would trade GUI smoothness
+      // for a small throughput gain - only worth revisiting if long games
+      // are empirically observed to feel sluggish specifically due to
+      // yield-count overhead (as opposed to search time itself).
       ds_yield(); 
 
       Move m = uci_to_move(pos, moves);
@@ -238,8 +249,16 @@ void uci_loop(int argc, char **argv)
       cmd_len--;
     }
 
-    // DIAGNOSTIC LOG: Print exactly what command the engine received back to GUI
-    printf("[ENGINE_RECV] %s\n", cmd);
+    // OPTIMIZATION: removed the "[ENGINE_RECV] %s" diagnostic echo that used
+    // to live here. It re-transmitted the *entire* command string (including
+    // the full "position startpos moves ..." game history, which grows with
+    // every ply of the game) character-by-character through the locked
+    // engine->GUI bridge queue on every single command received - a cost
+    // that scaled with game length for zero functional benefit. It also
+    // silently truncated once game history exceeded sf_printf's internal
+    // 4096-byte formatting buffer, despite `cmd` itself being sized to 8192
+    // bytes specifically to avoid truncation - so the diagnostic had already
+    // become actively misleading on long games. Removed rather than resized.
 
     token = cmd;
     while (isblank(*token))
@@ -297,16 +316,17 @@ void uci_loop(int argc, char **argv)
       search_clear();
     } 
     else if (strcmp(token, "isready") == 0) {
-      // DIAGNOSTIC LOGS: Trace execution paths inside the isready command handler
-      printf("[DIAGNOSTIC] Engine entering 'isready' execution block...\n");
-      
-      printf("[DIAGNOSTIC] Resizing memory/threads via process_delayed_settings()...\n");
+      // OPTIMIZATION: trimmed from 4 separate "[DIAGNOSTIC] ..." prints
+      // bracketing this block down to just the actual UCI-required
+      // "readyok" response. The removed prints cost 5 lock/copy/yield
+      // round-trips through the bridge queue for what is otherwise a single
+      // response, and - since main.c's console only keeps the last 10
+      // output lines visible - were displacing genuinely useful output
+      // (e.g. "info depth ..." lines) right at the moments (boot, reset)
+      // when a user is most likely watching the console for engine status.
       process_delayed_settings();
-      
-      printf("[DIAGNOSTIC] process_delayed_settings() successfully completed!\n");
       printf("readyok\n");
       fflush(stdout); // Ensure the handshake registers instantly in the GUI thread
-      printf("[DIAGNOSTIC] Sent 'readyok\\n' to bridge output.\n");
     }
     else if (strcmp(token, "go") == 0)        go(&pos, str);
     else if (strcmp(token, "position") == 0)  position(&pos, str);
@@ -328,6 +348,17 @@ void uci_loop(int argc, char **argv)
     }
   } while (argc == 1 && strcmp(token, "quit") != 0);
 
+  // NOTE: thread_wait() (called from search.c's mainthread_search() while
+  // Threads.ponder || Limits.infinite) is only ever woken via Threads.stop
+  // being set from the "quit"/"stop" and "ponderhit" handlers above. This
+  // GUI (main.c) never sends "go infinite" or the "ponder" token, so
+  // Threads.ponder and Limits.infinite are always false in practice, and
+  // that wait path is never actually reached - meaning it was left as a
+  // polling loop in search.c rather than converted to a blocking wait, to
+  // avoid adding risk for no measurable benefit. If ponder mode or an
+  // "infinite analyze" GUI feature is added later, revisit search.c's
+  // thread_wait() together with these two call sites (both would need a
+  // matching threadUnblockAllByValue() call after Threads.stop = true).
   if (Threads.searching)
     thread_wait_until_sleeping(threads_main());
 
