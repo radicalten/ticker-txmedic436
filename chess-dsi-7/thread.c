@@ -751,7 +751,7 @@ static void thread_idle_loop(Position *pos)
     // Cooperative park loop - POLLING IS INTENTIONAL, see note above.
     while (pos->action == THREAD_SLEEP) {
       __sync_synchronize();       // Force core-to-core synchronicity checks
-      threadSleep(2000);          // Sleep 2ms to prevent CPU starvation
+      threadSleep(1000);          // Sleep 1ms to prevent CPU starvation
     }
 
     if (pos->action == THREAD_EXIT) {
