@@ -56,6 +56,19 @@ typedef struct {
 static MsgQueue q_gui_to_engine;
 static MsgQueue q_engine_to_gui;
 
+// SAFETY NOTE (verified after a real hang was found on-device): this queue
+// is safe to use with a blocking threadBlock()/threadUnblockAllByValue()
+// pair specifically because sf_recv_command()'s checker (the UCI command
+// thread, MAIN_THREAD_PRIO) and sf_send_command()'s caller (the GUI thread,
+// also MAIN_THREAD_PRIO) run at EQUAL priority, and Calico does not
+// time-slice equal-priority threads. That means the GUI thread cannot
+// preempt the UCI thread in the narrow gap between its "queue is empty"
+// check and its threadBlock() call - it can only run once the UCI thread
+// itself actually blocks. See the large comment on thread_idle_loop() below
+// for the case where this reasoning does NOT hold and caused a real,
+// reproducible permanent hang.
+static ThrListNode s_guiToEngineQueue;
+
 // Stack and Thread-Local Storage Configuration for Calico
 #define SF_THREAD_STACK_SIZE (64 * 1024) // 64 KB Stack (safe for heavy chess evaluation)
 
@@ -125,6 +138,10 @@ void sf_bridge_init(void) {
     LightLock_Init(&q_engine_to_gui.lock);
     
     s_searchThreadActive = false;
+    // s_guiToEngineQueue is a static ThrListNode and is therefore
+    // zero-initialized by the BSS segment at program start, matching the
+    // "empty queue" representation used elsewhere (see Thread's own
+    // zero-initialized 'waiters' field).
 }
 
 static void queue_push_char(MsgQueue *q, char c) {
@@ -143,6 +160,11 @@ void sf_send_command(const char *cmd) {
     }
     queue_push_char(&q_gui_to_engine, '\n');
     LightLock_Unlock(&q_gui_to_engine.lock);
+
+    // Safe: see s_guiToEngineQueue's declaration comment above. GUI thread
+    // and the UCI command thread are equal priority, so this cannot race
+    // against sf_recv_command()'s check-then-block sequence.
+    threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
 
 void sf_recv_command(char *buf, size_t max_len) {
@@ -191,9 +213,8 @@ void sf_recv_command(char *buf, size_t max_len) {
         
         LightLock_Unlock(&q_gui_to_engine.lock);
         
-        // Use active thread sleep (1 millisecond) instead of yielding continuously.
-        // This avoids running hot and chewing through battery when idle.
-        threadSleep(1000); 
+        // Safe (equal-priority checker/setter - see notes above).
+        threadBlock(&s_guiToEngineQueue, 0);
     }
 }
 
@@ -415,6 +436,42 @@ static Thread* s_calicoThreads[MAX_THREADS] = { NULL };
 static void* s_threadStacks[MAX_THREADS] = { NULL };
 static void* s_threadTls[MAX_THREADS] = { NULL };
 
+// ==========================================
+// WAIT QUEUES - see the important safety note on thread_idle_loop() below
+// before adding any new blocking wait against a lower-priority thread.
+// ==========================================
+// s_sleepQueue[idx]: other threads block here in thread_wait_until_sleeping()
+//                    waiting for worker 'idx' to finish and return to sleep.
+//                    SAFE: checker priority (MAIN_THREAD_PRIO) is HIGHER
+//                    than the worker (0x3D+idx) that eventually sets the
+//                    condition and wakes this queue, so the worker can never
+//                    preempt the checker mid check-then-block.
+// s_initQueue:       the creating thread blocks here in thread_create(),
+//                    woken once thread_init() finishes its one-time setup.
+//                    SAFE for the same reason (checker is MAIN_THREAD_PRIO,
+//                    setter is the new worker thread at a lower priority).
+//
+// NOTE: there used to also be an s_actionQueue[] here, used to let
+// thread_idle_loop() block waiting for pos->action to leave THREAD_SLEEP.
+// That one was REMOVED after causing a real, reproducible permanent hang
+// ("engine never makes a move again") - see the comment on
+// thread_idle_loop() for the full explanation. Do not reintroduce a
+// blocking wait there without also solving that race (e.g. verified-safe
+// use of ds_disable_interrupts()/ds_restore_interrupts() around the
+// check-and-block, IF confirmed safe against Calico's actual context-switch
+// implementation - not just assumed).
+static ThrListNode s_sleepQueue[MAX_THREADS];
+static ThrListNode s_initQueue;
+
+// Small helper ensuring every one of thread_init()'s several exit paths
+// (including all OOM failure branches) consistently pairs the
+// "initializing = false" flag flip with waking thread_create()'s waiter.
+static inline void thread_init_signal_done(void)
+{
+  Threads.initializing = false;
+  threadUnblockAllByValue(&s_initQueue, 0);
+}
+
 // thread_init() is where a search thread starts and initializes itself.
 static int thread_init(void *arg)
 {
@@ -432,7 +489,7 @@ static int thread_init(void *arg)
     if (!cmhTables) {
       sf_printf("\x1b[1;31m[OOM] Failed to allocate cmhTables list!\x1b[0m\n");
       sf_fflush(stdout);
-      Threads.initializing = false;
+      thread_init_signal_done();
       return 0;
     }
     while (old < numCmhTables)
@@ -444,7 +501,7 @@ static int thread_init(void *arg)
     if (!cmhTables[t]) {
       sf_printf("\x1b[1;31m[OOM] Failed to allocate CounterMoveHistoryStat table!\x1b[0m\n");
       sf_fflush(stdout);
-      Threads.initializing = false;
+      thread_init_signal_done();
       return 0;
     }
     for (int chk = 0; chk < 2; chk++)
@@ -458,7 +515,7 @@ static int thread_init(void *arg)
   if (!pos) {
     sf_printf("\x1b[1;31m[OOM] Failed to allocate Position struct for Thread %d!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 
@@ -468,7 +525,7 @@ static int thread_init(void *arg)
   if (!pos->pawnTable || !pos->materialTable) {
     sf_printf("\x1b[1;31m[OOM] Failed to allocate pawn or material tables for Thread %d!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 #endif
@@ -485,7 +542,7 @@ static int thread_init(void *arg)
       !pos->lowPlyHistory || !pos->rootMoves || !pos->stackAllocation || !pos->moveList) {
     sf_printf("\x1b[1;31m[OOM] Thread %d failed to allocate history/search arrays!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 
@@ -499,11 +556,13 @@ static int thread_init(void *arg)
   // Store the initialized Position structural handle
   Threads.pos[idx] = pos;
 
-  // GCC Hardware Barrier: Force Thread mapping completions
+  // GCC Hardware Barrier: Force Thread mapping completions. Kept as a
+  // one-time, startup-only cost for defense in depth around the
+  // Threads.pos[idx] publish.
   __sync_synchronize();
 
-  // Signal completion to parent thread
-  Threads.initializing = false;
+  // Signal completion to parent thread (thread_create()'s blocked waiter).
+  thread_init_signal_done();
 
   thread_idle_loop(pos);
 
@@ -553,10 +612,12 @@ static void thread_create(int idx)
   // Wake up thread execution immediately
   threadStart(s_calicoThreads[idx]);
   
-  // Safe yield loop preventing startup freezes
+  // Safe: checker here (this function's caller) runs at MAIN_THREAD_PRIO,
+  // strictly higher than the worker thread being waited on (0x3D+idx), so
+  // the worker cannot preempt us mid check-then-block. See thread_idle_loop
+  // for the case where this reasoning does NOT hold.
   while (Threads.initializing) {
-    __sync_synchronize();       // Force memory sync across cores
-    threadSleep(1000);          // Yield 1 millisecond using preemptive sleeps
+    threadBlock(&s_initQueue, 0);
   }
 }
 
@@ -566,7 +627,11 @@ static void thread_destroy(Position *pos)
   int idx = pos->threadIdx;
   pos->action = THREAD_EXIT;
   __sync_synchronize();
-  
+
+  // NOTE: no blocking wakeup call here on purpose. thread_idle_loop() waits
+  // for pos->action via polling (see explanation there), so there is no
+  // wait-queue registration for it to wake here anymore.
+
   // Explicitly wait for thread termination
   if (s_calicoThreads[idx]) {
     threadJoin(s_calicoThreads[idx]);
@@ -598,13 +663,18 @@ static void thread_destroy(Position *pos)
   free(pos);
 }
 
-// thread_wait_for_search_finished() waits until not searching.
+// thread_wait_until_sleeping() waits until not searching.
 void thread_wait_until_sleeping(Position *pos)
 {
-  // High-performance cooperative yield loop with compile-time memory barriers
+  // Safe: checker here runs at MAIN_THREAD_PRIO (called only from
+  // search.c/uci.c on the UCI command thread), strictly higher priority
+  // than the worker thread (0x3D+idx) whose action we're waiting on. The
+  // worker cannot preempt us mid check-then-block, so it cannot race ahead
+  // and complete its own transition (setting pos->action = THREAD_SLEEP and
+  // waking this queue) in the gap between our check and our threadBlock()
+  // call - it simply doesn't get to run until we've actually blocked.
   while (pos->action != THREAD_SLEEP) {
-    __sync_synchronize();       // Force memory synchronization across CPU cores
-    threadSleep(1000);          // Sleep 1ms to allow execution slots
+    threadBlock(&s_sleepQueue[pos->threadIdx], 0);
   }
 
   if (pos->threadIdx == 0)
@@ -612,6 +682,15 @@ void thread_wait_until_sleeping(Position *pos)
 }
 
 // thread_wait() waits until condition is true.
+//
+// NOTE: intentionally NOT converted to a blocking wait. This function is
+// generic over an arbitrary caller-supplied atomic_bool*, and safely
+// converting it requires also adding a matching threadUnblockAllByValue()
+// call at every call site that does `atomic_store(condition, true)` - those
+// call sites live in uci.c's "stop"/"quit"/"ponderhit" handlers. In
+// practice this GUI never sends "go infinite" or "ponder", so this wait
+// path is never reached at all with the current GUI - left as polling
+// rather than guessed at, since it costs nothing to leave alone.
 void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
@@ -629,10 +708,47 @@ void thread_wake_up(Position *pos, int action)
 }
 
 // thread_idle_loop() is where the thread is parked when it has no work to do.
+//
+// *** IMPORTANT SAFETY NOTE - READ BEFORE CHANGING THIS FUNCTION ***
+//
+// The wait below (for pos->action to leave THREAD_SLEEP) MUST remain a
+// polling loop, not a threadBlock()-based blocking wait. This was
+// previously converted to threadBlock(&s_actionQueue[idx], 0), and that
+// conversion caused a real, reproducible permanent hang ("engine never
+// makes a move again") during on-device testing.
+//
+// Root cause: this loop's checker is the WORKER thread (priority
+// 0x3D+idx). The condition it waits on is set by thread_wake_up() and
+// thread_destroy(), both called from the UCI command thread (priority
+// MAIN_THREAD_PRIO = 0x1c), which is strictly HIGHER priority than the
+// worker. Because Calico preempts a running thread the instant a
+// strictly-higher-priority thread becomes runnable (e.g. via a VBlank or
+// other interrupt), the worker can be preempted in the exact gap between
+// checking `pos->action == THREAD_SLEEP` and executing its threadBlock()
+// call. If, during that preemption, the higher-priority thread runs
+// thread_wake_up() (setting pos->action and calling
+// threadUnblockAllByValue()), that wakeup finds nobody registered yet and
+// is lost. When the worker resumes, it unconditionally calls threadBlock()
+// next and blocks forever, since the one wakeup for that transition already
+// happened. This is a low-probability-per-transition race (it requires an
+// interrupt to land in a very narrow instruction window), which is why it
+// did not appear immediately but eventually caused a permanent freeze
+// during real play/testing.
+//
+// General rule for this codebase: a check-then-threadBlock() wait is only
+// safe if the checking thread's priority is >= the priority of every thread
+// that can change the awaited condition. It is UNSAFE if the checker has
+// LOWER priority than the setter (this case), unless additional protection
+// is used (e.g. a verified-safe critical section around the check-and-block
+// using ds_disable_interrupts()/ds_restore_interrupts() - NOT attempted
+// here since it would require confirming those primitives are safe to wrap
+// around an actual threadBlock() call against Calico's real context-switch
+// implementation, not just assumed).
 static void thread_idle_loop(Position *pos)
 {
+  int idx = pos->threadIdx;
   while (true) {
-    // Cooperative park loop
+    // Cooperative park loop - POLLING IS INTENTIONAL, see note above.
     while (pos->action == THREAD_SLEEP) {
       __sync_synchronize();       // Force core-to-core synchronicity checks
       threadSleep(2000);          // Sleep 2ms to prevent CPU starvation
@@ -650,7 +766,10 @@ static void thread_idle_loop(Position *pos)
     }
 
     pos->action = THREAD_SLEEP;
-    __sync_synchronize();         // Commit the state change globally immediately
+    // Safe to keep as a blocking wakeup: this is the producer side for
+    // thread_wait_until_sleeping()'s consumers, which (per that function's
+    // comment) are always higher-priority than this worker thread.
+    threadUnblockAllByValue(&s_sleepQueue[idx], 0);
   }
 }
 
