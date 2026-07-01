@@ -26,6 +26,11 @@
 #ifndef THREAD_H
 #define THREAD_H
 
+// Prevent old 3ds_bridge.h references from double-declaring things
+#ifndef THREEDS_BRIDGE_H
+#define THREEDS_BRIDGE_H
+#endif
+
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
