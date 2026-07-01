@@ -1,0 +1,530 @@
+can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
+
+
+# Analysis
+
+This file is essentially a **Wii-native UCI GUI shell** wrapped around Stockfish/Cfish — it is *not* the search/evaluation engine itself (that lives in `search.c`, `movegen.c`, `evaluate.c`, `bitboard.c`, none of which are shown). That distinction matters a lot for a speedup analysis:
+
+- Everything in this file (`is_square_attacked`, `has_legal_moves`, `move_to_pgn`, cache updates, etc.) runs **only in response to human/GUI events** — a button press, a move being pushed, a redraw. Worst case you're talking about a few thousand array scans triggered a handful of times per second. On a 729 MHz Broadway core this is sub-millisecond regardless of micro-optimization.
+- The actual engine's node-per-second rate (which is what "speed" means for playing strength) is determined entirely by code *not present here*. No amount of tuning in this file will move that needle.
+
+So the existing `OPT-1..13` annotations are mostly optimizing code that was never hot in the first place. That's not wrong, just low-yield. Below are things that actually matter, roughly in priority order.
+
+## 1. `strncpy` zero-fill bug in `process_engine_output` (real, measurable waste)
+
+```c
+strncpy(engine_pv, ptr + 4, sizeof(engine_pv) - 1);
+```
+
+`engine_pv` is `char[1024]`. `strncpy` **pads the entire remaining destination with `\0`** when the source is shorter than `n` — which it almost always is (PVs are usually tens to a couple hundred bytes). This means every single `info ... pv ...` line (and Stockfish can emit these very frequently, especially at higher depths or with short move-time controls) zero-fills ~800–900 bytes for no reason. This is the one genuinely wasteful hot-ish path in the file. Fix:
+
+```c
+size_t l = strlen(ptr + 4);
+if (l >= sizeof(engine_pv)) l = sizeof(engine_pv) - 1;
+memcpy(engine_pv, ptr + 4, l);
+engine_pv[l] = '\0';
+```
+
+## 2. Full `sync` barrier where `lwsync` (or nothing) suffices
+
+```c
+__sync_synchronize(); // PPC lwsync   <-- comment is aspirational, not accurate
+```
+
+`__sync_synchronize()` on GCC/PPC lowers to a full `sync` instruction (heavyweight, drains the store queue and orders all memory ops system-wide), not `lwsync`. For a classic SPSC ring buffer you only need a **release** fence on the producer before publishing `head`, and an **acquire** fence on the consumer before reading `data[]`. On Broadway (single core, no SMP), you likely don't even need a hardware fence at all — a *compiler* barrier (`asm volatile("" ::: "memory")`) is enough to stop reordering, since there's no other core to race with. If you want to be safe against DMA/cache-related surprises, use `asm volatile("lwsync" ::: "memory")` explicitly instead of the builtin. This is called on **every** `fifo_read`/`fifo_write`, including the per-character reads in `engine_fgets`/`engine_getline`, so it's the most frequently executed "expensive" instruction in the whole file.
+
+## 3. `draw_ui()` — one `vsnprintf` per board square
+
+```c
+fb_printf("%s%s %s \033[0m", bg_color, fg_color, piece_str);
+```
+
+This runs up to 64 times per redraw, and `vsnprintf` re-parses the format string and does `va_arg` dispatch every time for what is just 4 known strings. Since redraws already happen at bounded intervals this isn't going to be *felt*, but it's free to fix and makes the "single buffer, single flush" design (OPT-7) actually live up to its intent:
+
+```c
+fb_str(bg_color); fb_str(fg_color); fb_str(" "); fb_str(piece_str); fb_str(" \033[0m");
+```
+or precompute a `char cell[5]` combining `piece_str+' '` once. Also, `fb_str` calls `strlen()` on string literals every time — for the fixed literals (escape codes, headers) this can be replaced with `memcpy` + a `sizeof(lit)-1` constant, or a small macro, to skip runtime length scans entirely.
+
+## 4. Reinventing move generation instead of using Stockfish's own bitboard tables
+
+This is the biggest *architectural* inefficiency, even if not a hot-path problem in practice:
+
+- `is_square_attacked()` manually loops over hand-written knight/king offset tables with bounds checks on every call.
+- `bitboard.h` and `position.h` are already included — Stockfish ships **precomputed attack tables** (`PseudoAttacks[KNIGHT][s]`, `PseudoAttacks[KING][s]`, magic-bitboard slider attacks) that turn all of this into O(1) bitboard ANDs.
+- `has_legal_moves()`, `update_selected_dests_cache()`, and the disambiguation loop in `move_to_pgn()` all do the classic "generate pseudo-legal, make, check king safety, unmake" pattern by hand over an `int[64]` board, which is exactly what `Position`/`MoveList` in the real engine already does far more efficiently and (more importantly) more *correctly* (e.g., this reimplementation duplicates check/castling/en-passant logic that must stay in sync with the engine's own rules).
+
+Even though the perf impact today is negligible (human-speed events), the maintenance/correctness risk of a second, hand-rolled legality engine living next to Stockfish's real one is arguably a bigger long-term liability than any speed issue. If you ever want the GUI layer to also drive engine self-play at high speed (e.g., auto-play many games for testing), replacing this array-based model with direct `Position` calls would be both faster and safer.
+
+## 5. Minor items
+
+- `engine_fgets`/`engine_getline` pull the FIFO **one byte at a time** via a full function call (`fifo_read`) each time. Harmless at current call frequency (UCI commands, not per-node), but if you ever want cleaner code: keep a small local staging buffer, bulk-read into it, and hand out bytes/lines from that.
+- `count_repetitions()` does a `memcmp` of the full 256-byte board array against the whole history every move. Fine at today's `MAX_HISTORY` scale (worst case ~2048 × 256B ≈ 512KB scan per move), but if it ever mattered, a rolling incremental Zobrist-hash comparison (which the real engine already computes) would turn this into an O(1) hash bucket check instead of O(history_length × 64).
+- `move_to_pgn()`'s check/mate annotation calls `has_legal_moves()` on the resulting position just to decide between `+`/`#`, which is the most expensive single call in the file (O(pieces×64) with make/unmake per candidate) — but it only runs once per move push, so it's fine.
+
+## Bottom line
+
+The `OPT-*` work already applied is reasonable and correctly targeted at *this file's* few genuinely repeated operations (FIFO handling, avoiding `BoardState` copies, avoiding per-frame O(64²) scans). But because everything here is gated behind human input events, none of it affects playing strength or search speed. The concrete wins left on the table are:
+
+1. Fix the `strncpy` zero-fill in the PV handler (easy, real waste, scales with search output rate).
+2. Downgrade `__sync_synchronize()` to a lighter/compiler-only barrier (reduces the cost of the most frequently executed instruction in the file).
+3. De-vsnprintf the per-square board rendering.
+4. (Longer-term/architectural) stop reimplementing chess rules over a plain `int[64]` array and lean on Stockfish's own `Position`/bitboard attack tables that are already linked in.
+
+None of these will make the engine play faster — for that, the files that matter are the ones not shown here.
+
+
+
+can you implement these changes?
+
+
+Here are concrete, drop-in fixes for the three real issues. Each is a direct replacement for the corresponding function/section in your file.
+
+## 1. Fix `strncpy` zero-fill in the PV handler
+
+This was silently zero-filling up to ~1KB on every `info ... pv ...` line.
+
+```c
+// =============================================================================
+// OPT-14: Replaces strncpy() with strlen()+memcpy() — strncpy() zero-pads the
+//          *entire* remaining buffer when src is shorter than n, which was
+//          happening on every single "info ... pv ..." line (src is almost
+//          always << 1024 bytes). This was the single most wasteful
+//          operation in the whole file, since it fires on every UCI info line.
+// =============================================================================
+if ((ptr = strstr(line, " pv "))) {
+    const char *src = ptr + 4;
+    size_t l = strlen(src);
+    if (l >= sizeof(engine_pv)) l = sizeof(engine_pv) - 1;
+    memcpy(engine_pv, src, l);
+    engine_pv[l] = '\0';
+}
+```
+
+Replace the old block:
+```c
+if ((ptr = strstr(line, " pv "))) {
+    strncpy(engine_pv, ptr + 4, sizeof(engine_pv) - 1);
+    engine_pv[sizeof(engine_pv) - 1] = '\0';
+}
+```
+with the version above.
+
+## 2. Lighter memory barrier in the FIFOs
+
+`__sync_synchronize()` lowers to a full `sync` on PPC (heavyweight, whole-system store drain) despite the comment claiming `lwsync`. On Broadway (single physical core, cooperatively/preemptively scheduled threads — no other bus master racing you here besides IOS/DMA which isn't touching this memory), a full hardware sync is unnecessary. A compiler barrier is enough to stop reordering across the publish/consume point. I've kept an explicit `lwsync` inline-asm as a documented, cheaper alternative in case you ever run this SMP or want extra safety margin:
+
+```c
+// =============================================================================
+// OPT-15: Lightweight barrier instead of __sync_synchronize().
+//          __sync_synchronize() emits a full "sync" on PPC (heavyweight,
+//          system-wide store-drain). Broadway is single-core and these FIFOs
+//          are only ever touched by the two cooperating KThreads on that one
+//          core, so a full hw sync buys nothing — we only need to stop the
+//          compiler from reordering the data writes/reads across the
+//          head/tail publish. A plain compiler barrier is correct and much
+//          cheaper. If this code is ever ported to a真 SMP target, swap the
+//          compiler-only barrier for the "lwsync" asm below.
+// =============================================================================
+#define FIFO_COMPILER_BARRIER()  asm volatile("" ::: "memory")
+// #define FIFO_COMPILER_BARRIER()  asm volatile("lwsync" ::: "memory") // SMP-safe alt.
+```
+
+Then in `fifo_write`:
+```c
+    FIFO_COMPILER_BARRIER();
+    f->head = (h + len) & FIFO_MASK;
+```
+replacing:
+```c
+    __sync_synchronize(); // PPC lwsync
+    f->head = (h + len) & FIFO_MASK;
+```
+
+And in `fifo_read`:
+```c
+    FIFO_COMPILER_BARRIER();
+    f->tail = (t + len) & FIFO_MASK;
+```
+replacing:
+```c
+    __sync_synchronize(); // PPC lwsync
+    f->tail = (t + len) & FIFO_MASK;
+```
+
+This is the hottest-executed barrier in the file (it fires on every single-character read in `engine_fgets`/`engine_getline` as well as every `engine_printf`), so this is the change most likely to shave actual cycles, even if the absolute win is small in wall-clock terms.
+
+## 3. De-`vsnprintf` the board-square rendering + literal-string fast path
+
+`vsnprintf` re-parses a 4-specifier format string and does full `va_arg` dispatch, 64 times per redraw, for values that are always plain C strings. Also `fb_str()` calls `strlen()` on string literals whose length is known at compile time.
+
+```c
+// =============================================================================
+// OPT-16: fb_str() for known-length literals should not re-scan them at
+//          runtime. FB_LIT() computes length at compile time via sizeof().
+//          Use FB_LIT() for any string literal; keep fb_str() only for
+//          genuinely dynamic/runtime strings (e.g. engine_pv).
+// =============================================================================
+static inline void fb_raw(const char *s, int l) {
+    if (frame_pos + l < (int)sizeof(frame_buf) - 1) {
+        memcpy(frame_buf + frame_pos, s, l);
+        frame_pos += l;
+    }
+}
+#define FB_LIT(s) fb_raw((s), (int)(sizeof(s) - 1))
+
+static inline void fb_str(const char *s) {
+    fb_raw(s, (int)strlen(s));
+}
+```
+
+Then replace every call site in `draw_ui()`, `print_side_panel_line()`, and `print_recent_moves()` that currently passes a string literal to `fb_str(...)` with `FB_LIT(...)` instead — e.g.:
+
+```c
+FB_LIT("\033[H\r\n");
+...
+FB_LIT("  ");
+...
+FB_LIT("\033[K\r\n\r\n");
+```
+
+(Keep `fb_str(turn_str)` etc. as-is since those are runtime pointers to string constants selected by a ternary, not literals at the call site — `FB_LIT` requires the literal itself, not a `const char *` variable, since it needs `sizeof`.)
+
+And replace the per-square hot loop:
+
+```c
+fb_printf("%s%s %s \033[0m", bg_color, fg_color, piece_str);
+```
+
+with a direct, allocation/parse-free sequence:
+
+```c
+// OPT-16: No format-string parsing for the 64x-per-frame cell render.
+fb_str(bg_color);
+fb_str(fg_color);
+FB_LIT(" ");
+fb_str(piece_str);
+FB_LIT(" \033[0m");
+```
+
+`bg_color`, `fg_color`, and `piece_str` are still runtime-selected pointers (from the `if`/`switch` chains above), so they correctly stay as `fb_str()` calls — only the literal glue pieces (`" "`, `" \033[0m"`) become `FB_LIT`.
+
+## Notes on what I did *not* change
+
+I left the hand-rolled move-generation/legality/attack code (`is_square_attacked`, `has_legal_moves`, `is_pseudo_legal_move`, `move_to_pgn` disambiguation) untouched. Rewriting that to use Stockfish's own bitboard attack tables (`bitboard.h`/`position.h`, already linked) would be the architecturally "correct" fix and would eliminate a second, independently-maintained rules implementation — but it's a substantial rewrite (needs a real `Position` object kept in sync with `BoardState`, or a full port of the GUI layer onto Stockfish's move generator) rather than a safe drop-in patch, and I don't have `bitboard.h`/`position.h`'s actual API surface in front of me to do it correctly without guessing signatures. I'd recommend doing that as a separate, deliberate refactor rather than folding it into this speedup pass — happy to help design it if you want to share those headers.
+
+
+*PASTE bitboard.h here in prompt*
+
+Excellent — with `bitboard.h` in hand I can now do the real architectural fix: replace the hand-rolled attack detection with Stockfish's own precomputed tables and magic bitboards. This is a genuine algorithmic improvement (O(1) slider attacks instead of ray-walking), not just a micro-opt, and it also removes a chunk of duplicated rules logic.
+
+## Key idea: square-numbering bridge
+
+This GUI's `board[64]` is laid out with index 0 = rank 8 (top row), whereas Stockfish's `Square` enum has `SQ_A1 = 0` (bottom row). The two are related by a single `XOR 56`, which flips only the 3 rank bits and leaves the file bits untouched. I verified this maps correctly (e.g. GUI's `white_king_sq = 60` (e1) flips to Stockfish's `SQ_E1 = 4`).
+
+```c
+// Self-inverse: works in both directions (gui_sq <-> stockfish Square)
+static inline Square flip_sq(int sq) { return (Square)(sq ^ 56); }
+```
+
+Conveniently, this GUI's piece-type encoding (`P=1,N=2,B=3,R=4,Q=5,K=6`) already matches Stockfish's `PieceType` enum values exactly, so no piece-type translation is needed at all.
+
+## 1. Add an incrementally-maintained occupancy bitboard to `BoardState`
+
+Magic-bitboard slider attacks need an `occupied` bitboard. Maintaining it incrementally (instead of rebuilding it from `board[]` on every call) keeps this O(1) per move rather than O(64) per call.
+
+```c
+typedef struct __attribute__((aligned(32))) {
+    int board[64];
+    int turn;
+    int castle;
+    int ep;
+    int halfmoves;
+    int fullmoves;
+    int white_king_sq;
+    int black_king_sq;
+    Bitboard occupied;   // OPT-17: incrementally maintained occupancy,
+                          //         feeds attacks_bb() for O(1) slider attacks
+} BoardState;
+```
+
+## 2. `init_board()` — build initial occupancy once
+
+```c
+void init_board(BoardState *state) {
+    static const int start[64] = {
+        -4,-2,-3,-5,-6,-3,-2,-4,
+        -1,-1,-1,-1,-1,-1,-1,-1,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         1, 1, 1, 1, 1, 1, 1, 1,
+         4, 2, 3, 5, 6, 3, 2, 4
+    };
+    memcpy(state->board, start, sizeof(start));
+    state->turn          = 1;
+    state->castle        = 15;
+    state->ep            = -1;
+    state->halfmoves     = 0;
+    state->fullmoves     = 1;
+    state->white_king_sq = 60;
+    state->black_king_sq = 4;
+
+    // OPT-17: build initial occupancy bitboard
+    state->occupied = 0;
+    for (int sq = 0; sq < 64; sq++)
+        if (start[sq] != 0) state->occupied |= sq_bb(flip_sq(sq));
+}
+```
+
+## 3. `make_gui_move()` — incrementally update occupancy alongside `board[]`
+
+```c
+void make_gui_move(const BoardState *src, BoardState *dst, GuiMove m) {
+    *dst = *src;
+    int p = dst->board[m.from];
+
+    int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
+
+    dst->board[m.from] = 0;
+    dst->board[m.to]   = (m.promo != 0) ? dst->turn * m.promo : p;
+
+    // OPT-17: origin vacated, destination occupied (idempotent even on capture,
+    // since a captured square was already set and stays set).
+    dst->occupied = inv_sq(dst->occupied, flip_sq(m.from));
+    dst->occupied |= sq_bb(flip_sq(m.to));
+
+    // En-passant capture
+    if (abs(p) == 1 && m.to == dst->ep) {
+        int p_dir  = (dst->turn == 1) ? 8 : -8;
+        int cap_sq = m.to + p_dir;
+        dst->board[cap_sq] = 0;
+        dst->occupied = inv_sq(dst->occupied, flip_sq(cap_sq));
+    }
+
+    // Update en-passant square
+    dst->ep = -1;
+    if (abs(p) == 1) {
+        int diff = m.from - m.to;
+        if (diff == 16 || diff == -16)
+            dst->ep = m.from + (dst->turn == 1 ? -8 : 8);
+    }
+
+    // Castling rook moves + king-square cache + occupancy
+    if (abs(p) == 6) {
+        if (m.from == 60 && m.to == 62) {
+            dst->board[61] = dst->board[63]; dst->board[63] = 0;
+            dst->occupied |= sq_bb(flip_sq(61));
+            dst->occupied = inv_sq(dst->occupied, flip_sq(63));
+        } else if (m.from == 60 && m.to == 58) {
+            dst->board[59] = dst->board[56]; dst->board[56] = 0;
+            dst->occupied |= sq_bb(flip_sq(59));
+            dst->occupied = inv_sq(dst->occupied, flip_sq(56));
+        } else if (m.from == 4 && m.to == 6) {
+            dst->board[5] = dst->board[7]; dst->board[7] = 0;
+            dst->occupied |= sq_bb(flip_sq(5));
+            dst->occupied = inv_sq(dst->occupied, flip_sq(7));
+        } else if (m.from == 4 && m.to == 2) {
+            dst->board[3] = dst->board[0]; dst->board[0] = 0;
+            dst->occupied |= sq_bb(flip_sq(3));
+            dst->occupied = inv_sq(dst->occupied, flip_sq(0));
+        }
+
+        if (dst->turn == 1) dst->white_king_sq = m.to;
+        else                dst->black_king_sq = m.to;
+    }
+
+    // Castling rights
+    if (m.from == 60)                dst->castle &= ~3;
+    if (m.from == 4)                 dst->castle &= ~12;
+    if (m.from == 63 || m.to == 63) dst->castle &= ~1;
+    if (m.from == 56 || m.to == 56) dst->castle &= ~2;
+    if (m.from == 7  || m.to == 7)  dst->castle &= ~4;
+    if (m.from == 0  || m.to == 0)  dst->castle &= ~8;
+
+    dst->turn = -dst->turn;
+
+    if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
+    else                           dst->halfmoves++;
+
+    if (dst->turn == 1) dst->fullmoves++;
+}
+```
+
+## 4. `is_legal_gui_move_nocopy()` — save/restore `occupied` as a single word
+
+Since this function already saves/restores scalar fields around its in-place mutation, `occupied` just becomes one more O(1) save/restore — far simpler than trying to hand-patch bits and un-patch them.
+
+```c
+int is_legal_gui_move_nocopy(const BoardState *state, GuiMove m) {
+    if (!is_pseudo_legal_move(state, m)) return 0;
+
+    BoardState *s = (BoardState *)state;
+
+    int saved_from   = s->board[m.from];
+    int saved_to     = s->board[m.to];
+    int ep_cap_sq    = -1;
+    int saved_ep_cap = 0;
+    Bitboard saved_occupied = s->occupied;   // OPT-17
+
+    s->board[m.from] = 0;
+    s->board[m.to]   = (m.promo != 0) ? state->turn * m.promo : saved_from;
+    s->occupied = inv_sq(s->occupied, flip_sq(m.from));
+    s->occupied |= sq_bb(flip_sq(m.to));
+
+    if (abs(saved_from) == 1 && m.to == state->ep) {
+        ep_cap_sq           = m.to + (state->turn == 1 ? 8 : -8);
+        saved_ep_cap        = s->board[ep_cap_sq];
+        s->board[ep_cap_sq] = 0;
+        s->occupied = inv_sq(s->occupied, flip_sq(ep_cap_sq));
+    }
+
+    int saved_wk = s->white_king_sq;
+    int saved_bk = s->black_king_sq;
+    if (abs(saved_from) == 6) {
+        if (state->turn == 1) s->white_king_sq = m.to;
+        else                  s->black_king_sq = m.to;
+    }
+
+    int king  = find_king(s, state->turn);
+    int legal = (king != -1) && !is_square_attacked(s, king, -state->turn);
+
+    s->board[m.from] = saved_from;
+    s->board[m.to]   = saved_to;
+    if (ep_cap_sq != -1) s->board[ep_cap_sq] = saved_ep_cap;
+    s->white_king_sq = saved_wk;
+    s->black_king_sq = saved_bk;
+    s->occupied      = saved_occupied;   // OPT-17: O(1) restore regardless of how many bits changed
+
+    return legal;
+}
+```
+
+*(Castling isn't handled here since it never applies during a legality-check trial — the intermediate-square safety for castling is already validated separately inside `is_pseudo_legal_move`'s king case.)*
+
+## 5. `is_square_attacked()` — full rewrite on Stockfish's tables
+
+This is the real payoff: knight/king/pawn lookups become direct table reads, and diagonal/straight slider attacks become **O(1) magic-bitboard lookups** instead of manual ray-walking with a bounds check at every step.
+
+```c
+// =============================================================================
+// OPT-18: is_square_attacked() rewritten on Stockfish's own precomputed
+//          attack tables (PseudoAttacks / PawnAttacks) and magic-bitboard
+//          slider attacks (attacks_bb), instead of hand-rolled offset tables
+//          + manual ray-walking. Sliding-piece attacks go from
+//          O(distance-to-blocker) loops with a bounds check every step to a
+//          single magic-multiply lookup per piece type.
+// =============================================================================
+int is_square_attacked(const BoardState *state, int sq, int attacker) {
+    Square s     = flip_sq(sq);
+    Color  us    = (attacker == 1) ? WHITE : BLACK;
+    Color  them  = (us == WHITE) ? BLACK : WHITE;
+
+    // Knight attacks
+    Bitboard bb = PseudoAttacks[KNIGHT][s];
+    while (bb) {
+        int from = flip_sq(pop_lsb(&bb));
+        if (state->board[from] == attacker * 2) return 1;
+    }
+
+    // King attacks
+    bb = PseudoAttacks[KING][s];
+    while (bb) {
+        int from = flip_sq(pop_lsb(&bb));
+        if (state->board[from] == attacker * 6) return 1;
+    }
+
+    // Pawn attacks: squares from which a pawn of color `us` attacks `s`
+    // are exactly the squares a pawn of the *opposite* color standing on
+    // `s` would attack (mirror-symmetric offsets) — standard Stockfish idiom.
+    bb = PawnAttacks[them][s];
+    while (bb) {
+        int from = flip_sq(pop_lsb(&bb));
+        if (state->board[from] == attacker) return 1;
+    }
+
+    // Diagonal sliders (bishop / queen) — magic bitboard, blockers already
+    // baked in via state->occupied
+    bb = attacks_bb(BISHOP, s, state->occupied);
+    while (bb) {
+        int from = flip_sq(pop_lsb(&bb));
+        int p = state->board[from];
+        if (p == attacker * 3 || p == attacker * 5) return 1;
+    }
+
+    // Straight sliders (rook / queen)
+    bb = attacks_bb(ROOK, s, state->occupied);
+    while (bb) {
+        int from = flip_sq(pop_lsb(&bb));
+        int p = state->board[from];
+        if (p == attacker * 4 || p == attacker * 5) return 1;
+    }
+
+    return 0;
+}
+```
+
+The old `k_r/k_c/kg_r/kg_c/d_r/d_c/s_r/s_c` static tables are no longer needed and can be deleted.
+
+## 6. `is_pseudo_legal_move()` — same treatment for bishop/rook/queen move legality
+
+The manual step-loops for sliders reduce to a single attack-set membership test:
+
+```c
+case 3: { // Bishop
+    if (abs_dr != abs_dc) return 0;
+    return (attacks_bb(BISHOP, flip_sq(m.from), state->occupied)
+            & sq_bb(flip_sq(m.to))) != 0;
+}
+case 4: { // Rook
+    if (dr != 0 && dc != 0) return 0;
+    return (attacks_bb(ROOK, flip_sq(m.from), state->occupied)
+            & sq_bb(flip_sq(m.to))) != 0;
+}
+case 5: { // Queen
+    if (abs_dr != abs_dc && dr != 0 && dc != 0) return 0;
+    return (attacks_bb(QUEEN, flip_sq(m.from), state->occupied)
+            & sq_bb(flip_sq(m.to))) != 0;
+}
+```
+
+(The pawn/knight/king cases are unaffected and stay as-is.)
+
+## 7. Fix initialization ordering in `main()`
+
+`bitboards_init()` currently only runs inside `engine_thread_main()`, which is spawned *after* `run_gui_mode()` already calls `init_board()` + `update_gui_cache()` — meaning `PseudoAttacks`/`PawnAttacks`/magic tables would still be zeroed when the GUI's very first legality scan runs. Fix by calling it synchronously up front:
+
+```c
+int main(int argc, char **argv) {
+    init_wii_console();
+    bitboards_init();   // OPT-19: must exist before any is_square_attacked()/
+                         //         attacks_bb() call — GUI mode calls those
+                         //         before the engine thread (which also inits
+                         //         this table) has even started.
+    bool force_gui = true;
+    bool force_cli = false;
+    ...
+```
+
+(The redundant call still inside `engine_thread_main()`/the CLI branch is harmless — it's a one-time deterministic table fill — but leaving it doesn't hurt and keeps the CLI-only path self-contained.)
+
+## Net effect
+
+- Knight/king/pawn attack checks: hand-rolled offset arrays + per-step bounds checks → direct table reads.
+- Bishop/rook/queen attack checks and move legality: O(ray length) branchy loops → O(1) magic-bitboard lookup.
+- This is the same, already-validated logic the real search engine uses, so it also removes a second independently-maintained (and thus riskier) rules implementation living next to it.
+- Cost: one extra `uint64_t` per `BoardState`, kept in sync with O(1) incremental updates — no per-call rebuild.
+
+
+Summary of what changed
+#	Location	Change
+OPT-14	process_engine_output	strncpy → strlen+memcpy for PV string (fixes ~900 bytes of wasted zeroing per info line)
+OPT-15	fifo_write/fifo_read	__sync_synchronize() → compiler-only barrier macro
+OPT-16	draw_ui + helpers	Added fb_raw/FB_LIT for compile-time-length literals; removed vsnprintf from the 64x-per-frame cell render
+OPT-17	BoardState, init_board, make_gui_move, is_legal_gui_move_nocopy	Added incrementally-maintained occupied bitboard
+OPT-18	is_square_attacked, is_pseudo_legal_move	Rewritten on PseudoAttacks/PawnAttacks/attacks_bb() magic bitboards instead of hand-rolled tables + ray-walking
+OPT-19	main()	bitboards_init() called synchronously before GUI mode's first legality check
+
+One assumption to verify against your types.h: I assumed the standard Stockfish enum layout (WHITE=0, BLACK=1, PAWN=1...KING=6, SQ_A1=0). If your fork's types.h differs (e.g., different Color/PieceType values), the flip_sq/Color mapping in is_square_attacked would need adjusting accordingly — worth a quick sanity check (e.g., assert flip_sq(60) == SQ_E1 and WHITE == 0) before relying on it.
+
