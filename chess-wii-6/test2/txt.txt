@@ -26,3 +26,8 @@ main-debug-v1-faster-v1.c
 #glm's version did not compile, claude after some compiler error help did. claude version also seemed to run at 100-130k nps but speeds up to 115-120k nps by move 20 which may be faster. its certainly not slower. roughly the same to slightly faster. i call this new one v2. 
 
 #testing the claude v2 faster a 2nd time I would say the nps avg is now at 115k nps, which is a quality improvement over 105k and both are better than the 90k nps from before. 
+
+
+#later in this day claude sonnet 5 was released. will test on claude4pt6help.c
+can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
+main-faster-v2-claude4pt6help.c
