@@ -52,7 +52,7 @@ typedef struct {
     ThrListNode queue;
 } LightLock;
 
-// Non-inlined ARM-state interrupt controllers (Implemented in the C block below)
+// Non-inlined ARM-state interrupt controllers (Implemented in thread.c)
 u32 ds_disable_interrupts(void);
 void ds_restore_interrupts(u32 old);
 
@@ -101,7 +101,7 @@ static inline unsigned long long osGetTime(void) {
     return (tickGetCount() * 1000ULL) / TICK_FREQ;
 }
 
-// Cooperative yield function mapped to Calico's preemptive yield
+// Cooperative yield function mapped to Calico's preemptive yield (Implemented in thread.c)
 void ds_yield(void);
 
 // 3DS Kernel SVC Compatibility Stubs mapped to Calico
@@ -243,42 +243,3 @@ extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
 #endif // THREAD_H
-
-
-/* ============================================================================
-   SECTION 3: IMPLEMENTATION (For compiled translation unit)
-   ============================================================================ */
-#ifdef THREAD_IMPLEMENTATION
-
-#ifdef __NDS__
-// Non-inlined ARM-state interrupt controller definitions
-u32 ds_disable_interrupts(void) {
-    u32 old;
-    __asm__ volatile (
-        "mrs %0, cpsr\n"
-        "orr r12, %0, #0x80\n"
-        "msr cpsr_c, r12"
-        : "=r" (old) :: "r12", "cc", "memory"
-    );
-    return old;
-}
-
-void ds_restore_interrupts(u32 old) {
-    __asm__ volatile (
-        "msr cpsr_c, %0"
-        :: "r" (old) : "cc", "memory"
-    );
-}
-
-void ds_yield(void) {
-    threadYield();
-}
-#endif // __NDS__
-
-// ----------------------------------------------------------------------------
-// PASTE THE ENTIRE CONTENTS OF YOUR "3ds_bridge.c" BELOW THIS LINE:
-// (Functions like sf_bridge_init, sf_printf, sf_pthread_create, etc.)
-// ----------------------------------------------------------------------------
-
-
-#endif // THREAD_IMPLEMENTATION
