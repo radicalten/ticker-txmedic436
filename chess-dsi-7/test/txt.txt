@@ -12,9 +12,18 @@ prompt for claude 4.6 sonnet:
 can you evaluate these chess engine files written in C for DSi and determine if there is any room for potential speedups?
 main-test1-faster-v2.c
 
+#claude 4.6 sonnet froze in the middle of trying to update probably due to sonnet 5 traffic. 
 
 #interestingly in the middle of working on this Claude released sonnet 5, and that is now available for free, will test it here too, in addition to the previous:
 
 prompt for claude 5 sonnet:
 can you evaluate these chess engine files written in C for DSi and determine if there is any room for potential speedups?
 main-claude4pt6son-v1.c
+
+
+#will now try to get claude 5 sonnet to improve thread.c (in the same chat). that will be tough as gemini 3.5 flash and claude sonnet 4.6 failed that task (introduced a bug that froze the program)
+can you also evaluate this chess engine file, thread.c, written in C for DSi and determine if there is any room for potential speedups?
+
+follow up: Here is devkitpro's calico/thread.h
+
+#https://github.com/devkitPro/calico/blob/master/include/calico/system/thread.h
