@@ -1,0 +1,92 @@
+This file is the **DSi GUI/bridge layer** wrapped around Stockfish (board display, move input, UCI plumbing) — it does **not** contain Stockfish's actual search/movegen internals (those live in `position.c`, `movegen.c`, `search.c`, etc., which aren't shown here). So "speedups" here mostly mean: *reducing CPU cycles stolen from the Stockfish search thread by the GUI/legality-checking code*, since on the DSi's single ARM9 core, threading is cooperative — anything the UI does synchronously directly delays how much time Stockfish actually gets to think.
+
+With that framing, here's what stood out, roughly ordered by expected impact:
+
+## 🔴 High impact
+
+**1. `gui_make_move` does a full `BoardState` struct copy on every legality test**
+```c
+typedef struct {
+    int board[64];   // 256 bytes
+    int turn, castle, ep, halfmoves, fullmoves; // 20 bytes
+} BoardState; // ~276 bytes
+```
+`gui_is_legal_move` → `gui_make_move` copies this whole struct (`*dst = *src`) for **every single candidate move tested**, and it's tested a lot: `gui_has_legal_moves` iterates up to 64×64=4096 (from,to) pairs, `update_selected_destinations` iterates 64, SAN disambiguation iterates up to 64 per move, etc.
+
+- **Fix idea:** Use `int8_t board[64]` instead of `int board[64]`. This alone shrinks the struct from ~276 bytes to ~84 bytes — a >3x reduction in copy cost everywhere (`gui_make_move`, `history[]` storage, `memcmp` in `count_repetitions`), and shrinks `history[512]` from ~141KB to ~43KB of static RAM (relevant given the comment about RAM being tight enough to break thread spawning).
+- **Better fix:** avoid the full copy entirely for legality checks — implement a lightweight "make/unmake" that mutates `board[]` in place and reverts just the touched squares, rather than allocating/copying a whole second board.
+
+**2. No check/pin fast-path — every candidate move gets a full "make → find king → is-square-attacked" pass**
+`gui_is_legal_move` unconditionally does: pseudo-legal check → full move → `gui_find_king` (O(64) scan) → `gui_is_square_attacked` (ray-scans in 4+4 directions, knight/king/pawn checks). This is the classic "legal move gen via make+attacked-check" pattern, which is correct but expensive when called thousands of times per position (via `gui_has_legal_moves`).
+
+- **Fix idea:** Precompute once per position (in `invalidate_and_update_board_caches`) whether the mover's king is currently in check, and — if not — precompute the set of pinned pieces. Then for the common case (king not in check, piece not pinned, piece isn't the king, not en passant), a move is legal by construction and can skip the expensive make+attacked-check entirely. This turns the O(moves × O(64)) legality sweep into O(1) for the vast majority of moves.
+
+**3. `gui_has_legal_moves` is computed twice per move**
+Once inside `gui_move_to_san`'s `append_suffixes:` block (to decide `+`/`#`), and again in `invalidate_and_update_board_caches` right after `push_state`. Both operate on the same resulting position.
+
+- **Fix idea:** have `gui_move_to_san` return/cache its check+mate result (e.g., via an out-parameter or a small struct) so `invalidate_and_update_board_caches` can reuse it instead of recomputing.
+
+## 🟡 Medium impact
+
+**4. `count_repetitions` does a full `memcmp` of the 64-square board against every history entry**
+```c
+for (int i = 0; i < history_count; i++) {
+    ... memcmp(state->board, history[i].board, sizeof(state->board)) == 0
+```
+With up to 512 history entries, this is a lot of byte comparisons every single move.
+
+- **Fix idea:** compute and store a simple 32/64-bit hash (rolling XOR/Zobrist-style, doesn't need to be cryptographic) alongside each `BoardState` when it's pushed. Compare hashes first (O(1) int compare); only fall back to a full board compare on hash collision (rare), or just trust the hash if it's well-distributed.
+
+**5. `trigger_engine_move` rebuilds the entire move list command from scratch every turn**
+```c
+strcpy(cmd, "position startpos moves");
+for (int i = 0; i < history_count; i++) { ... }
+```
+This re-serializes the whole game history (up to 512 moves) every time the engine is asked to move, discarding previous work.
+
+- **Fix idea:** maintain the command buffer incrementally — append only the newest move's UCI string when `history_count` grows, rather than rebuilding from index 0 each time.
+
+**6. `draw_top_board` does a full re-init + full redraw on every "top needs redraw" event**
+It calls `init_custom_palettes()` (rewrites all palette entries) and fully `memset`s two 32×32 tilemaps, then redraws all 64 squares — even for something like a single cursor move.
+
+- **Fix idea:** track the previous cursor/selection/highlight state and only touch the tiles that actually changed (old cursor square, new cursor square, etc.). This is a bigger rendering-architecture change, but since redraws happen on essentially every keypress, it adds up on constrained hardware. This mainly matters for input responsiveness rather than search speed, but still steals cycles from the same core.
+
+## 🟢 Lower priority / worth a look
+
+- `selected_legal_destinations[64]` is `int[64]` (256 bytes) just to store booleans — could be a `uint8_t[64]` or a 64-bit bitmask, cutting `memset`/scan cost.
+- SAN disambiguation in `gui_move_to_san` re-derives "does another same-type piece also reach this square" via another full `gui_is_legal_move` sweep — only runs once per move so it's not hot-path, but it would benefit from the same pin/check fast-path as #2.
+- `push_raw_log`'s scroll-up uses `memmove` in a loop of 9 fixed-size rows — trivial, not worth touching.
+
+## Bigger-picture note
+
+You already found and fixed one important RAM constraint (`MAX_HISTORY` 2048→512). If reducing `BoardState`'s footprint (int→int8_t board) frees additional RAM, it might be worth revisiting:
+```c
+sf_send_command("setoption name Hash value 1");
+```
+1MB of TT hash is extremely small for Stockfish — if you can spare even a few extra MB now, raising this is very likely to matter more for actual playing strength/effective search speed than any of the micro-optimizations above, since it directly reduces transposition table collisions during search.
+
+**Summary:** the biggest wins are (1) shrinking `BoardState` / avoiding full-struct copies in legality testing, (2) adding a check/pin fast-path so most moves skip the expensive make+attacked-check cycle, and (3) eliminating the duplicate `gui_has_legal_moves` call per move. These directly reduce how much CPU the GUI logic steals from the Stockfish search thread on the shared core. The rendering and command-rebuilding items are smaller wins mostly affecting UI responsiveness.
+
+
+
+
+Absolutely — I've implemented the changes that are safe to make within this file alone (the GUI/legality layer). I could not touch Stockfish's internal search/movegen since those files weren't provided, but everything proposed for main.c (the board-state/legality/UI logic) is implemented below.
+
+Important caveat up front: I don't have your nds.h/libnds environment or the rest of the codebase to compile and test this on real hardware/emulator. I've been careful about correctness (especially the pin-detection fast path, en-passant/castling edge cases, and the check/mate hint plumbing), but please test thoroughly — particularly: checkmate/stalemate detection, discovered-check en passant captures, castling through check, and 3-fold repetition after the hashing change — before trusting it in a real game.
+Summary of what changed
+
+    BoardState.board is now int8_t[64] instead of int[64], and a hash field was added. This alone shrinks BoardState from ~276 bytes to ~88 bytes (~3.1x), which reduces the cost of every struct copy in gui_make_move, and shrinks history[MAX_HISTORY] from ~141KB to ~45KB — freeing ~96KB of RAM.
+        Fixed a latent bug this change would have caused: gui_init_board's int start[64] array copy via memcpy would have copied the wrong number of bytes into an int8_t[64] board. It's now a static const int8_t start[64].
+
+    Added pin/check caching (PinInfo) and a fast-path legality check (gui_is_legal_move_pins). For the common case — king not in check, moving piece isn't the king, isn't pinned, and isn't an en-passant capture — a pseudo-legal move is accepted as legal without simulating it, skipping the expensive make-move + re-scan-for-attackers step entirely. Castling, en passant, king moves, pinned pieces, and in-check positions always fall back to the fully general slow path for correctness.
+        Used in gui_has_legal_moves (was O(4096) worst-case simulations per call — now most of those short-circuit in O(1)), update_selected_destinations, and SAN disambiguation.
+
+    Eliminated duplicate gui_make_move / gui_has_legal_moves calls per move. push_state now computes the resulting position exactly once and hands it back via out_next; gui_move_to_san (renamed gui_move_to_san_ex) reuses that same result instead of recomputing it; and invalidate_and_update_board_caches reuses the already-computed has_legal_moves result via a one-shot hint instead of scanning again immediately afterward.
+
+    Hash-accelerated repetition detection. Each BoardState now carries an FNV-1a hash computed once in gui_make_move/gui_init_board. count_repetitions compares hashes first (O(1) int compare) and only falls back to the full memcmp on an actual hash match, avoiding up to 512 full board comparisons per move.
+
+    Incremental UCI position-command building. trigger_engine_move no longer rebuilds the entire "position startpos moves ..." string from move 1 every single turn — it now appends only new moves since the last sync, and self-heals with a full rebuild if history_count ever goes backwards (Undo/Reset).
+
+    selected_legal_destinations shrunk from int[64] to uint8_t[64] — smaller footprint, cheaper memset.
+
+Full modified file:
