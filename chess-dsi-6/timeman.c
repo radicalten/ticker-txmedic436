@@ -24,7 +24,6 @@
 #include "search.h"
 #include "timeman.h"
 #include "uci.h"
-#include "3ds_bridge.h"
 
 struct TimeManagement Time; // Our global time management struct
 
