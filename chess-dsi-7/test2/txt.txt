@@ -1,1 +1,22 @@
+Refactor main.c just as in chess-wii-6 using claude sonnet 5, so that it uses stockfish logic for legal moves rather than use its own:
 
+==================================
+From: wii-chess-6 test 2:
+"## Notes on what I did *not* change
+
+I left the hand-rolled move-generation/legality/attack code (`is_square_attacked`, `has_legal_moves`, `is_pseudo_legal_move`, `move_to_pgn` disambiguation) untouched. Rewriting that to use Stockfish's own bitboard attack tables (`bitboard.h`/`position.h`, already linked) would be the architecturally "correct" fix and would eliminate a second, independently-maintained rules implementation — but it's a substantial rewrite (needs a real `Position` object kept in sync with `BoardState`, or a full port of the GUI layer onto Stockfish's move generator) rather than a safe drop-in patch, and I don't have `bitboard.h`/`position.h`'s actual API surface in front of me to do it correctly without guessing signatures. I'd recommend doing that as a separate, deliberate refactor rather than folding it into this speedup pass — happy to help design it if you want to share those headers.
+
+
+*PASTE bitboard.h here in prompt*
+
+Excellent — with `bitboard.h` in hand I can now do the real architectural fix: replace the hand-rolled attack detection with Stockfish's own precomputed tables and magic bitboards. This is a genuine algorithmic improvement (O(1) slider attacks instead of ray-walking), not just a micro-opt, and it also removes a chunk of duplicated rules logic.
+
+## Key idea: square-numbering bridge"
+======================================
+
+#plan: ask claude sonnet 5 to refactor the chess engine main.c using bitboard.h and position.h
+
+prompt: Can you refactor my main.c file (a chess engine for DSi) so that the gui logic matches the implementation of bitboard.h and position.h from CFish?:
+main.c
+bitboard.h
+position.h
