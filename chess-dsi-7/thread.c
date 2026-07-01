@@ -56,6 +56,16 @@ typedef struct {
 static MsgQueue q_gui_to_engine;
 static MsgQueue q_engine_to_gui;
 
+// OPTIMIZATION: wait queue used to wake sf_recv_command() the instant a new
+// command is pushed by sf_send_command(), instead of it polling the queue
+// every 1ms via threadSleep(). See the top-level explanation of why this
+// check-then-threadBlock pattern cannot lose a wakeup on Calico's
+// single-core, non-timesliced scheduler (nothing can run between our final
+// failed condition check and our threadBlock() call except a genuinely
+// higher-priority thread, and none exists in this codebase that touches
+// this queue).
+static ThrListNode s_guiToEngineQueue;
+
 // Stack and Thread-Local Storage Configuration for Calico
 #define SF_THREAD_STACK_SIZE (64 * 1024) // 64 KB Stack (safe for heavy chess evaluation)
 
@@ -125,6 +135,11 @@ void sf_bridge_init(void) {
     LightLock_Init(&q_engine_to_gui.lock);
     
     s_searchThreadActive = false;
+    // s_guiToEngineQueue is a static ThrListNode and is therefore
+    // zero-initialized by the BSS segment at program start, matching the
+    // "empty queue" representation used elsewhere in Calico (see Thread's
+    // own zero-initialized 'waiters' field). No explicit init call exists
+    // in the public API for this type, so this relies on that convention.
 }
 
 static void queue_push_char(MsgQueue *q, char c) {
@@ -143,6 +158,14 @@ void sf_send_command(const char *cmd) {
     }
     queue_push_char(&q_gui_to_engine, '\n');
     LightLock_Unlock(&q_gui_to_engine.lock);
+
+    // OPTIMIZATION: wake sf_recv_command() immediately if it's blocked
+    // waiting for input, instead of making it discover this command up to
+    // 1ms later via polling. Harmless no-op if nobody is currently blocked
+    // (e.g. the engine hasn't started listening yet, or is busy processing
+    // a previous line) - it will simply see the new data on its next
+    // condition check regardless.
+    threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
 
 void sf_recv_command(char *buf, size_t max_len) {
@@ -191,9 +214,11 @@ void sf_recv_command(char *buf, size_t max_len) {
         
         LightLock_Unlock(&q_gui_to_engine.lock);
         
-        // Use active thread sleep (1 millisecond) instead of yielding continuously.
-        // This avoids running hot and chewing through battery when idle.
-        threadSleep(1000); 
+        // OPTIMIZATION: block until sf_send_command() wakes us, instead of
+        // polling every 1ms via threadSleep(). Safe against lost wakeups:
+        // see the top-of-file explanation of why nothing can run between
+        // the Unlock above and this threadBlock() call on this scheduler.
+        threadBlock(&s_guiToEngineQueue, 0);
     }
 }
 
@@ -316,6 +341,12 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int sf_get_output(char *buf, size_t max_len) {
+    // NOTE: intentionally left as a cheap non-blocking poll. This is called
+    // once per rendered frame from the GUI's main loop (already gated by
+    // threadWaitForVBlank()), so there's no polling-overhead problem to
+    // solve here - converting it to a blocking wait would be inappropriate
+    // since the GUI thread has other per-frame work (input, redraw) to do
+    // regardless of whether new engine output is available yet.
     ds_yield(); // Give engine thread a turn to push outputs
 
     LightLock_Lock(&q_engine_to_gui.lock);
@@ -415,6 +446,40 @@ static Thread* s_calicoThreads[MAX_THREADS] = { NULL };
 static void* s_threadStacks[MAX_THREADS] = { NULL };
 static void* s_threadTls[MAX_THREADS] = { NULL };
 
+// ==========================================
+// OPTIMIZATION: WAIT QUEUES REPLACING POLLING
+// ==========================================
+// s_actionQueue[idx]: worker 'idx' blocks here while pos->action ==
+//                     THREAD_SLEEP, woken by thread_wake_up()/thread_destroy().
+// s_sleepQueue[idx]:  other threads block here in thread_wait_until_sleeping()
+//                     waiting for worker 'idx' to finish and return to sleep.
+// s_initQueue:        the creating thread blocks here in thread_create(),
+//                     woken once thread_init() finishes its one-time setup
+//                     (on every exit path, including OOM failures).
+//
+// All are static ThrListNode arrays/instances, relying on BSS zero-init as
+// the valid "empty queue" representation (see note in sf_bridge_init()).
+// This is safe from lost wakeups on Calico's single-core, non-timesliced
+// scheduler as explained at the top of this file: nothing can run between
+// a thread's final failed condition check and its threadBlock() call except
+// a strictly higher-priority thread, and none exists here that touches
+// these particular flags.
+static ThrListNode s_actionQueue[MAX_THREADS];
+static ThrListNode s_sleepQueue[MAX_THREADS];
+static ThrListNode s_initQueue;
+
+// Small helper ensuring every one of thread_init()'s several exit paths
+// (including all OOM failure branches) consistently pairs the
+// "initializing = false" flag flip with waking thread_create()'s waiter -
+// previously thread_create() discovered this via polling regardless of
+// which exit path was taken, so this preserves identical behavior on every
+// path while removing the polling cost.
+static inline void thread_init_signal_done(void)
+{
+  Threads.initializing = false;
+  threadUnblockAllByValue(&s_initQueue, 0);
+}
+
 // thread_init() is where a search thread starts and initializes itself.
 static int thread_init(void *arg)
 {
@@ -432,7 +497,7 @@ static int thread_init(void *arg)
     if (!cmhTables) {
       sf_printf("\x1b[1;31m[OOM] Failed to allocate cmhTables list!\x1b[0m\n");
       sf_fflush(stdout);
-      Threads.initializing = false;
+      thread_init_signal_done();
       return 0;
     }
     while (old < numCmhTables)
@@ -444,7 +509,7 @@ static int thread_init(void *arg)
     if (!cmhTables[t]) {
       sf_printf("\x1b[1;31m[OOM] Failed to allocate CounterMoveHistoryStat table!\x1b[0m\n");
       sf_fflush(stdout);
-      Threads.initializing = false;
+      thread_init_signal_done();
       return 0;
     }
     for (int chk = 0; chk < 2; chk++)
@@ -458,7 +523,7 @@ static int thread_init(void *arg)
   if (!pos) {
     sf_printf("\x1b[1;31m[OOM] Failed to allocate Position struct for Thread %d!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 
@@ -468,7 +533,7 @@ static int thread_init(void *arg)
   if (!pos->pawnTable || !pos->materialTable) {
     sf_printf("\x1b[1;31m[OOM] Failed to allocate pawn or material tables for Thread %d!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 #endif
@@ -485,7 +550,7 @@ static int thread_init(void *arg)
       !pos->lowPlyHistory || !pos->rootMoves || !pos->stackAllocation || !pos->moveList) {
     sf_printf("\x1b[1;31m[OOM] Thread %d failed to allocate history/search arrays!\x1b[0m\n", idx);
     sf_fflush(stdout);
-    Threads.initializing = false;
+    thread_init_signal_done();
     return 0;
   }
 
@@ -499,11 +564,14 @@ static int thread_init(void *arg)
   // Store the initialized Position structural handle
   Threads.pos[idx] = pos;
 
-  // GCC Hardware Barrier: Force Thread mapping completions
+  // GCC Hardware Barrier: Force Thread mapping completions. Kept as a
+  // one-time, startup-only cost (not a hot path) purely for defense in
+  // depth around the Threads.pos[idx] publish, since we don't have
+  // visibility into whether that field is qualified volatile/atomic.
   __sync_synchronize();
 
-  // Signal completion to parent thread
-  Threads.initializing = false;
+  // Signal completion to parent thread (thread_create()'s blocked waiter).
+  thread_init_signal_done();
 
   thread_idle_loop(pos);
 
@@ -553,10 +621,10 @@ static void thread_create(int idx)
   // Wake up thread execution immediately
   threadStart(s_calicoThreads[idx]);
   
-  // Safe yield loop preventing startup freezes
+  // OPTIMIZATION: block until thread_init() signals completion (on any exit
+  // path, success or OOM) instead of polling Threads.initializing every 1ms.
   while (Threads.initializing) {
-    __sync_synchronize();       // Force memory sync across cores
-    threadSleep(1000);          // Yield 1 millisecond using preemptive sleeps
+    threadBlock(&s_initQueue, 0);
   }
 }
 
@@ -565,9 +633,16 @@ static void thread_destroy(Position *pos)
 {
   int idx = pos->threadIdx;
   pos->action = THREAD_EXIT;
+  // Kept as a one-time, shutdown-only cost for defense in depth (see note
+  // in thread_init() above).
   __sync_synchronize();
+
+  // OPTIMIZATION: actively wake the worker out of thread_idle_loop()'s
+  // blocking wait instead of relying on it to notice via polling.
+  threadUnblockAllByValue(&s_actionQueue[idx], 0);
   
-  // Explicitly wait for thread termination
+  // Explicitly wait for thread termination (threadJoin is already a proper
+  // blocking primitive - no polling here to begin with).
   if (s_calicoThreads[idx]) {
     threadJoin(s_calicoThreads[idx]);
     free(s_calicoThreads[idx]);
@@ -598,13 +673,14 @@ static void thread_destroy(Position *pos)
   free(pos);
 }
 
-// thread_wait_for_search_finished() waits until not searching.
+// thread_wait_until_sleeping() waits until not searching.
 void thread_wait_until_sleeping(Position *pos)
 {
-  // High-performance cooperative yield loop with compile-time memory barriers
+  // OPTIMIZATION: block on this thread's sleep-queue instead of polling
+  // pos->action every 1ms. thread_idle_loop() wakes this queue every time
+  // it sets pos->action back to THREAD_SLEEP.
   while (pos->action != THREAD_SLEEP) {
-    __sync_synchronize();       // Force memory synchronization across CPU cores
-    threadSleep(1000);          // Sleep 1ms to allow execution slots
+    threadBlock(&s_sleepQueue[pos->threadIdx], 0);
   }
 
   if (pos->threadIdx == 0)
@@ -612,6 +688,15 @@ void thread_wait_until_sleeping(Position *pos)
 }
 
 // thread_wait() waits until condition is true.
+//
+// NOTE: intentionally NOT converted to a blocking wait. This function is
+// generic over an arbitrary caller-supplied atomic_bool*, and safely
+// converting it requires also adding a matching threadUnblockAllByValue()
+// call at every call site that does `atomic_store(condition, true)` -
+// those call sites live in search.c, which wasn't available for review.
+// Guessing at this would risk a hang if a call site were missed. Left as
+// polling; a good follow-up once search.c's usage of this function can be
+// audited.
 void thread_wait(Position *pos, atomic_bool *condition)
 {
   while (!atomic_load(condition)) {
@@ -624,18 +709,21 @@ void thread_wake_up(Position *pos, int action)
 {
   if (action != THREAD_RESUME) {
     pos->action = action;
-    __sync_synchronize();       // Force instant cache line flush
+    // OPTIMIZATION: actively wake the worker instead of just setting the
+    // flag and relying on it to notice via polling.
+    threadUnblockAllByValue(&s_actionQueue[pos->threadIdx], 0);
   }
 }
 
 // thread_idle_loop() is where the thread is parked when it has no work to do.
 static void thread_idle_loop(Position *pos)
 {
+  int idx = pos->threadIdx;
   while (true) {
-    // Cooperative park loop
+    // OPTIMIZATION: block until woken by thread_wake_up()/thread_destroy(),
+    // instead of polling pos->action every 2ms.
     while (pos->action == THREAD_SLEEP) {
-      __sync_synchronize();       // Force core-to-core synchronicity checks
-      threadSleep(2000);          // Sleep 2ms to prevent CPU starvation
+      threadBlock(&s_actionQueue[idx], 0);
     }
 
     if (pos->action == THREAD_EXIT) {
@@ -650,7 +738,9 @@ static void thread_idle_loop(Position *pos)
     }
 
     pos->action = THREAD_SLEEP;
-    __sync_synchronize();         // Commit the state change globally immediately
+    // OPTIMIZATION: wake anyone blocked in thread_wait_until_sleeping() for
+    // this thread, instead of leaving them to discover it via polling.
+    threadUnblockAllByValue(&s_sleepQueue[idx], 0);
   }
 }
 
