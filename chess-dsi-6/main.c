@@ -1,3 +1,28 @@
+/*
+  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
+  Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+
+  Stockfish is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  Stockfish is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  See the
+  GNU General Public License for more details.
+*/
+
 #define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
 #include <nds.h>
 #include <stdio.h>
@@ -5,6 +30,18 @@
 #include <string.h>
 
 #include "3ds_bridge.h"
+
+// Stockfish Engine Headers
+#include "bitboard.h"
+#include "endgame.h"
+#include "pawns.h"
+#include "polybook.h"
+#include "position.h"
+#include "search.h"
+#include "thread.h"
+#include "tt.h"
+#include "uci.h"
+#include "tbprobe.h"
 
 #define MAX_HISTORY 2048
 
@@ -1259,13 +1296,61 @@ void init_board(BoardState *state) {
     state->fullmoves = 1;
 }
 
-extern int main_stockfish(int argc, char **argv);
+// Stockfish Engine Subprocess Entry Point
+int main_stockfish(int argc, char **argv)
+{
+  print_engine_info(false);
+  ds_yield(); // Let GUI draw initial console booting messages
+
+  psqt_init();
+  ds_yield(); // Hand off CPU to GUI so screens don't freeze
+
+  bitboards_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  zob_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  bitbases_init();
+  ds_yield(); // Hand off CPU to GUI
+
+#ifndef NNUE_PURE
+  endgames_init();
+  ds_yield(); // Hand off CPU to GUI
+#endif
+
+  threads_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  options_init();
+  ds_yield(); // Hand off CPU to GUI
+
+  search_clear();
+  ds_yield(); // Hand off CPU to GUI
+
+  // Start the engine command interface loop
+  uci_loop(argc, argv);
+
+  threads_exit();
+  TB_free();
+  options_free();
+  tt_free();
+  pb_free();
+  #ifdef NNUE
+  nnue_free();
+  #endif
+
+  return 0;
+}
+
+// Thread callback wrapper invoking Stockfish
 void stockfish_thread_func(void* arg) {
     (void)arg;
     char *argv[] = {"stockfish", NULL};
     main_stockfish(1, argv);
 }
 
+// Nintendo DS Main Entry Point
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     
