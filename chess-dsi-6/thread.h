@@ -26,11 +26,6 @@
 #ifndef THREAD_H
 #define THREAD_H
 
-// Prevent old 3ds_bridge.h references from double-declaring things
-#ifndef THREEDS_BRIDGE_H
-#define THREEDS_BRIDGE_H
-#endif
-
 #include <stdio.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -42,8 +37,10 @@
 #include "types.h"
 
 /* ============================================================================
-   SECTION 1: 3DS/DS BRIDGE INTERFACE (Formerly 3ds_bridge.h)
+   SECTION 1: 3DS/DS BRIDGE INTERFACE (Mutually exclusive with 3ds_bridge.h)
    ============================================================================ */
+#ifndef THREEDS_BRIDGE_H
+#define THREEDS_BRIDGE_H
 
 // On Nintendo DS/DSi, define 3DS compatibility wrappers
 #ifdef __NDS__
@@ -163,6 +160,23 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 }
 #endif
 
+// Redirection applies ONLY to the Stockfish engine files, NOT the GUI main.c
+#ifndef IS_GUI
+#define printf sf_printf
+#define fprintf sf_fprintf
+#define vfprintf sf_vfprintf
+#define fflush sf_fflush
+#define puts sf_puts
+#define fputs sf_fputs
+#define putchar sf_putchar
+#define fputc sf_fputc
+#define putc sf_putc
+#define fwrite sf_fwrite
+#define pthread_create sf_pthread_create
+#endif
+
+#endif // THREEDS_BRIDGE_H
+
 
 /* ============================================================================
    SECTION 2: STOCKFISH ENGINE THREADING (Formerly thread.h)
@@ -228,30 +242,11 @@ static inline Position *threads_main(void)
 extern CounterMoveHistoryStat **cmhTables;
 extern int numCmhTables;
 
-
-/* ============================================================================
-   SECTION 3: ENGINE STREAM REDIRECTION
-   ============================================================================ */
-// Redirection applies ONLY to the Stockfish engine files, NOT the GUI main.c
-#ifndef IS_GUI
-#define printf sf_printf
-#define fprintf sf_fprintf
-#define vfprintf sf_vfprintf
-#define fflush sf_fflush
-#define puts sf_puts
-#define fputs sf_fputs
-#define putchar sf_putchar
-#define fputc sf_fputc
-#define putc sf_putc
-#define fwrite sf_fwrite
-#define pthread_create sf_pthread_create
-#endif
-
 #endif // THREAD_H
 
 
 /* ============================================================================
-   SECTION 4: IMPLEMENTATION (For compiled translation unit)
+   SECTION 3: IMPLEMENTATION (For compiled translation unit)
    ============================================================================ */
 #ifdef THREAD_IMPLEMENTATION
 
