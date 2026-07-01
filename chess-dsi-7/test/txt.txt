@@ -27,3 +27,8 @@ can you also evaluate this chess engine file, thread.c, written in C for DSi and
 follow up: Here is devkitpro's calico/thread.h
 
 #https://github.com/devkitPro/calico/blob/master/include/calico/system/thread.h
+#the change it makes compiles and runs, but now the computer engine never makes a move. 
+
+do any changes need to be made to main.c now?
+
+
