@@ -19,12 +19,13 @@
   GNU General Public License for more details.
 */
 
-#define IS_GUI // Tells 3ds_bridge.h to let this file write directly to the screens
+#define IS_GUI // Tells thread.h to let this file write directly to the screens
 #include <nds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 // Stockfish Engine Headers
 #include "bitboard.h"
@@ -45,29 +46,46 @@
 // ==========================================================================
 // ENGINE ADAPTER
 // ==========================================================================
-// The GUI's game-state, legality checking, check detection, and move
-// application are now driven entirely by Cfish's real bitboard-based
-// Position (bitboard.h / position.h / movegen.h) instead of a separate
-// hand-rolled mailbox rules engine. This is the ONLY section that should
-// need edits if your exact header prototypes differ from what's assumed
-// here (see the table in the accompanying notes).
+// The GUI's game-state, legality checking, check detection, SAN generation,
+// draw detection, and move application are now driven entirely by Cfish's
+// real Position (position.h / movegen.h) - the exact same code the search
+// thread uses - instead of a separate hand-rolled mailbox rules engine.
+//
+// IMPORTANT: g_pos is a completely separate, GUI-private Position. It is
+// NEVER registered into Threads.pos[] and NEVER passed to
+// threads_start_thinking()/thread_search(). The engine subprocess's own
+// search thread has its own Position (Threads.pos[0], built by
+// thread_init() in thread.c) which the GUI must never touch directly - all
+// GUI<->engine communication continues to go over the existing UCI text
+// bridge (sf_send_command / sf_get_output), exactly as before.
+//
+// DESIGN NOTE / ASSUMPTION (please verify against movegen.c / position.c if
+// possible): do_move(), undo_move(), is_legal(), is_pseudo_legal(),
+// gives_check_special(), generate_legal(), and is_draw() are assumed to
+// touch only board/bitboard/Stack state - never pos->pawnTable,
+// materialTable, mainHistory, captureHistory, lowPlyHistory,
+// counterMoveHistory, counterMoves, rootMoves, or moveList. Those are
+// search/move-ordering/evaluation-only structures in every known
+// Stockfish/Cfish version (thread_init() in thread.c only allocates them
+// for use by movepick.c/search.c/pawns.c/material.c). We deliberately leave
+// them NULL here rather than duplicating thread_init()'s multi-megabyte
+// allocations (CounterMoveHistoryStat alone is ~8MB - duplicating that for
+// a second, GUI-only Position is not viable on DSi's RAM budget). If this
+// assumption is wrong for this fork, the failure mode is an immediate,
+// deterministic NULL-pointer crash on the very first do_move() call - not a
+// subtle/rare bug - so it will surface immediately in testing.
 // ==========================================================================
 
-#define GUI_MOVE_LIST_SIZE 256
-
-// The GUI's live game position. Position is a plain struct owned entirely
-// by us (distinct from any Position the search thread owns), so there's no
-// aliasing/thread-safety concern between the GUI thread and the engine
-// thread - they just talk over the UCI text bridge as before.
+// The GUI's live game position.
 static Position g_pos;
 
-// Persistent, contiguous StateInfo ("Stack") storage for g_pos. Cfish's
-// Position keeps a raw pointer (pos->st) into caller-owned, contiguous
-// Stack storage and simply walks it forward/backward on do_move/undo_move -
-// exactly mirroring how Stockfish/Cfish wires up Thread::rootPos. We give
-// it MAX_HISTORY+8 slots so a full game (plus a little slack) always has
-// storage.
-static Stack g_state_stack[MAX_HISTORY + 8];
+// Stack buffer backing g_pos->st. Mirrors thread_init()'s allocate+align
+// pattern exactly, but sized for one long-lived linear game (MAX_HISTORY
+// plies) with generous padding on both ends, rather than thread_init()'s
+// bounded search-recursion sizing (63 + MAX_PLY + 110 slots), since we
+// don't know exactly where pos_set() anchors pos->st within the buffer.
+#define GUI_STACK_SLOTS (128 + MAX_HISTORY + 128)
+static void *g_stack_alloc = NULL;
 
 // The exact Move object applied at each ply, needed to call undo_move()
 // later (undo_move requires the identical Move that was passed to do_move).
@@ -85,28 +103,32 @@ static inline int gui_cfish_flip_sq(int sq) {
 #define gui_to_cfish_sq(s) gui_cfish_flip_sq(s)
 #define cfish_to_gui_sq(s) gui_cfish_flip_sq(s)
 
-// Piece at a GUI square, in the GUI's signed convention
-// (P=1,N=2,B=3,R=4,Q=5,K=6, positive=White, negative=Black, 0=empty).
-static inline int gui_piece_at(int gui_sq) {
-    Piece pc = piece_on(&g_pos, gui_to_cfish_sq(gui_sq));
-    if (pc == 0) return 0;
-    int val = (int)type_of(pc);
-    return (color_of(pc) == WHITE) ? val : -val;
-}
-
-static int gui_find_king_sq(const Position *pos, int color) {
-    for (int s = 0; s < 64; s++) {
-        Piece pc = piece_on(pos, s);
-        if (pc != 0 && type_of(pc) == KING && color_of(pc) == color) return s;
-    }
-    return -1;
-}
-
 typedef struct {
     int from;
     int to;
     int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q  (matches Cfish's PieceType numbering)
 } GuiMove;
+
+// Piece at a GUI square, in the GUI's signed convention
+// (P=1,N=2,B=3,R=4,Q=5,K=6, positive=White, negative=Black, 0=empty).
+// NOTE: piece_on()/color_of() etc. below are position.h macros that expand
+// to "pos->something" verbatim, so a local variable literally named 'pos'
+// must be in scope for them to resolve correctly.
+static inline int gui_piece_at(int gui_sq) {
+    Position *pos = &g_pos;
+    Piece pc = piece_on(gui_to_cfish_sq(gui_sq));
+    if (pc == 0) return 0;
+    int val = (int)type_of_p(pc);
+    return (color_of(pc) == WHITE) ? val : -val;
+}
+
+// GUI square of the side-to-move's king if it is currently in check, else -1.
+static inline int gui_king_in_check_sq(void) {
+    Position *pos = &g_pos;
+    if (!checkers()) return -1;
+    Square ksq = square_of(stm(), KING);
+    return cfish_to_gui_sq(ksq);
+}
 
 // Converts a Cfish Move into the GUI's (from,to,promo) representation.
 // Castling is special-cased: Cfish internally encodes castling as
@@ -128,13 +150,13 @@ static GuiMove gui_move_of(Move m) {
     return r;
 }
 
-// Finds the legal Cfish Move matching a GUI move (from/to/promo), or 0
-// (MOVE_NONE) if gm isn't legal in the current position. Because this
-// scans generate_legal()'s output, ALL legality (pins, checks, castling
+// Finds the legal Cfish Move matching a GUI move (from/to/promo), or
+// MOVE_NONE if gm isn't legal in the current position. Because this scans
+// generate_legal()'s output, ALL legality (pins, checks, castling
 // rights/path, en passant, etc.) comes straight from the real move
 // generator - no separate pin/attack scanner needed anymore.
 static Move gui_find_cfish_move(GuiMove gm) {
-    ExtMove list[GUI_MOVE_LIST_SIZE];
+    ExtMove list[MAX_MOVES];
     ExtMove *end = generate_legal(&g_pos, list);
     for (ExtMove *e = list; e < end; e++) {
         GuiMove cand = gui_move_of(e->move);
@@ -145,27 +167,43 @@ static Move gui_find_cfish_move(GuiMove gm) {
             return e->move;
         }
     }
-    return 0; // MOVE_NONE
+    return MOVE_NONE;
 }
 
 static inline int gui_is_legal_move(GuiMove gm) {
-    return gui_find_cfish_move(gm) != 0;
+    return gui_find_cfish_move(gm) != MOVE_NONE;
 }
 
 static inline int gui_has_legal_moves(void) {
-    ExtMove list[GUI_MOVE_LIST_SIZE];
+    ExtMove list[MAX_MOVES];
     return generate_legal(&g_pos, list) != list;
 }
 
-// Resets g_pos to the standard starting position. Requires bitboards_init()
-// and zob_init() to have already run (see main()).
+// One-time allocation of g_pos's Stack backing storage (mirrors
+// thread_init()'s allocate+align pattern in thread.c). Must be called
+// exactly once, before the first gui_reset_game().
+static void gui_alloc_position(void) {
+    memset(&g_pos, 0, sizeof(g_pos));
+
+    g_stack_alloc = calloc(GUI_STACK_SLOTS, sizeof(Stack));
+    if (!g_stack_alloc) {
+        // Fatal - cannot proceed without a valid Stack buffer.
+        while (1) threadWaitForVBlank();
+    }
+    g_pos.stackAllocation = g_stack_alloc;
+    g_pos.stack = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
+
+    g_pos.threadIdx = -1; // sentinel: never a real Threads.pos[] index
+    atomic_store(&g_pos.resetCalls, false);
+}
+
+// Resets g_pos to the standard starting position. Safe to call repeatedly
+// (mirrors how uci.c's "ucinewgame"/"position" handlers repeatedly call
+// pos_set() on the SAME Threads.pos[0] object, reusing its one-time
+// stack/table allocations).
 static void gui_reset_game(void) {
     static char startfen[] =
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-    g_pos.st = &g_state_stack[0];
-    // TODO: if your NNUE build requires a valid pos->thisThread inside
-    // do_move/undo_move, assign one here, e.g.:
-    //   g_pos.thisThread = Threads.pos[0];
     pos_set(&g_pos, startfen, 0 /* isChess960 */);
 }
 
@@ -216,7 +254,7 @@ volatile int redraw_needed = 1;
 typedef struct {
     int is_check;
     int has_legal_moves;
-    int repetitions;
+    int is_drawn;             // true if is_draw(&g_pos) (50-move OR repetition)
     int king_in_check_sq;
 } BoardAnalysisCache;
 
@@ -260,10 +298,8 @@ static const u32 solid_tile[8] = {
     0x11111111
 };
 
-int gui_find_cfish_king_check_sq(void);
 void gui_push_move(GuiMove gm);
 void trigger_engine_move(void);
-int count_repetitions(void);
 int get_promo_choice(void);
 void invalidate_and_update_board_caches(void);
 void gui_build_san(Move m, char *buf, int *out_has_moves_after);
@@ -321,10 +357,11 @@ GuiMove gui_uci_to_move(const char *str) {
 // generate_legal() on the real Position instead of a hand-rolled pin
 // scanner.
 void gui_build_san(Move m, char *buf, int *out_has_moves_after) {
+    Position *pos = &g_pos;
     int from = from_sq(m);
     int to   = to_sq(m);
-    Piece pc = piece_on(&g_pos, from);
-    int pt = (int)type_of(pc);
+    Piece pc = piece_on(from);
+    int pt = (int)type_of_p(pc);
     int mtype = type_of_m(m);
 
     if (mtype == CASTLING) {
@@ -332,7 +369,7 @@ void gui_build_san(Move m, char *buf, int *out_has_moves_after) {
         strcpy(buf, kingside ? "O-O" : "O-O-O");
     } else {
         char *ptr = buf;
-        int is_cap = (piece_on(&g_pos, to) != 0) || (mtype == ENPASSANT);
+        int is_cap = (piece_on(to) != 0) || (mtype == ENPASSANT);
 
         if (pt == PAWN) {
             if (is_cap) {
@@ -343,17 +380,17 @@ void gui_build_san(Move m, char *buf, int *out_has_moves_after) {
             const char p_chars[] = "?PNBRQK";
             *ptr++ = p_chars[pt];
 
-            ExtMove list[GUI_MOVE_LIST_SIZE];
-            ExtMove *end = generate_legal(&g_pos, list);
+            ExtMove list[MAX_MOVES];
+            ExtMove *end = generate_legal(pos, list);
             int another_can_move = 0, same_file = 0, same_rank = 0;
             for (ExtMove *e = list; e < end; e++) {
                 Move m2 = e->move;
                 if (m2 == m) continue;
                 if (type_of_m(m2) == CASTLING) continue;
-                if (to_sq(m2) != to) continue;
+                if (to_sq(m2) != (Square)to) continue;
                 int f2 = from_sq(m2);
                 if (f2 == from) continue;
-                if (type_of(piece_on(&g_pos, f2)) != pt) continue;
+                if ((int)type_of_p(piece_on(f2)) != pt) continue;
                 another_can_move = 1;
                 if (file_of(f2) == file_of(from)) same_file = 1;
                 if (rank_of(f2) == rank_of(from)) same_rank = 1;
@@ -384,15 +421,15 @@ void gui_build_san(Move m, char *buf, int *out_has_moves_after) {
 
     // Apply the move momentarily to determine the check/mate suffix, then
     // undo it - g_pos is left exactly as it was.
-    int gives_chk = gives_check(&g_pos, m);
-    do_move(&g_pos, m, gives_chk);
+    int gives_chk = gives_check(pos, pos->st, m);
+    do_move(pos, m, gives_chk);
 
-    int in_check_after = (g_pos.st->checkersBB != 0);
-    ExtMove list2[GUI_MOVE_LIST_SIZE];
-    int has_moves = (generate_legal(&g_pos, list2) != list2);
+    int in_check_after = (checkers() != 0);
+    ExtMove list2[MAX_MOVES];
+    int has_moves = (generate_legal(pos, list2) != list2);
     if (out_has_moves_after) *out_has_moves_after = has_moves;
 
-    undo_move(&g_pos, m);
+    undo_move(pos, m);
 
     if (in_check_after) {
         char *p2 = buf + strlen(buf);
@@ -408,7 +445,7 @@ void gui_push_move(GuiMove gm) {
     if (history_count >= MAX_HISTORY - 1) return;
 
     Move m = gui_find_cfish_move(gm);
-    if (!m) return; // not legal - ignore defensively
+    if (m == MOVE_NONE) return; // not legal - ignore defensively
 
     int has_moves_after = 0;
     gui_build_san(m, san_history[history_count], &has_moves_after);
@@ -416,8 +453,9 @@ void gui_push_move(GuiMove gm) {
     move_history[history_count] = gm;
     cfish_move_history[history_count] = m;
 
-    int gives_chk = gives_check(&g_pos, m);
-    do_move(&g_pos, m, gives_chk);
+    Position *pos = &g_pos;
+    int gives_chk = gives_check(pos, pos->st, m);
+    do_move(pos, m, gives_chk);
     history_count++;
 
     g_next_has_moves_hint = has_moves_after;
@@ -640,7 +678,7 @@ void update_selected_destinations(void) {
     memset(selected_legal_destinations, 0, sizeof(selected_legal_destinations));
     if (selected_sq == -1) return;
 
-    ExtMove list[GUI_MOVE_LIST_SIZE];
+    ExtMove list[MAX_MOVES];
     ExtMove *end = generate_legal(&g_pos, list);
     for (ExtMove *e = list; e < end; e++) {
         GuiMove gm = gui_move_of(e->move);
@@ -692,28 +730,10 @@ void preformat_move_list_cache(void) {
     }
 }
 
-// Counts how many times the CURRENT position's Zobrist key (g_pos.st->key,
-// computed by the real position.c hashing - including side to move,
-// castling rights, and en-passant availability) has occurred across the
-// game so far, by scanning the persistent state stack. This is both
-// simpler and more correct than the old hand-rolled FNV hash + memcmp
-// approach.
-int count_repetitions(void) {
-    uint64_t k = g_pos.st->key;
-    int c = 0;
-    for (int i = 0; i <= history_count; i++) {
-        if (g_state_stack[i].key == k) c++;
-    }
-    return c;
-}
-
 void invalidate_and_update_board_caches(void) {
     // 1. Check state straight from the position's real checkers bitboard.
-    int in_check = (g_pos.st->checkersBB != 0);
-    state_analysis.is_check = in_check;
-    state_analysis.king_in_check_sq = in_check
-        ? cfish_to_gui_sq(gui_find_king_sq(&g_pos, g_pos.sideToMove))
-        : -1;
+    state_analysis.is_check = (g_pos.st->checkersBB != 0);
+    state_analysis.king_in_check_sq = state_analysis.is_check ? gui_king_in_check_sq() : -1;
 
     // 2. Legal-move existence, reusing the hint computed by gui_push_move()
     // (via gui_build_san) if available, else generate directly.
@@ -723,12 +743,15 @@ void invalidate_and_update_board_caches(void) {
     } else {
         state_analysis.has_legal_moves = gui_has_legal_moves();
     }
-    state_analysis.repetitions = count_repetitions();
 
-    // 3. Cache the legal highlights for the selected piece
+    // 3. Draw detection (50-move rule OR repetition) straight from the
+    // engine's own is_draw(), instead of a hand-rolled hash/memcmp scanner.
+    state_analysis.is_drawn = is_draw(&g_pos);
+
+    // 4. Cache the legal highlights for the selected piece
     update_selected_destinations();
 
-    // 4. Update formatted bottom lists
+    // 5. Update formatted bottom lists
     preformat_move_list_cache();
 }
 
@@ -917,16 +940,17 @@ void draw_bottom_stats(void) {
 
     int is_ch = state_analysis.is_check;
     int has_mov = state_analysis.has_legal_moves;
-    int repetitions = state_analysis.repetitions;
+    int is_fifty = (g_pos.st->rule50 >= 100);
+    int is_drawn = state_analysis.is_drawn;
 
     int curr_x = 0;
     if (engine_state != ENGINE_STATE_READY) {
         draw_string_sub_fast(sub_map, curr_x, 0, "Booting...", 15);
         curr_x += 10;
-    } else if (g_pos.st->rule50 >= 100) {
+    } else if (is_fifty) {
         draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 14);
         curr_x += 17;
-    } else if (repetitions >= 3) {
+    } else if (is_drawn) {
         draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (3-fold)]", 14);
         curr_x += 15;
     } else if (!has_mov) {
@@ -1098,7 +1122,7 @@ void handle_select(void) {
         return; 
     }
 
-    if (!state_analysis.has_legal_moves || g_pos.st->rule50 >= 100 || state_analysis.repetitions >= 3) {
+    if (!state_analysis.has_legal_moves || state_analysis.is_drawn) {
         return;
     }
 
@@ -1305,13 +1329,15 @@ int main(int argc, char **argv) {
 
     sf_bridge_init();
 
-    // IMPORTANT: pos_set() below computes real Zobrist keys and relies on
-    // bitboard attack tables, so the lookup tables those depend on must be
-    // built first. These are pure, idempotent table generators - the
-    // engine thread calling them again later inside main_stockfish() is
-    // harmless.
+    // IMPORTANT: pos_set() relies on real Zobrist keys, PSQT scores, and
+    // bitboard attack tables, so these idempotent table-builders must run
+    // in the GUI thread first. The engine thread calling them again later
+    // inside main_stockfish() is harmless (same reasoning as before).
     bitboards_init();
     zob_init();
+    psqt_init();
+
+    gui_alloc_position();
     gui_reset_game();
 
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
@@ -1396,7 +1422,7 @@ int main(int argc, char **argv) {
 
         int engine_active = 0;
         if (engine_state == ENGINE_STATE_READY && state_analysis.has_legal_moves &&
-            g_pos.st->rule50 < 100 && state_analysis.repetitions < 3) {
+            !state_analysis.is_drawn) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && GUI_TURN() == -1) engine_active = 1;
             else if (user_side == -1 && GUI_TURN() == 1) engine_active = 1;
