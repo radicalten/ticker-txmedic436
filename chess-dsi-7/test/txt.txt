@@ -2,8 +2,11 @@
 #follow protocol from chess-3ds-9
 
 prompt: for gemini 3.5 flash
-can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
+can you evaluate these chess engine files written in C for DSi and determine if there is any room for potential speedups?
 main-default.c
+
+prompt2: if we go back to the main thread, when running on console I get this error: setting up console registers... 
+[ERROR] Failed to spawn background Stockfish thread!
 
 prompt for claude 4.6 sonnet:
 can you evaluate these chess engine files written in C for 3DS and determine if there is any room for potential speedups?
