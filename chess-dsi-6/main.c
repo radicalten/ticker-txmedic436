@@ -68,11 +68,11 @@ typedef struct {
     int from;
     int to;
     int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} Move;
+} GuiMove;
 
 BoardState current_state;
 BoardState history[MAX_HISTORY];
-Move move_history[MAX_HISTORY];
+GuiMove move_history[MAX_HISTORY];
 char san_history[MAX_HISTORY][16]; // Cache array to store pre-calculated SAN strings
 int history_count = 0;
 
@@ -119,17 +119,17 @@ static const u32 solid_tile[8] = {
     0x11111111
 };
 
-void init_board(BoardState *state);
-int is_legal_move(const BoardState *state, Move m);
-int has_legal_moves(const BoardState *state);
-int is_square_attacked(const BoardState *state, int sq, int attacker);
-void make_move(const BoardState *src, BoardState *dst, Move m);
+void gui_init_board(BoardState *state);
+int gui_is_legal_move(const BoardState *state, GuiMove m);
+int gui_has_legal_moves(const BoardState *state);
+int gui_is_square_attacked(const BoardState *state, int sq, int attacker);
+void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m);
 void trigger_engine_move(void);
-int find_king(const BoardState *state, int color);
+int gui_find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice(void);
 
-Move gui_uci_to_move(const char *str);
+GuiMove gui_uci_to_move(const char *str);
 
 int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
@@ -139,7 +139,7 @@ int screen_to_board_sq(int r, int c) {
     }
 }
 
-void move_to_uci(Move m, char *buf) {
+void gui_move_to_uci(GuiMove m, char *buf) {
     int f_col = m.from % 8;
     int f_row = 8 - (m.from / 8);
     int t_col = m.to % 8;
@@ -154,8 +154,8 @@ void move_to_uci(Move m, char *buf) {
     }
 }
 
-Move gui_uci_to_move(const char *str) {
-    Move m = {-1, -1, 0};
+GuiMove gui_uci_to_move(const char *str) {
+    GuiMove m = {-1, -1, 0};
     if (strlen(str) < 4) return m;
     int f_col = str[0] - 'a';
     int f_row = 8 - (str[1] - '0');
@@ -173,7 +173,7 @@ Move gui_uci_to_move(const char *str) {
     return m;
 }
 
-void move_to_san(const BoardState *state, Move m, char *buf) {
+void gui_move_to_san(const BoardState *state, GuiMove m, char *buf) {
     int p = abs(state->board[m.from]);
     int turn = state->turn;
     
@@ -202,8 +202,8 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
         for (int sq = 0; sq < 64; sq++) {
             if (sq == m.from) continue;
             if (state->board[sq] == state->board[m.from]) {
-                Move alt_m = {sq, m.to, 0};
-                if (is_legal_move(state, alt_m)) {
+                GuiMove alt_m = {sq, m.to, 0};
+                if (gui_is_legal_move(state, alt_m)) {
                     another_can_move = 1;
                     if (sq % 8 == m.from % 8) same_file = 1;
                     if (sq / 8 == m.from / 8) same_rank = 1;
@@ -238,10 +238,10 @@ void move_to_san(const BoardState *state, Move m, char *buf) {
 
 append_suffixes:;
     BoardState next;
-    make_move(state, &next, m);
-    int op_king = find_king(&next, next.turn);
-    int is_check = (op_king != -1) && is_square_attacked(&next, op_king, -next.turn);
-    int has_moves = has_legal_moves(&next);
+    gui_make_move(state, &next, m);
+    int op_king = gui_find_king(&next, next.turn);
+    int is_check = (op_king != -1) && gui_is_square_attacked(&next, op_king, -next.turn);
+    int has_moves = gui_has_legal_moves(&next);
     
     ptr = buf + strlen(buf);
     if (is_check) {
@@ -254,13 +254,13 @@ append_suffixes:;
     *ptr = '\0';
 }
 
-void push_state(const BoardState *state, Move m) {
+void push_state(const BoardState *state, GuiMove m) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
         move_history[history_count] = m;
         
         // Compute and cache the SAN string immediately upon pushing the move
-        move_to_san(state, m, san_history[history_count]);
+        gui_move_to_san(state, m, san_history[history_count]);
         
         history_count++;
     }
@@ -299,7 +299,7 @@ void trigger_engine_move(void) {
         int len = strlen(cmd);
         for (int i = 0; i < history_count; i++) {
             char uci_m[10];
-            move_to_uci(move_history[i], uci_m);
+            gui_move_to_uci(move_history[i], uci_m);
             int move_len = strlen(uci_m);
             if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) break;
             cmd[len++] = ' ';
@@ -411,11 +411,11 @@ void process_engine_output(char *line) {
                 return;
             }
             
-            Move m = gui_uci_to_move(move_str);
-            if (is_legal_move(&current_state, m)) {
+            GuiMove m = gui_uci_to_move(move_str);
+            if (gui_is_legal_move(&current_state, m)) {
                 push_state(&current_state, m);
                 BoardState next;
-                make_move(&current_state, &next, m);
+                gui_make_move(&current_state, &next, m);
                 current_state = next;
             }
             engine_thinking = 0;
@@ -452,14 +452,14 @@ void read_from_engine(void) {
     }
 }
 
-int find_king(const BoardState *state, int color) {
+int gui_find_king(const BoardState *state, int color) {
     for (int i = 0; i < 64; i++) {
         if (state->board[i] == color * 6) return i;
     }
     return -1;
 }
 
-int is_square_attacked(const BoardState *state, int sq, int attacker) {
+int gui_is_square_attacked(const BoardState *state, int sq, int attacker) {
     int r = sq / 8, c = sq % 8;
 
     int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
@@ -518,7 +518,7 @@ int is_square_attacked(const BoardState *state, int sq, int attacker) {
     return 0;
 }
 
-int is_pseudo_legal_move(const BoardState *state, Move m) {
+int gui_is_pseudo_legal_move(const BoardState *state, GuiMove m) {
     int p = state->board[m.from];
     int target = state->board[m.to];
     int turn = state->turn;
@@ -591,32 +591,32 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
                 if (turn == 1 && fr == 7 && fc == 4) {
                     if (m.to == 62 && (state->castle & 1)) {
                         if (state->board[61] == 0 && state->board[62] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 61, -1) &&
-                                !is_square_attacked(state, 62, -1)) return 1;
+                            if (!gui_is_square_attacked(state, 60, -1) &&
+                                !gui_is_square_attacked(state, 61, -1) &&
+                                !gui_is_square_attacked(state, 62, -1)) return 1;
                         }
                     }
                     if (m.to == 58 && (state->castle & 2)) {
                         if (state->board[59] == 0 && state->board[58] == 0 && state->board[57] == 0) {
-                            if (!is_square_attacked(state, 60, -1) &&
-                                !is_square_attacked(state, 59, -1) &&
-                                !is_square_attacked(state, 58, -1)) return 1;
+                            if (!gui_is_square_attacked(state, 60, -1) &&
+                                !gui_is_square_attacked(state, 59, -1) &&
+                                !gui_is_square_attacked(state, 58, -1)) return 1;
                         }
                     }
                 }
                 if (turn == -1 && fr == 0 && fc == 4) {
                     if (m.to == 6 && (state->castle & 4)) {
                         if (state->board[5] == 0 && state->board[6] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 5, 1) &&
-                                !is_square_attacked(state, 6, 1)) return 1;
+                            if (!gui_is_square_attacked(state, 4, 1) &&
+                                !gui_is_square_attacked(state, 5, 1) &&
+                                !gui_is_square_attacked(state, 6, 1)) return 1;
                         }
                     }
                     if (m.to == 2 && (state->castle & 8)) {
                         if (state->board[3] == 0 && state->board[2] == 0 && state->board[1] == 0) {
-                            if (!is_square_attacked(state, 4, 1) &&
-                                !is_square_attacked(state, 3, 1) &&
-                                !is_square_attacked(state, 2, 1)) return 1;
+                            if (!gui_is_square_attacked(state, 4, 1) &&
+                                !gui_is_square_attacked(state, 3, 1) &&
+                                !gui_is_square_attacked(state, 2, 1)) return 1;
                         }
                     }
                 }
@@ -627,25 +627,25 @@ int is_pseudo_legal_move(const BoardState *state, Move m) {
     return 0;
 }
 
-int is_legal_move(const BoardState *state, Move m) {
-    if (!is_pseudo_legal_move(state, m)) return 0;
+int gui_is_legal_move(const BoardState *state, GuiMove m) {
+    if (!gui_is_pseudo_legal_move(state, m)) return 0;
     BoardState next;
-    make_move(state, &next, m);
-    int king = find_king(&next, state->turn);
+    gui_make_move(state, &next, m);
+    int king = gui_find_king(&next, state->turn);
     if (king == -1) return 0;
-    return !is_square_attacked(&next, king, -state->turn);
+    return !gui_is_square_attacked(&next, king, -state->turn);
 }
 
-int has_legal_moves(const BoardState *state) {
+int gui_has_legal_moves(const BoardState *state) {
     for (int f = 0; f < 64; f++) {
         if (state->board[f] == 0) continue;
         if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
         for (int t = 0; t < 64; t++) {
-            Move m = {f, t, 0};
+            GuiMove m = {f, t, 0};
             if (abs(state->board[f]) == 1 && (t / 8 == 0 || t / 8 == 7)) {
                 m.promo = 5;
             }
-            if (is_legal_move(state, m)) return 1;
+            if (gui_is_legal_move(state, m)) return 1;
         }
     }
     return 0;
@@ -664,7 +664,7 @@ int count_repetitions(const BoardState *state) {
     return count;
 }
 
-void make_move(const BoardState *src, BoardState *dst, Move m) {
+void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     *dst = *src;
     int p = dst->board[m.from];
     int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
@@ -825,11 +825,11 @@ void draw_top_board(void) {
     }
 
     int king_in_check = -1;
-    int w_king = find_king(&current_state, 1);
-    int b_king = find_king(&current_state, -1);
-    if (w_king != -1 && is_square_attacked(&current_state, w_king, -1)) {
+    int w_king = gui_find_king(&current_state, 1);
+    int b_king = gui_find_king(&current_state, -1);
+    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
         king_in_check = w_king;
-    } else if (b_king != -1 && is_square_attacked(&current_state, b_king, 1)) {
+    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
         king_in_check = b_king;
     }
 
@@ -853,7 +853,7 @@ void draw_top_board(void) {
 
             int is_prev_move = 0;
             if (history_count > 0) {
-                Move last_move = move_history[history_count - 1];
+                GuiMove last_move = move_history[history_count - 1];
                 if (sq == last_move.from || sq == last_move.to) {
                     is_prev_move = 1;
                 }
@@ -861,11 +861,11 @@ void draw_top_board(void) {
 
             int is_legal_dest = 0;
             if (selected_sq != -1) {
-                Move test_m = {selected_sq, sq, 0};
+                GuiMove test_m = {selected_sq, sq, 0};
                 if (abs(current_state.board[selected_sq]) == 1 && (sq / 8 == 0 || sq / 8 == 7)) {
                     test_m.promo = 5;
                 }
-                if (is_legal_move(&current_state, test_m)) {
+                if (gui_is_legal_move(&current_state, test_m)) {
                     is_legal_dest = 1;
                 }
             }
@@ -915,9 +915,9 @@ void draw_bottom_stats(void) {
     // Completely wipe screen map to prevent leftover layout trace artifacts
     memset(sub_map, 0, 32 * 32 * sizeof(u16));
 
-    int king = find_king(&current_state, current_state.turn);
-    int is_ch = is_square_attacked(&current_state, king, -current_state.turn);
-    int has_mov = has_legal_moves(&current_state);
+    int king = gui_find_king(&current_state, current_state.turn);
+    int is_ch = gui_is_square_attacked(&current_state, king, -current_state.turn);
+    int has_mov = gui_has_legal_moves(&current_state);
     int repetitions = count_repetitions(&current_state);
 
     // --- LINE 1: Turn Status & Player Config (W:Hum B:Eng) ---
@@ -1157,7 +1157,7 @@ void handle_select(void) {
         return; 
     }
 
-    if (!has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
+    if (!gui_has_legal_moves(&current_state) || current_state.halfmoves >= 100 || count_repetitions(&current_state) >= 3) {
         return;
     }
 
@@ -1168,18 +1168,18 @@ void handle_select(void) {
             selected_sq = sq;
         }
     } else {
-        Move m = {selected_sq, sq, 0};
+        GuiMove m = {selected_sq, sq, 0};
         int p = current_state.board[selected_sq];
         int is_promo = (abs(p) == 1 && (sq / 8 == 0 || sq / 8 == 7));
         if (is_promo) m.promo = 5;
 
-        if (is_legal_move(&current_state, m)) {
+        if (gui_is_legal_move(&current_state, m)) {
             if (is_promo) {
                 m.promo = get_promo_choice();
             }
             push_state(&current_state, m);
             BoardState next;
-            make_move(&current_state, &next, m);
+            gui_make_move(&current_state, &next, m);
             current_state = next;
             selected_sq = -1;
             
@@ -1226,7 +1226,7 @@ void handle_reset_board(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    init_board(&current_state);
+    gui_init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
     cursor_r = 6;
@@ -1277,7 +1277,7 @@ void adjust_time_control(void) {
     }
 }
 
-void init_board(BoardState *state) {
+void gui_init_board(BoardState *state) {
     int start[64] = {
         -4, -2, -3, -5, -6, -3, -2, -4,
         -1, -1, -1, -1, -1, -1, -1, -1,
@@ -1374,7 +1374,7 @@ int main(int argc, char **argv) {
 
     // Initialize Stockfish/handshake bridge
     sf_bridge_init();
-    init_board(&current_state);
+    gui_init_board(&current_state);
 
     // Copy solid color tile array safely to Index 255 of Main Engine VRAM via CPU Memcpy
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
@@ -1462,7 +1462,7 @@ int main(int argc, char **argv) {
         }
 
         int engine_active = 0;
-        if (engine_state == ENGINE_STATE_READY && has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
+        if (engine_state == ENGINE_STATE_READY && gui_has_legal_moves(&current_state) && current_state.halfmoves < 100 && count_repetitions(&current_state) < 3) {
             if (user_side == 2) engine_active = 1;
             else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
             else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
