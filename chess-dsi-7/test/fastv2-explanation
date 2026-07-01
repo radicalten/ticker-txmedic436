@@ -1,0 +1,14 @@
+This error occurs because the Nintendo DS/DSi has extremely limited RAM (only 4MB of main memory in standard DS compatibility mode).
+
+The massive history buffers in the chess engine are allocated statically as globals:
+History Buffer=2048 states×276 bytes per state≈565 KBHistory Buffer=2048 states×276 bytes per state≈565 KB
+
+Combined with the other history arrays, the GUI alone consumes over 620 KB620 KB of RAM. When Stockfish attempts to spawn its background thread, configure its transposition tables, and allocate thread stacks, the DS runs entirely out of memory, causing sf_pthread_create to fail and throw that spawn error.
+
+By adding our new performance caches, the compiler shifted memory alignments, which pushed the already-exhausted heap over the limit.
+The Solution
+
+    Reduce MAX_HISTORY to 512 plies: This still allows for games up to 256 full moves (which is far longer than almost any real chess game) while instantly liberating over 420 KB420 KB of fast RAM back to the operating system.
+    Restore redraw_needed as a legacy global: The compiled binary needs this variable in case your underlying bridge library (3ds_bridge.h or sf_bridge) references it externally.
+
+Here is the fully corrected, console-safe implementation:
