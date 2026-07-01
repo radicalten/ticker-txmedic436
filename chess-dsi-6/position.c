@@ -13,7 +13,6 @@
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
-#include "3ds_bridge.h"
 
 static void set_castling_right(Position *pos, Color c, Square rfrom);
 static void set_state(Position *pos, Stack *st);
