@@ -31,3 +31,9 @@ main-debug-v1-faster-v1.c
 #later in this day claude sonnet 5 was released. will test on claude4pt6help.c
 can you evaluate these chess engine files written in C for wii and determine if there is any room for potential speedups?:
 main-faster-v2-claude4pt6help.c
+
+#it was able to help or at least create code that compiled without issue, although it takes 3-5x as long as sonnet, either the servers are loaded or theres that much demand because it is a new release. also only get 3-5 free queries per hour. 
+#in terms of speed it is avg about 105k nps but bursts up to 140k or 125k occasionally likely similarly fast as the 115k version before, or perhaps slightly faster. 
+#by midgame it sustains 115k+ nps with bursts to 130k, so I will say it is a fine improvement albiet small. 
+
+
