@@ -29,7 +29,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "3ds_bridge.h"
 
 // Stockfish Engine Headers
 #include "bitboard.h"
