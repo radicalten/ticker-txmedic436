@@ -1,0 +1,57 @@
+#removed an unnecessary 50ms sleep in main.c
+#changed a 2ms sleep in thread.c to 1ms
+
+#Speed improvement: none found yet. On console Old 3DS, chess-3ds-6 depth 20 3.1-3.2k nps, now chess-3ds-7 depth 20 3.2k nps, 
+#within margin of error, perhaps it is slightly faster by .1k nps at most
+
+#next is to try to combine main_stockfish.c with main.c perhaps rolling the uci_loop twice is hurting performance.
+#currently wii is 80-100k+ nps avg 90k nps. so thats nearly 30x performance when it should be 3x performance at most
+
+ai: gemini-3.5 flash
+
+p1: Can you combine these two c files into one main file?: 
+main_stockfish.c
+main-test-1ms-sleep-v1.c 
+
+#called it: main-merge-1ms-v1-main_stockfish-.c
+
+#I get several errors from the merge:
+chess-3ds-7/main.c:71:3: error: conflicting types for 'Move'; have 'struct <anonymous>'
+   71 | } Move;
+      |   ^~~~
+In file included from chess-3ds-7/bitboard.h:26,
+                 from chess-3ds-7/main.c:33:
+chess-3ds-7/types.h:237:18: note: previous declaration of 'Move' with type 'Move' {aka 'long unsigned int'}
+  237 | typedef uint32_t Move;
+      |                  ^~~~
+chess-3ds-7/main.c:100:62: error: macro 'make_move' passed 3 arguments, but takes just 2
+  100 | void make_move(const BoardState *src, BoardState *dst, Move m);
+      |                                                              ^
+chess-3ds-7/types.h:301:9: note: macro 'make_move' defined here
+  301 | #define make_move(from,to) ((Move)((to) | ((from) << 6)))
+      |         ^~~~~~~~~
+chess-3ds-7/main.c: In function 'move_to_uci':
+chess-3ds-7/main.c:157:18: error: request for member 'from' in something not a structure or union
+  157 |     int f_col = m.from % 8;
+      |                  ^
+#
+
+#the output from this compiled, not sure if it really works. 
+#seems to run fine and citra shows 12.5k nps depth 20
+
+#next plan is to try to merge 3ds_bridge.c, 3ds_bridge.h with thread.c and thread.h (perhaps need to include misc.c and misc.h in the mix too). 
+
+#note i tried 4kb message queue size instead of 64kb in 3ds_bridge.c and it seems fine, but only tested on citra.
+
+
+#starting a new thread with gemini 3.5 flash
+Is is possible to combine these two separate C language files into one? The primary file should be thread.h 
+3ds_bridge.h
+thread.h
+
+#gemini3.5flash made one combined thread.h file, now to ask for a combined thread.c file
+
+Now lets create a combined thread.c file. here is 3ds_bridge.c followed by thread.c:
+wait, I simply meant to merge 3ds_bridge.c with this thread.c:
+
+#do any changes have to be made to thread.h now?
