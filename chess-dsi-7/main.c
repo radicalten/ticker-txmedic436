@@ -32,14 +32,144 @@
 #include "pawns.h"
 #include "polybook.h"
 #include "position.h"
+#include "movegen.h"
 #include "search.h"
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
 #include "tbprobe.h"
 
-// OPTIMIZATION: Reduced from 2048 to 512 to reclaim ~420KB of RAM, preventing thread spawn failure
+// OPTIMIZATION: Reduced from 2048 to 512 to reclaim RAM, preventing thread spawn failure.
 #define MAX_HISTORY 512
+
+// ==========================================================================
+// ENGINE ADAPTER
+// ==========================================================================
+// The GUI's game-state, legality checking, check detection, and move
+// application are now driven entirely by Cfish's real bitboard-based
+// Position (bitboard.h / position.h / movegen.h) instead of a separate
+// hand-rolled mailbox rules engine. This is the ONLY section that should
+// need edits if your exact header prototypes differ from what's assumed
+// here (see the table in the accompanying notes).
+// ==========================================================================
+
+#define GUI_MOVE_LIST_SIZE 256
+
+// The GUI's live game position. Position is a plain struct owned entirely
+// by us (distinct from any Position the search thread owns), so there's no
+// aliasing/thread-safety concern between the GUI thread and the engine
+// thread - they just talk over the UCI text bridge as before.
+static Position g_pos;
+
+// Persistent, contiguous StateInfo ("Stack") storage for g_pos. Cfish's
+// Position keeps a raw pointer (pos->st) into caller-owned, contiguous
+// Stack storage and simply walks it forward/backward on do_move/undo_move -
+// exactly mirroring how Stockfish/Cfish wires up Thread::rootPos. We give
+// it MAX_HISTORY+8 slots so a full game (plus a little slack) always has
+// storage.
+static Stack g_state_stack[MAX_HISTORY + 8];
+
+// The exact Move object applied at each ply, needed to call undo_move()
+// later (undo_move requires the identical Move that was passed to do_move).
+static Move cfish_move_history[MAX_HISTORY];
+
+#define GUI_TURN() (g_pos.sideToMove == WHITE ? 1 : -1)
+
+// Involution: GUI square numbering (0 = a8, row-major, row0 = rank 8) <->
+// Cfish square numbering (0 = a1, row-major, row0 = rank 1). Flipping the
+// rank is self-inverse, so one function handles both directions.
+static inline int gui_cfish_flip_sq(int sq) {
+    int row = sq >> 3, col = sq & 7;
+    return ((7 - row) << 3) + col;
+}
+#define gui_to_cfish_sq(s) gui_cfish_flip_sq(s)
+#define cfish_to_gui_sq(s) gui_cfish_flip_sq(s)
+
+// Piece at a GUI square, in the GUI's signed convention
+// (P=1,N=2,B=3,R=4,Q=5,K=6, positive=White, negative=Black, 0=empty).
+static inline int gui_piece_at(int gui_sq) {
+    Piece pc = piece_on(&g_pos, gui_to_cfish_sq(gui_sq));
+    if (pc == 0) return 0;
+    int val = (int)type_of(pc);
+    return (color_of(pc) == WHITE) ? val : -val;
+}
+
+static int gui_find_king_sq(const Position *pos, int color) {
+    for (int s = 0; s < 64; s++) {
+        Piece pc = piece_on(pos, s);
+        if (pc != 0 && type_of(pc) == KING && color_of(pc) == color) return s;
+    }
+    return -1;
+}
+
+typedef struct {
+    int from;
+    int to;
+    int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q  (matches Cfish's PieceType numbering)
+} GuiMove;
+
+// Converts a Cfish Move into the GUI's (from,to,promo) representation.
+// Castling is special-cased: Cfish internally encodes castling as
+// "king captures its own rook" (to_sq() is the ROOK's square), but the GUI
+// represents castling the way a player sees it - king moving two squares -
+// so we translate to the visual king-destination square here.
+static GuiMove gui_move_of(Move m) {
+    GuiMove r;
+    int from = from_sq(m);
+    int to   = to_sq(m);
+    r.from = cfish_to_gui_sq(from);
+    if (type_of_m(m) == CASTLING) {
+        int kto = (to > from) ? (from + 2) : (from - 2);
+        r.to = cfish_to_gui_sq(kto);
+    } else {
+        r.to = cfish_to_gui_sq(to);
+    }
+    r.promo = (type_of_m(m) == PROMOTION) ? (int)promotion_type(m) : 0;
+    return r;
+}
+
+// Finds the legal Cfish Move matching a GUI move (from/to/promo), or 0
+// (MOVE_NONE) if gm isn't legal in the current position. Because this
+// scans generate_legal()'s output, ALL legality (pins, checks, castling
+// rights/path, en passant, etc.) comes straight from the real move
+// generator - no separate pin/attack scanner needed anymore.
+static Move gui_find_cfish_move(GuiMove gm) {
+    ExtMove list[GUI_MOVE_LIST_SIZE];
+    ExtMove *end = generate_legal(&g_pos, list);
+    for (ExtMove *e = list; e < end; e++) {
+        GuiMove cand = gui_move_of(e->move);
+        if (cand.from != gm.from || cand.to != gm.to) continue;
+        if (type_of_m(e->move) == PROMOTION) {
+            if (gm.promo == cand.promo) return e->move;
+        } else {
+            return e->move;
+        }
+    }
+    return 0; // MOVE_NONE
+}
+
+static inline int gui_is_legal_move(GuiMove gm) {
+    return gui_find_cfish_move(gm) != 0;
+}
+
+static inline int gui_has_legal_moves(void) {
+    ExtMove list[GUI_MOVE_LIST_SIZE];
+    return generate_legal(&g_pos, list) != list;
+}
+
+// Resets g_pos to the standard starting position. Requires bitboards_init()
+// and zob_init() to have already run (see main()).
+static void gui_reset_game(void) {
+    static char startfen[] =
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    g_pos.st = &g_state_stack[0];
+    // TODO: if your NNUE build requires a valid pos->thisThread inside
+    // do_move/undo_move, assign one here, e.g.:
+    //   g_pos.thisThread = Threads.pos[0];
+    pos_set(&g_pos, startfen, 0 /* isChess960 */);
+}
+
+// ==========================================================================
 
 // Handshake state machine definitions
 typedef enum {
@@ -51,45 +181,6 @@ typedef enum {
 
 EngineInitState engine_state = ENGINE_STATE_BOOTING;
 
-typedef struct {
-    // OPTIMIZATION: int8_t instead of int. Values only ever range -6..6, so a
-    // full 32-bit int per square was wasting 3 bytes per square for nothing.
-    // This shrinks BoardState from ~276 bytes to ~88 bytes (~3.1x smaller),
-    // which matters a lot because gui_make_move() copies a whole BoardState
-    // for *every* legality test performed (potentially thousands per frame
-    // during move-list generation), and history[MAX_HISTORY] holds hundreds
-    // of these structs.
-    int8_t board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
-    int turn;      // 1 = White, -1 = Black
-    int castle;    // Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ
-    int ep;        // En-passant square (0-63), -1 if none
-    int halfmoves; // For 50-move rule
-    int fullmoves;
-    // OPTIMIZATION: cached position hash (FNV-1a over board+turn+castle+ep),
-    // computed once whenever a BoardState is produced (gui_make_move /
-    // gui_init_board). Lets count_repetitions() reject non-matches with a
-    // single int comparison instead of a 64-byte memcmp against every
-    // history entry.
-    unsigned int hash;
-} BoardState;
-
-typedef struct {
-    int from;
-    int to;
-    int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
-} GuiMove;
-
-// OPTIMIZATION: cached per-position pin/check info, computed once per
-// position instead of being implicitly recomputed (via full make-move +
-// board rescan) for every single candidate move tested against it.
-typedef struct {
-    int king_sq;
-    int in_check;
-    unsigned long long pinned; // bit i set => piece on square i is pinned to its own king
-} PinInfo;
-
-BoardState current_state;
-BoardState history[MAX_HISTORY];
 GuiMove move_history[MAX_HISTORY];
 char san_history[MAX_HISTORY][16]; // Cache array to store pre-calculated SAN strings
 int history_count = 0;
@@ -130,8 +221,6 @@ typedef struct {
 } BoardAnalysisCache;
 
 BoardAnalysisCache state_analysis;
-// OPTIMIZATION: uint8_t instead of int - it's a boolean array, so this is a
-// 4x smaller footprint (and a 4x cheaper memset) for no downside.
 uint8_t selected_legal_destinations[64] = {0}; // Cache legal moves for active piece
 
 char cached_move_rows_left[10][16] = { {0} };
@@ -141,7 +230,7 @@ int redraw_top_needed = 1;
 int redraw_bottom_needed = 1;
 
 // OPTIMIZATION: one-shot hint used to pass an already-computed
-// gui_has_legal_moves() result from push_state() forward into the
+// gui_has_legal_moves() result from gui_push_move() forward into the
 // immediately-following invalidate_and_update_board_caches() call, since
 // both were otherwise independently recomputing the exact same thing on the
 // exact same resulting position.
@@ -149,10 +238,7 @@ int g_next_has_moves_hint = 0;
 int g_next_has_moves_hint_valid = 0;
 
 // OPTIMIZATION: persistent, incrementally-updated UCI "position" command
-// buffer. Previously trigger_engine_move() rebuilt the *entire* move history
-// string from scratch (up to MAX_HISTORY moves) every single time the engine
-// was asked to move. Now we remember how many moves are already encoded in
-// the buffer and only append what's new.
+// buffer. Only the moves that are new since the last sync get appended.
 static char engine_cmd_buf[8192] = "position startpos";
 static int engine_cmd_synced_count = -1; // -1 forces a full rebuild on first use
 
@@ -174,36 +260,15 @@ static const u32 solid_tile[8] = {
     0x11111111
 };
 
-void gui_init_board(BoardState *state);
-int gui_is_legal_move(const BoardState *state, GuiMove m);
-int gui_is_legal_move_pins(const BoardState *state, GuiMove m, const PinInfo *pins);
-void gui_compute_pin_info(const BoardState *state, int color, PinInfo *info);
-int gui_has_legal_moves(const BoardState *state);
-int gui_is_square_attacked(const BoardState *state, int sq, int attacker);
-void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m);
+int gui_find_cfish_king_check_sq(void);
+void gui_push_move(GuiMove gm);
 void trigger_engine_move(void);
-int gui_find_king(const BoardState *state, int color);
-int count_repetitions(const BoardState *state);
+int count_repetitions(void);
 int get_promo_choice(void);
 void invalidate_and_update_board_caches(void);
-void push_state(const BoardState *state, GuiMove m, BoardState *out_next);
+void gui_build_san(Move m, char *buf, int *out_has_moves_after);
 
 GuiMove gui_uci_to_move(const char *str);
-
-// OPTIMIZATION: cheap FNV-1a hash of a position. Only used as a fast
-// pre-filter before falling back to an exact memcmp, so it doesn't need to
-// be cryptographically strong or collision-proof - it just needs to make
-// the overwhelmingly common "definitely not the same position" case cheap.
-static inline unsigned int gui_compute_hash(const BoardState *s) {
-    unsigned int h = 2166136261u; // FNV-1a offset basis
-    for (int i = 0; i < 64; i++) {
-        h = (h ^ (unsigned int)(unsigned char)s->board[i]) * 16777619u;
-    }
-    h = (h ^ (unsigned int)(s->turn & 0xFF)) * 16777619u;
-    h = (h ^ (unsigned int)(s->castle & 0xFF)) * 16777619u;
-    h = (h ^ (unsigned int)((s->ep + 1) & 0xFF)) * 16777619u;
-    return h;
-}
 
 static inline int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
@@ -247,130 +312,119 @@ GuiMove gui_uci_to_move(const char *str) {
     return m;
 }
 
-// OPTIMIZATION: renamed from gui_move_to_san(). Now takes the already-made
-// resulting position ('next') and returns whether that position has any
-// legal replies via *out_has_moves, so the caller (push_state) doesn't need
-// to call gui_make_move() and gui_has_legal_moves() a second time right
-// after this returns.
-void gui_move_to_san_ex(const BoardState *state, const BoardState *next, GuiMove m, char *buf, int *out_has_moves) {
-    int p = abs(state->board[m.from]);
-    int turn = state->turn;
-    
-    if (p == 6) {
-        if (m.from == 60 && m.to == 62 && turn == 1) { strcpy(buf, "O-O"); goto append_suffixes; }
-        if (m.from == 60 && m.to == 58 && turn == 1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
-        if (m.from == 4 && m.to == 6 && turn == -1) { strcpy(buf, "O-O"); goto append_suffixes; }
-        if (m.from == 4 && m.to == 2 && turn == -1) { strcpy(buf, "O-O-O"); goto append_suffixes; }
-    }
+// Builds the SAN string for legal move 'm' (must be legal in g_pos right
+// now) and, as a side effect of computing the check/mate suffix, reports
+// via *out_has_moves_after whether the resulting position has any legal
+// replies - saving the caller from generating moves on it a second time.
+//
+// Disambiguation and check/mate detection now come straight from
+// generate_legal() on the real Position instead of a hand-rolled pin
+// scanner.
+void gui_build_san(Move m, char *buf, int *out_has_moves_after) {
+    int from = from_sq(m);
+    int to   = to_sq(m);
+    Piece pc = piece_on(&g_pos, from);
+    int pt = (int)type_of(pc);
+    int mtype = type_of_m(m);
 
-    char *ptr = buf;
-    int is_cap = (state->board[m.to] != 0) || (p == 1 && m.to == state->ep);
-
-    if (p == 1) {
-        if (is_cap) {
-            *ptr++ = 'a' + (m.from & 7);
-            *ptr++ = 'x';
-        }
+    if (mtype == CASTLING) {
+        int kingside = to > from;
+        strcpy(buf, kingside ? "O-O" : "O-O-O");
     } else {
-        char p_chars[] = "?PNBRQK";
-        *ptr++ = p_chars[p];
+        char *ptr = buf;
+        int is_cap = (piece_on(&g_pos, to) != 0) || (mtype == ENPASSANT);
 
-        // OPTIMIZATION: compute pin/check info for 'state' once, then reuse
-        // it for every same-type piece scanned below instead of doing a
-        // full make-move + attacked-square rescan per candidate.
-        PinInfo pins;
-        gui_compute_pin_info(state, turn, &pins);
+        if (pt == PAWN) {
+            if (is_cap) {
+                *ptr++ = 'a' + file_of(from);
+                *ptr++ = 'x';
+            }
+        } else {
+            const char p_chars[] = "?PNBRQK";
+            *ptr++ = p_chars[pt];
 
-        int another_can_move = 0;
-        int same_file = 0;
-        int same_rank = 0;
-        for (int sq = 0; sq < 64; sq++) {
-            if (sq == m.from) continue;
-            if (state->board[sq] == state->board[m.from]) {
-                GuiMove alt_m = {sq, m.to, 0};
-                if (gui_is_legal_move_pins(state, alt_m, &pins)) {
-                    another_can_move = 1;
-                    if ((sq & 7) == (m.from & 7)) same_file = 1;
-                    if ((sq >> 3) == (m.from >> 3)) same_rank = 1;
+            ExtMove list[GUI_MOVE_LIST_SIZE];
+            ExtMove *end = generate_legal(&g_pos, list);
+            int another_can_move = 0, same_file = 0, same_rank = 0;
+            for (ExtMove *e = list; e < end; e++) {
+                Move m2 = e->move;
+                if (m2 == m) continue;
+                if (type_of_m(m2) == CASTLING) continue;
+                if (to_sq(m2) != to) continue;
+                int f2 = from_sq(m2);
+                if (f2 == from) continue;
+                if (type_of(piece_on(&g_pos, f2)) != pt) continue;
+                another_can_move = 1;
+                if (file_of(f2) == file_of(from)) same_file = 1;
+                if (rank_of(f2) == rank_of(from)) same_rank = 1;
+            }
+            if (another_can_move) {
+                if (!same_file) {
+                    *ptr++ = 'a' + file_of(from);
+                } else if (!same_rank) {
+                    *ptr++ = '1' + rank_of(from);
+                } else {
+                    *ptr++ = 'a' + file_of(from);
+                    *ptr++ = '1' + rank_of(from);
                 }
             }
-        }
-        if (another_can_move) {
-            if (!same_file) {
-                *ptr++ = 'a' + (m.from & 7);
-            } else if (!same_rank) {
-                *ptr++ = '8' - (m.from >> 3);
-            } else {
-                *ptr++ = 'a' + (m.from & 7);
-                *ptr++ = '8' - (m.from >> 3);
-            }
+            if (is_cap) *ptr++ = 'x';
         }
 
-        if (is_cap) {
-            *ptr++ = 'x';
+        *ptr++ = 'a' + file_of(to);
+        *ptr++ = '1' + rank_of(to);
+
+        if (mtype == PROMOTION) {
+            *ptr++ = '=';
+            const char p_chars[] = "?PNBRQK";
+            *ptr++ = p_chars[promotion_type(m)];
         }
+        *ptr = '\0';
     }
 
-    *ptr++ = 'a' + (m.to & 7);
-    *ptr++ = '8' - (m.to >> 3);
+    // Apply the move momentarily to determine the check/mate suffix, then
+    // undo it - g_pos is left exactly as it was.
+    int gives_chk = gives_check(&g_pos, m);
+    do_move(&g_pos, m, gives_chk);
 
-    if (m.promo != 0) {
-        *ptr++ = '=';
-        char p_chars[] = "?PNBRQK";
-        *ptr++ = p_chars[m.promo];
+    int in_check_after = (g_pos.st->checkersBB != 0);
+    ExtMove list2[GUI_MOVE_LIST_SIZE];
+    int has_moves = (generate_legal(&g_pos, list2) != list2);
+    if (out_has_moves_after) *out_has_moves_after = has_moves;
+
+    undo_move(&g_pos, m);
+
+    if (in_check_after) {
+        char *p2 = buf + strlen(buf);
+        *p2++ = has_moves ? '+' : '#';
+        *p2 = '\0';
     }
-    *ptr = '\0';
-
-append_suffixes:;
-    // OPTIMIZATION: 'next' is supplied by the caller (already computed once
-    // via gui_make_move) instead of being recomputed here.
-    int op_king = gui_find_king(next, next->turn);
-    int is_check = (op_king != -1) && gui_is_square_attacked(next, op_king, -next->turn);
-    int has_moves = gui_has_legal_moves(next);
-    if (out_has_moves) *out_has_moves = has_moves;
-
-    ptr = buf + strlen(buf);
-    if (is_check) {
-        if (!has_moves) {
-            *ptr++ = '#';
-        } else {
-            *ptr++ = '+';
-        }
-    }
-    *ptr = '\0';
 }
 
-// OPTIMIZATION: now outputs the resulting position via out_next so callers
-// don't need to call gui_make_move() a second time immediately afterward,
-// and internally reuses that single make-move result for SAN generation too.
-void push_state(const BoardState *state, GuiMove m, BoardState *out_next) {
-    if (history_count < MAX_HISTORY - 1) {
-        history[history_count] = *state;
-        move_history[history_count] = m;
+// Applies GuiMove gm to the live game (must already be verified/looked-up
+// via gui_find_cfish_move). Records history, SAN, and hands the
+// has-legal-moves-after result forward via g_next_has_moves_hint.
+void gui_push_move(GuiMove gm) {
+    if (history_count >= MAX_HISTORY - 1) return;
 
-        BoardState next;
-        gui_make_move(state, &next, m);
+    Move m = gui_find_cfish_move(gm);
+    if (!m) return; // not legal - ignore defensively
 
-        int has_moves_next = 0;
-        gui_move_to_san_ex(state, &next, m, san_history[history_count], &has_moves_next);
+    int has_moves_after = 0;
+    gui_build_san(m, san_history[history_count], &has_moves_after);
 
-        history_count++;
+    move_history[history_count] = gm;
+    cfish_move_history[history_count] = m;
 
-        if (out_next) *out_next = next;
+    int gives_chk = gives_check(&g_pos, m);
+    do_move(&g_pos, m, gives_chk);
+    history_count++;
 
-        // Hand the has_legal_moves() result we just computed for 'next'
-        // forward to the caches update that's about to happen on the exact
-        // same position.
-        g_next_has_moves_hint = has_moves_next;
-        g_next_has_moves_hint_valid = 1;
+    g_next_has_moves_hint = has_moves_after;
+    g_next_has_moves_hint_valid = 1;
 
-        redraw_top_needed = 1;
-        redraw_bottom_needed = 1;
-    } else if (out_next) {
-        // History full (shouldn't normally happen) - still give the caller
-        // a valid resulting position.
-        gui_make_move(state, out_next, m);
-    }
+    redraw_top_needed = 1;
+    redraw_bottom_needed = 1;
 }
 
 void push_raw_log(const char *line) {
@@ -379,26 +433,19 @@ void push_raw_log(const char *line) {
         raw_log[raw_log_count][31] = '\0';
         raw_log_count++;
     } else {
-        // Scroll buffer items up
         for (int i = 0; i < 9; i++) {
             memmove(raw_log[i], raw_log[i + 1], sizeof(raw_log[0]));
         }
         strncpy(raw_log[9], line, 31);
         raw_log[9][31] = '\0';
     }
-    // Only bottom updates on engine log operations
     redraw_bottom_needed = 1; 
 }
 
-// OPTIMIZATION: incrementally syncs engine_cmd_buf with move_history[] /
-// history_count instead of rebuilding the full "position startpos moves ..."
-// string from scratch every time the engine is asked to move. Self-heals
-// with a full rebuild if history_count ever goes backwards (Undo/Reset).
 void engine_cmd_sync(void) {
     if (engine_cmd_synced_count == history_count) return;
 
     if (engine_cmd_synced_count < 0 || engine_cmd_synced_count > history_count) {
-        // Full rebuild: first run ever, or history shrank (Undo/Reset).
         if (history_count == 0) {
             strcpy(engine_cmd_buf, "position startpos");
         } else {
@@ -416,7 +463,6 @@ void engine_cmd_sync(void) {
             engine_cmd_buf[len] = '\0';
         }
     } else {
-        // Incremental: only append the moves that are new since last sync.
         if (engine_cmd_synced_count == 0) {
             strcpy(engine_cmd_buf, "position startpos moves");
         }
@@ -528,10 +574,10 @@ void process_engine_output(char *line) {
             if (sscanf(score_ptr, " score %15s %d", score_type, &score_val) == 2) {
                 if (strcmp(score_type, "cp") == 0) {
                     engine_score_type = 0;
-                    engine_score_val = score_val * current_state.turn;
+                    engine_score_val = score_val * GUI_TURN();
                 } else if (strcmp(score_type, "mate") == 0) {
                     engine_score_type = 1;
-                    engine_score_val = score_val * current_state.turn;
+                    engine_score_val = score_val * GUI_TURN();
                 }
                 redraw_bottom_needed = 1;
             }
@@ -548,12 +594,8 @@ void process_engine_output(char *line) {
             }
             
             GuiMove m = gui_uci_to_move(move_str);
-            if (gui_is_legal_move(&current_state, m)) {
-                // OPTIMIZATION: push_state() now computes 'next' internally
-                // and hands it back here - no second gui_make_move() call.
-                BoardState next;
-                push_state(&current_state, m, &next);
-                current_state = next;
+            if (gui_is_legal_move(m)) {
+                gui_push_move(m);
                 invalidate_and_update_board_caches();
             }
             engine_thinking = 0;
@@ -591,460 +633,6 @@ void read_from_engine(void) {
     }
 }
 
-int gui_find_king(const BoardState *state, int color) {
-    for (int i = 0; i < 64; i++) {
-        if (state->board[i] == color * 6) return i;
-    }
-    return -1;
-}
-
-// ==========================================
-// OPTIMIZED COORDINATES & SCANNING HANDLERS
-// ==========================================
-int gui_is_square_attacked(const BoardState *state, int sq, int attacker) {
-    unsigned int r = (unsigned int)sq >> 3;
-    unsigned int c = (unsigned int)sq & 7;
-
-    int k_r[] = {-2, -2, -1, -1, 1, 1, 2, 2};
-    int k_c[] = {-1, 1, -2, 2, -2, 2, -1, 1};
-    for (int i = 0; i < 8; i++) {
-        unsigned int nr = r + k_r[i], nc = c + k_c[i];
-        if (nr < 8 && nc < 8) { // Unsigned overflow catches bounds < 0 safely
-            if (state->board[(nr << 3) + nc] == attacker * 2) return 1;
-        }
-    }
-
-    int kg_r[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-    int kg_c[] = {-1, 0, 1, -1, 1, -1, 0, 1};
-    for (int i = 0; i < 8; i++) {
-        unsigned int nr = r + kg_r[i], nc = c + kg_c[i];
-        if (nr < 8 && nc < 8) {
-            if (state->board[(nr << 3) + nc] == attacker * 6) return 1;
-        }
-    }
-
-    int p_offset = (attacker == 1) ? 1 : -1;
-    for (int dc = -1; dc <= 1; dc += 2) {
-        unsigned int nr = r + p_offset, nc = c + dc;
-        if (nr < 8 && nc < 8) {
-            if (state->board[(nr << 3) + nc] == attacker * 1) return 1;
-        }
-    }
-
-    int d_r[] = {-1, -1, 1, 1};
-    int d_c[] = {-1, 1, -1, 1};
-    for (int i = 0; i < 4; i++) {
-        unsigned int nr = r + d_r[i], nc = c + d_c[i];
-        while (nr < 8 && nc < 8) {
-            int target = state->board[(nr << 3) + nc];
-            if (target != 0) {
-                if (target == attacker * 3 || target == attacker * 5) return 1;
-                break;
-            }
-            nr += d_r[i]; nc += d_c[i];
-        }
-    }
-
-    int s_r[] = {-1, 1, 0, 0};
-    int s_c[] = {0, 0, -1, 1};
-    for (int i = 0; i < 4; i++) {
-        unsigned int nr = r + s_r[i], nc = c + s_c[i];
-        while (nr < 8 && nc < 8) {
-            int target = state->board[(nr << 3) + nc];
-            if (target != 0) {
-                if (target == attacker * 4 || target == attacker * 5) return 1;
-                break;
-            }
-            nr += s_r[i]; nc += s_c[i];
-        }
-    }
-    return 0;
-}
-
-int gui_is_pseudo_legal_move(const BoardState *state, GuiMove m) {
-    int p = state->board[m.from];
-    int target = state->board[m.to];
-    int turn = state->turn;
-
-    if (p == 0) return 0;
-    if ((turn == 1 && p < 0) || (turn == -1 && p > 0)) return 0;
-    if (m.from == m.to) return 0;
-    if (target != 0 && ((turn == 1 && target > 0) || (turn == -1 && target < 0))) return 0;
-
-    int fr = m.from >> 3, fc = m.from & 7;
-    int tr = m.to >> 3, tc = m.to & 7;
-    int dr = tr - fr, dc = tc - fc;
-    int abs_dr = abs(dr), abs_dc = abs(dc);
-
-    switch (abs(p)) {
-        case 1: { 
-            int dir = (turn == 1) ? -1 : 1;
-            if (dc == 0 && dr == dir && target == 0) return 1;
-            int start_r = (turn == 1) ? 6 : 1;
-            if (dc == 0 && fr == start_r && dr == 2 * dir) {
-                if (state->board[((fr + dir) << 3) + fc] == 0 && target == 0) return 1;
-            }
-            if (abs_dc == 1 && dr == dir) {
-                if (target != 0) return 1;
-                if (m.to == state->ep) return 1;
-            }
-            return 0;
-        }
-        case 2: 
-            return ((abs_dr == 2 && abs_dc == 1) || (abs_dr == 1 && abs_dc == 2));
-        case 3: { 
-            if (abs_dr != abs_dc) return 0;
-            int sr = (dr > 0) ? 1 : -1, sc = (dc > 0) ? 1 : -1;
-            int r = fr + sr, c = fc + sc;
-            while (r != tr && c != tc) {
-                if (state->board[(r << 3) + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 4: { 
-            if (dr != 0 && dc != 0) return 0;
-            int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
-            int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
-            int r = fr + sr, c = fc + sc;
-            while (r != tr || c != tc) {
-                if (state->board[(r << 3) + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 5: { 
-            if (abs_dr != abs_dc && dr != 0 && dc != 0) return 0;
-            int sr = (dr == 0) ? 0 : ((dr > 0) ? 1 : -1);
-            int sc = (dc == 0) ? 0 : ((dc > 0) ? 1 : -1);
-            if (abs_dr == abs_dc) {
-                sr = (dr > 0) ? 1 : -1;
-                sc = (dc > 0) ? 1 : -1;
-            }
-            int r = fr + sr, c = fc + sc;
-            while (r != tr || c != tc) {
-                if (state->board[(r << 3) + c] != 0) return 0;
-                r += sr; c += sc;
-            }
-            return 1;
-        }
-        case 6: { 
-            if (abs_dr <= 1 && abs_dc <= 1) return 1;
-            if (dr == 0 && abs_dc == 2) {
-                if (turn == 1 && fr == 7 && fc == 4) {
-                    if (m.to == 62 && (state->castle & 1)) {
-                        if (state->board[61] == 0 && state->board[62] == 0) {
-                            if (!gui_is_square_attacked(state, 60, -1) &&
-                                !gui_is_square_attacked(state, 61, -1) &&
-                                !gui_is_square_attacked(state, 62, -1)) return 1;
-                        }
-                    }
-                    if (m.to == 58 && (state->castle & 2)) {
-                        if (state->board[59] == 0 && state->board[58] == 0 && state->board[57] == 0) {
-                            if (!gui_is_square_attacked(state, 60, -1) &&
-                                !gui_is_square_attacked(state, 59, -1) &&
-                                !gui_is_square_attacked(state, 58, -1)) return 1;
-                        }
-                    }
-                }
-                if (turn == -1 && fr == 0 && fc == 4) {
-                    if (m.to == 6 && (state->castle & 4)) {
-                        if (state->board[5] == 0 && state->board[6] == 0) {
-                            if (!gui_is_square_attacked(state, 4, 1) &&
-                                !gui_is_square_attacked(state, 5, 1) &&
-                                !gui_is_square_attacked(state, 6, 1)) return 1;
-                        }
-                    }
-                    if (m.to == 2 && (state->castle & 8)) {
-                        if (state->board[3] == 0 && state->board[2] == 0 && state->board[1] == 0) {
-                            if (!gui_is_square_attacked(state, 4, 1) &&
-                                !gui_is_square_attacked(state, 3, 1) &&
-                                !gui_is_square_attacked(state, 2, 1)) return 1;
-                        }
-                    }
-                }
-            }
-            return 0;
-        }
-    }
-    return 0;
-}
-
-// ==========================================
-// OPTIMIZATION: PIN / CHECK CACHE
-// ==========================================
-// Computes, once per position, whether 'color's king is currently in check
-// and which of 'color's pieces are absolutely pinned to that king. This lets
-// gui_is_legal_move_pins() skip the expensive "make the move, then rescan
-// the whole board for attackers" step for the large majority of moves: any
-// move by a non-pinned, non-king piece while not already in check cannot
-// possibly expose our own king, so it's legal by construction.
-void gui_compute_pin_info(const BoardState *state, int color, PinInfo *info) {
-    info->pinned = 0ULL;
-    info->king_sq = gui_find_king(state, color);
-    info->in_check = 0;
-    if (info->king_sq == -1) return;
-
-    info->in_check = gui_is_square_attacked(state, info->king_sq, -color);
-
-    int r = info->king_sq >> 3;
-    int c = info->king_sq & 7;
-    static const int dr[8] = {-1, -1, 1, 1, -1, 1, 0, 0};
-    static const int dc[8] = {-1, 1, -1, 1, 0, 0, -1, 1};
-
-    for (int d = 0; d < 8; d++) {
-        int is_diag = (dr[d] != 0 && dc[d] != 0);
-        int nr = r + dr[d], nc = c + dc[d];
-        int first_sq = -1;
-        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
-            int sq = (nr << 3) + nc;
-            int p = state->board[sq];
-            if (p != 0) {
-                if (first_sq == -1) {
-                    int is_own = (color == 1 && p > 0) || (color == -1 && p < 0);
-                    if (!is_own) break; // Enemy piece blocks the ray immediately: no pin here.
-                    first_sq = sq;
-                } else {
-                    int is_enemy = (color == 1 && p < 0) || (color == -1 && p > 0);
-                    if (is_enemy) {
-                        int ap = abs(p);
-                        int slides_this_way = is_diag ? (ap == 3 || ap == 5) : (ap == 4 || ap == 5);
-                        if (slides_this_way) {
-                            info->pinned |= (1ULL << first_sq);
-                        }
-                    }
-                    break;
-                }
-            }
-            nr += dr[d]; nc += dc[d];
-        }
-    }
-}
-
-// OPTIMIZATION: fast-path legality check using precomputed pin/check info.
-// Falls back to the original, fully general make-move + attacked-square
-// check for anything that isn't provably safe by construction (king moves,
-// in-check evasions, pinned pieces, en passant, castling).
-int gui_is_legal_move_pins(const BoardState *state, GuiMove m, const PinInfo *pins) {
-    if (!gui_is_pseudo_legal_move(state, m)) return 0;
-
-    int p = state->board[m.from];
-    int abs_p = abs(p);
-    int is_ep_capture = (abs_p == 1 && m.to == state->ep);
-
-    if (!pins->in_check && abs_p != 6 && !is_ep_capture &&
-        !((pins->pinned >> m.from) & 1ULL)) {
-        return 1;
-    }
-
-    BoardState next;
-    gui_make_move(state, &next, m);
-    int king = gui_find_king(&next, state->turn);
-    if (king == -1) return 0;
-    return !gui_is_square_attacked(&next, king, -state->turn);
-}
-
-int gui_is_legal_move(const BoardState *state, GuiMove m) {
-    PinInfo pins;
-    gui_compute_pin_info(state, state->turn, &pins);
-    return gui_is_legal_move_pins(state, m, &pins);
-}
-
-int gui_has_legal_moves(const BoardState *state) {
-    PinInfo pins;
-    gui_compute_pin_info(state, state->turn, &pins);
-
-    for (int f = 0; f < 64; f++) {
-        if (state->board[f] == 0) continue;
-        if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
-        for (int t = 0; t < 64; t++) {
-            GuiMove m = {f, t, 0};
-            if (abs(state->board[f]) == 1 && ((t >> 3) == 0 || (t >> 3) == 7)) {
-                m.promo = 5;
-            }
-            if (gui_is_legal_move_pins(state, m, &pins)) return 1;
-        }
-    }
-    return 0;
-}
-
-int count_repetitions(const BoardState *state) {
-    int count = 1;
-    for (int i = 0; i < history_count; i++) {
-        // OPTIMIZATION: cheap hash compare rejects the overwhelming majority
-        // of non-matching history entries before paying for a full memcmp.
-        if (state->hash == history[i].hash &&
-            state->turn == history[i].turn &&
-            state->castle == history[i].castle &&
-            state->ep == history[i].ep &&
-            memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
-            count++;
-        }
-    }
-    return count;
-}
-
-void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
-    *dst = *src;
-    int p = dst->board[m.from];
-    int is_capture = (src->board[m.to] != 0) || (abs(p) == 1 && m.to == src->ep);
-
-    dst->board[m.from] = 0;
-    if (m.promo != 0) {
-        dst->board[m.to] = (int8_t)(dst->turn * m.promo);
-    } else {
-        dst->board[m.to] = (int8_t)p;
-    }
-
-    if (abs(p) == 1 && m.to == dst->ep) {
-        int p_dir = (dst->turn == 1 ? 8 : -8);
-        dst->board[m.to + p_dir] = 0;
-    }
-
-    dst->ep = -1;
-    if (abs(p) == 1 && abs(m.from - m.to) == 16) {
-        dst->ep = m.from + (dst->turn == 1 ? -8 : 8);
-    }
-
-    if (abs(p) == 6) {
-        if (m.from == 60 && m.to == 62) { dst->board[61] = dst->board[63]; dst->board[63] = 0; }
-        else if (m.from == 60 && m.to == 58) { dst->board[59] = dst->board[56]; dst->board[56] = 0; }
-        else if (m.from == 4 && m.to == 6) { dst->board[5] = dst->board[7]; dst->board[7] = 0; }
-        else if (m.from == 4 && m.to == 2) { dst->board[3] = dst->board[0]; dst->board[0] = 0; }
-    }
-
-    if (m.from == 60) dst->castle &= ~1 & ~2;
-    if (m.from == 4)  dst->castle &= ~4 & ~8;
-    if (m.from == 63 || m.to == 63) dst->castle &= ~1;
-    if (m.from == 56 || m.to == 56) dst->castle &= ~2;
-    if (m.from == 7  || m.to == 7)  dst->castle &= ~4;
-    if (m.from == 0  || m.to == 0)  dst->castle &= ~8;
-
-    dst->turn = -dst->turn;
-    if (abs(p) == 1 || is_capture) dst->halfmoves = 0;
-    else dst->halfmoves++;
-    
-    if (dst->turn == 1) dst->fullmoves++;
-
-    // OPTIMIZATION: cache the position hash once here rather than
-    // recomputing a full board scan every time repetitions are checked.
-    dst->hash = gui_compute_hash(dst);
-}
-
-// Map coordinates helper
-void set_tile(u16* map, int x, int y, u16 tile, u16 palette) {
-    if (x >= 0 && x < 32 && y >= 0 && y < 32) {
-        map[y * 32 + x] = tile | (palette << 12);
-    }
-}
-
-// Optimized static fast helper bypasses clipping for interior tile setting
-static inline void set_tile_fast(u16* map, int x, int y, u16 tile, u16 palette) {
-    map[y * 32 + x] = tile | (palette << 12);
-}
-
-// String printing on graphics map helper
-void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
-    while (*str) {
-        set_tile(map, x, y, (u16)(*str), palette);
-        x++;
-        str++;
-    }
-}
-
-static inline void draw_string_fast(u16* map, int x, int y, const char* str, u16 palette) {
-    u16* dst = &map[y * 32 + x];
-    u16 pal_shifted = palette << 12;
-    while (*str) {
-        *dst++ = (u16)(*str++) | pal_shifted;
-    }
-}
-
-// Sub screen string drawing helper (Writes coordinates directly to Console Screen Map bypassing parser)
-void draw_string_sub(u16* map, int x, int y, const char* str, u16 palette) {
-    while (*str) {
-        if (x >= 0 && x < 32 && y >= 0 && y < 32) {
-            map[y * 32 + x] = (u16)(*str) | (palette << 12);
-        }
-        x++;
-        str++;
-    }
-}
-
-static inline void draw_string_sub_fast(u16* map, int x, int y, const char* str, u16 palette) {
-    u16* dst = &map[y * 32 + x];
-    u16 pal_shifted = palette << 12;
-    while (*str) {
-        *dst++ = (u16)(*str++) | pal_shifted;
-    }
-}
-
-// Configure DS Palette memory on main display for chess elements matching 3DS color configurations
-void init_custom_palettes(void) {
-    // Solid background squares configurations
-    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17); // Palette 0: Maple Wood Light Square (Tan #48;5;180m representation)
-    BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0); // Palette 1: Walnut Wood Dark Square (Brown #48;5;94m representation)
-    BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0); // Palette 2: Forest Green Selected Square (#48;5;34m representation)
-    BG_PALETTE[3 * 16 + 1] = RGB15(31, 16,  0); // Palette 3: Vibrant Orange Cursor Selection (#48;5;208m representation)
-    
-    // Previous Move Tracer (Light/Dark paths)
-    BG_PALETTE[4 * 16 + 1] = RGB15(12, 22, 31); // Palette 4: Sky Blue Prev Move (Light square #48;5;75m)
-    BG_PALETTE[5 * 16 + 1] = RGB15(12, 17, 22); // Palette 5: Steel Blue Prev Move (Dark square #48;5;68m)
-
-    // Legal Destination Targets (Light/Dark targets)
-    BG_PALETTE[6 * 16 + 1] = RGB15(22, 27, 22); // Palette 6: Pale Sage Green target (Light square #48;5;151m)
-    BG_PALETTE[7 * 16 + 1] = RGB15(17, 22, 17); // Palette 7: Muted Sage Green target (Dark square #48;5;108m)
-
-    // King in Check Danger Warning
-    BG_PALETTE[8 * 16 + 1] = RGB15(31,  0,  0); // Palette 8: Threat warning red (#48;5;196m representation)
-
-    // Alphanumeric coordinate label text (Muted Slate Grey representation)
-    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20); 
-    BG_PALETTE[9 * 16 + 15] = RGB15(20, 20, 20);
-
-    // Foreground piece overlay configurations (Color index 0 must be transparent)
-    BG_PALETTE[10 * 16 + 0] = 0;
-    BG_PALETTE[10 * 16 + 1] = RGB15(31, 31, 31);  // Palette 10: Bright White Pieces (Bold #38;5;255m representation)
-    BG_PALETTE[10 * 16 + 15] = RGB15(31, 31, 31);
-
-    BG_PALETTE[11 * 16 + 0] = 0;
-    BG_PALETTE[11 * 16 + 1] = RGB15(0,  0,  0);    // Palette 11: Deep Slate Black Pieces (#38;5;232m representation)
-    BG_PALETTE[11 * 16 + 15] = RGB15(0,  0,  0);  //change to pure black from 3,3,3
-}
-
-// Maps Sub display hardware registers to match custom palette banks 0 to 15 (guarantees perfect ANSI equivalents)
-void init_bottom_palette(void) {
-    // Populate transparent/black background colors at Index 0 of all 16 palettes
-    for (int p = 0; p < 16; p++) {
-        BG_PALETTE_SUB[p * 16 + 0] = RGB15(0, 0, 0); 
-    }
-
-    u16 colors[16];
-    colors[0]  = RGB15(31, 31, 31);   // Palette 0: Standard White (Default text)
-    colors[1]  = RGB15(22, 4, 4);     // Palette 1: Dark Red
-    colors[2]  = RGB15(4, 22, 4);     // Palette 2: Dark Green
-    colors[3]  = RGB15(22, 22, 4);    // Palette 3: Dark Yellow
-    colors[4]  = RGB15(4, 4, 22);     // Palette 4: Dark Blue
-    colors[5]  = RGB15(22, 4, 22);    // Palette 5: Dark Magenta
-    colors[6]  = RGB15(4, 22, 22);    // Palette 6: Dark Cyan
-    colors[7]  = RGB15(24, 24, 24);   // Palette 7: Standard Gray
-    colors[8]  = RGB15(12, 12, 12);   // Palette 8: Intense Dark Gray
-    colors[9]  = RGB15(31, 5, 5);     // Palette 9: High Bright Red
-    colors[10] = RGB15(5, 31, 5);     // Palette 10: High Bright Green
-    colors[11] = RGB15(31, 31, 5);    // Palette 11: High Bright Yellow
-    colors[12] = RGB15(5, 5, 31);     // Palette 12: High Bright Blue
-    colors[13] = RGB15(31, 5, 31);    // Palette 13: High Bright Magenta
-    colors[14] = RGB15(5, 31, 31);    // Palette 14: High Bright Cyan
-    colors[15] = RGB15(31, 31, 31);   // Palette 15: High Bright White
-
-    // Map color definitions to foreground target indices 1-15 inside each palette bank
-    for (int p = 0; p < 16; p++) {
-        for (int c = 1; c < 16; c++) {
-            BG_PALETTE_SUB[p * 16 + c] = colors[p];
-        }
-    }
-}
-
 // ==========================================
 // CACHE VALIDATION & CALCULATION HOOKS
 // ==========================================
@@ -1052,17 +640,11 @@ void update_selected_destinations(void) {
     memset(selected_legal_destinations, 0, sizeof(selected_legal_destinations));
     if (selected_sq == -1) return;
 
-    PinInfo pins;
-    gui_compute_pin_info(&current_state, current_state.turn, &pins);
-
-    for (int sq = 0; sq < 64; sq++) {
-        GuiMove test_m = {selected_sq, sq, 0};
-        if (abs(current_state.board[selected_sq]) == 1 && ((sq >> 3) == 0 || (sq >> 3) == 7)) {
-            test_m.promo = 5;
-        }
-        if (gui_is_legal_move_pins(&current_state, test_m, &pins)) {
-            selected_legal_destinations[sq] = 1;
-        }
+    ExtMove list[GUI_MOVE_LIST_SIZE];
+    ExtMove *end = generate_legal(&g_pos, list);
+    for (ExtMove *e = list; e < end; e++) {
+        GuiMove gm = gui_move_of(e->move);
+        if (gm.from == selected_sq) selected_legal_destinations[gm.to] = 1;
     }
 }
 
@@ -1110,30 +692,38 @@ void preformat_move_list_cache(void) {
     }
 }
 
-void invalidate_and_update_board_caches(void) {
-    // 1. Scan check constraints
-    int king_in_check = -1;
-    int w_king = gui_find_king(&current_state, 1);
-    int b_king = gui_find_king(&current_state, -1);
-    if (w_king != -1 && gui_is_square_attacked(&current_state, w_king, -1)) {
-        king_in_check = w_king;
-    } else if (b_king != -1 && gui_is_square_attacked(&current_state, b_king, 1)) {
-        king_in_check = b_king;
+// Counts how many times the CURRENT position's Zobrist key (g_pos.st->key,
+// computed by the real position.c hashing - including side to move,
+// castling rights, and en-passant availability) has occurred across the
+// game so far, by scanning the persistent state stack. This is both
+// simpler and more correct than the old hand-rolled FNV hash + memcmp
+// approach.
+int count_repetitions(void) {
+    uint64_t k = g_pos.st->key;
+    int c = 0;
+    for (int i = 0; i <= history_count; i++) {
+        if (g_state_stack[i].key == k) c++;
     }
-    state_analysis.king_in_check_sq = king_in_check;
-    state_analysis.is_check = (king_in_check != -1);
+    return c;
+}
 
-    // 2. Scan remaining legal transitions.
-    // OPTIMIZATION: reuse the has_legal_moves() result push_state() already
-    // computed for this exact position (while generating the SAN '+'/'#'
-    // suffix) instead of scanning all 64x64 candidate moves a second time.
+void invalidate_and_update_board_caches(void) {
+    // 1. Check state straight from the position's real checkers bitboard.
+    int in_check = (g_pos.st->checkersBB != 0);
+    state_analysis.is_check = in_check;
+    state_analysis.king_in_check_sq = in_check
+        ? cfish_to_gui_sq(gui_find_king_sq(&g_pos, g_pos.sideToMove))
+        : -1;
+
+    // 2. Legal-move existence, reusing the hint computed by gui_push_move()
+    // (via gui_build_san) if available, else generate directly.
     if (g_next_has_moves_hint_valid) {
         state_analysis.has_legal_moves = g_next_has_moves_hint;
         g_next_has_moves_hint_valid = 0;
     } else {
-        state_analysis.has_legal_moves = gui_has_legal_moves(&current_state);
+        state_analysis.has_legal_moves = gui_has_legal_moves();
     }
-    state_analysis.repetitions = count_repetitions(&current_state);
+    state_analysis.repetitions = count_repetitions();
 
     // 3. Cache the legal highlights for the selected piece
     update_selected_destinations();
@@ -1142,23 +732,114 @@ void invalidate_and_update_board_caches(void) {
     preformat_move_list_cache();
 }
 
-// Draw the Top Screen Board (Pristine, Direct Hardware Layering, double-height formats)
+// Map coordinates helper
+void set_tile(u16* map, int x, int y, u16 tile, u16 palette) {
+    if (x >= 0 && x < 32 && y >= 0 && y < 32) {
+        map[y * 32 + x] = tile | (palette << 12);
+    }
+}
+
+static inline void set_tile_fast(u16* map, int x, int y, u16 tile, u16 palette) {
+    map[y * 32 + x] = tile | (palette << 12);
+}
+
+void draw_string(u16* map, int x, int y, const char* str, u16 palette) {
+    while (*str) {
+        set_tile(map, x, y, (u16)(*str), palette);
+        x++;
+        str++;
+    }
+}
+
+static inline void draw_string_fast(u16* map, int x, int y, const char* str, u16 palette) {
+    u16* dst = &map[y * 32 + x];
+    u16 pal_shifted = palette << 12;
+    while (*str) {
+        *dst++ = (u16)(*str++) | pal_shifted;
+    }
+}
+
+void draw_string_sub(u16* map, int x, int y, const char* str, u16 palette) {
+    while (*str) {
+        if (x >= 0 && x < 32 && y >= 0 && y < 32) {
+            map[y * 32 + x] = (u16)(*str) | (palette << 12);
+        }
+        x++;
+        str++;
+    }
+}
+
+static inline void draw_string_sub_fast(u16* map, int x, int y, const char* str, u16 palette) {
+    u16* dst = &map[y * 32 + x];
+    u16 pal_shifted = palette << 12;
+    while (*str) {
+        *dst++ = (u16)(*str++) | pal_shifted;
+    }
+}
+
+void init_custom_palettes(void) {
+    BG_PALETTE[0 * 16 + 1] = RGB15(27, 22, 17);
+    BG_PALETTE[1 * 16 + 1] = RGB15(17, 12,  0);
+    BG_PALETTE[2 * 16 + 1] = RGB15( 0, 17,  0);
+    BG_PALETTE[3 * 16 + 1] = RGB15(31, 16,  0);
+    BG_PALETTE[4 * 16 + 1] = RGB15(12, 22, 31);
+    BG_PALETTE[5 * 16 + 1] = RGB15(12, 17, 22);
+    BG_PALETTE[6 * 16 + 1] = RGB15(22, 27, 22);
+    BG_PALETTE[7 * 16 + 1] = RGB15(17, 22, 17);
+    BG_PALETTE[8 * 16 + 1] = RGB15(31,  0,  0);
+    BG_PALETTE[9 * 16 + 1] = RGB15(20, 20, 20); 
+    BG_PALETTE[9 * 16 + 15] = RGB15(20, 20, 20);
+    BG_PALETTE[10 * 16 + 0] = 0;
+    BG_PALETTE[10 * 16 + 1] = RGB15(31, 31, 31);
+    BG_PALETTE[10 * 16 + 15] = RGB15(31, 31, 31);
+    BG_PALETTE[11 * 16 + 0] = 0;
+    BG_PALETTE[11 * 16 + 1] = RGB15(0,  0,  0);
+    BG_PALETTE[11 * 16 + 15] = RGB15(0,  0,  0);
+}
+
+void init_bottom_palette(void) {
+    for (int p = 0; p < 16; p++) {
+        BG_PALETTE_SUB[p * 16 + 0] = RGB15(0, 0, 0); 
+    }
+
+    u16 colors[16];
+    colors[0]  = RGB15(31, 31, 31);
+    colors[1]  = RGB15(22, 4, 4);
+    colors[2]  = RGB15(4, 22, 4);
+    colors[3]  = RGB15(22, 22, 4);
+    colors[4]  = RGB15(4, 4, 22);
+    colors[5]  = RGB15(22, 4, 22);
+    colors[6]  = RGB15(4, 22, 22);
+    colors[7]  = RGB15(24, 24, 24);
+    colors[8]  = RGB15(12, 12, 12);
+    colors[9]  = RGB15(31, 5, 5);
+    colors[10] = RGB15(5, 31, 5);
+    colors[11] = RGB15(31, 31, 5);
+    colors[12] = RGB15(5, 5, 31);
+    colors[13] = RGB15(31, 5, 31);
+    colors[14] = RGB15(5, 31, 31);
+    colors[15] = RGB15(31, 31, 31);
+
+    for (int p = 0; p < 16; p++) {
+        for (int c = 1; c < 16; c++) {
+            BG_PALETTE_SUB[p * 16 + c] = colors[p];
+        }
+    }
+}
+
+// Draw the Top Screen Board
 void draw_top_board(void) {
-    // Late binding enforcement: Refresh our solid tile at index 255
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
 
-    // Force palette mapping recovery on every single redraw cycle to prevent console wipes
     init_custom_palettes();
 
     u16* board_map = bgGetMapPtr(bg_board_id);
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
 
-    // Completely wipe map memory areas
     memset(board_map, 0, 32 * 32 * sizeof(u16));
     memset(pieces_map, 0, 32 * 32 * sizeof(u16));
 
-    // Render coordinate files (columns a-h) at safe margins
     for (int col = 0; col < 8; col++) {
         char file_lbl = (board_orientation == 1) ? ('a' + col) : ('h' - col);
         char str[2] = {file_lbl, '\0'};
@@ -1166,23 +847,21 @@ void draw_top_board(void) {
         draw_string_fast(pieces_map, 7 + col * 2, 21, str, 9);
     }
 
-    int king_in_check = state_analysis.king_in_check_sq; // Reference pre-calculated check state
+    int king_in_check = state_analysis.king_in_check_sq;
 
     for (int r = 0; r < 8; r++) {
         int rank_lbl = (board_orientation == 1) ? (8 - r) : (r + 1);
         char lbl_str[2] = {'0' + rank_lbl, '\0'};
 
-        // Draw rank labels on sides
         draw_string_fast(pieces_map, 5, 4 + r * 2, lbl_str, 9);
         draw_string_fast(pieces_map, 24, 4 + r * 2, lbl_str, 9);
 
         for (int c = 0; c < 8; c++) {
             int sq = screen_to_board_sq(r, c);
-            int p = current_state.board[sq];
+            int p = gui_piece_at(sq);
 
-            // Bitwise coordinate check determines lightness of target cell
             int is_light = (((sq >> 3) + (sq & 7)) & 1) == 0;
-            int palette_idx = is_light ? 0 : 1; // Default Maple / Walnut Brown
+            int palette_idx = is_light ? 0 : 1;
 
             int is_selected = (sq == selected_sq);
             int is_cursor = (r == cursor_r && c == cursor_c);
@@ -1195,31 +874,27 @@ void draw_top_board(void) {
                 }
             }
 
-            // O(1) legal destination assessment using cached selections
             int is_legal_dest = selected_legal_destinations[sq];
 
-            // High-fidelity palette assignment mapping matching 3DS color layouts
             if (is_cursor) {
-                palette_idx = 3; // Bright Orange
+                palette_idx = 3;
             } else if (is_selected) {
-                palette_idx = 2; // Forest Green
+                palette_idx = 2;
             } else if (sq == king_in_check) {
-                palette_idx = 8; // Danger Warning Red
+                palette_idx = 8;
             } else if (is_prev_move) {
-                palette_idx = is_light ? 4 : 5; // Sky / Steel Blue
+                palette_idx = is_light ? 4 : 5;
             } else if (is_legal_dest) {
-                palette_idx = is_light ? 6 : 7; // Sage Light / Dark Greens
+                palette_idx = is_light ? 6 : 7;
             }
 
-            // Render background square cells on BG2
             set_tile_fast(board_map, 7 + c * 2,     4 + r * 2,     255, palette_idx);
             set_tile_fast(board_map, 7 + c * 2 + 1, 4 + r * 2,     255, palette_idx);
             set_tile_fast(board_map, 7 + c * 2,     4 + r * 2 + 1, 255, palette_idx);
             set_tile_fast(board_map, 7 + c * 2 + 1, 4 + r * 2 + 1, 255, palette_idx);
 
-            // Render pieces on high-priority BG1
             if (p != 0) {
-                u16 fg_palette = (p > 0) ? 10 : 11; // White is palette 10, Black is palette 11
+                u16 fg_palette = (p > 0) ? 10 : 11;
                 char piece_str = ' ';
                 switch (abs(p)) {
                     case 1: piece_str = 'P'; break;
@@ -1235,59 +910,55 @@ void draw_top_board(void) {
     }
 }
 
-// Draw the Bottom Screen (Direct hardware rendering of text with full palette controls)
+// Draw the Bottom Screen
 void draw_bottom_stats(void) {
     u16* sub_map = bgGetMapPtr(bottomConsole.bgId);
-    
-    // Completely wipe screen map to prevent leftover layout trace artifacts
     memset(sub_map, 0, 32 * 32 * sizeof(u16));
 
-    // Instant read-outs extracted directly from calculations cache
     int is_ch = state_analysis.is_check;
     int has_mov = state_analysis.has_legal_moves;
     int repetitions = state_analysis.repetitions;
 
-    // --- LINE 1: Turn Status & Player Config (W:Hum B:Eng) ---
     int curr_x = 0;
     if (engine_state != ENGINE_STATE_READY) {
         draw_string_sub_fast(sub_map, curr_x, 0, "Booting...", 15);
         curr_x += 10;
-    } else if (current_state.halfmoves >= 100) {
-        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 14); // High Cyan
+    } else if (g_pos.st->rule50 >= 100) {
+        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (50m-rule)]", 14);
         curr_x += 17;
     } else if (repetitions >= 3) {
-        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (3-fold)]", 14); // High Cyan
+        draw_string_sub_fast(sub_map, curr_x, 0, "[DRAW (3-fold)]", 14);
         curr_x += 15;
     } else if (!has_mov) {
         if (is_ch) {
-            draw_string_sub_fast(sub_map, curr_x, 0, "[CHECKMATE!]", 9); // High Red
+            draw_string_sub_fast(sub_map, curr_x, 0, "[CHECKMATE!]", 9);
             curr_x += 12;
         } else {
-            draw_string_sub_fast(sub_map, curr_x, 0, "[STALEMATE!]", 14); // High Cyan
+            draw_string_sub_fast(sub_map, curr_x, 0, "[STALEMATE!]", 14);
             curr_x += 12;
         }
     } else if (is_ch) {
-        if (current_state.turn == 1) {
-            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10); // High Green
+        if (GUI_TURN() == 1) {
+            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10);
             curr_x += 5;
-            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9); // High Red
+            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9);
             curr_x += 9;
         } else {
-            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13); // High Magenta
+            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13);
             curr_x += 5;
-            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9); // High Red
+            draw_string_sub_fast(sub_map, curr_x, 0, " (CHECK!)", 9);
             curr_x += 9;
         }
     } else {
-        if (current_state.turn == 1) {
-            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10); // High Green
+        if (GUI_TURN() == 1) {
+            draw_string_sub_fast(sub_map, curr_x, 0, "White", 10);
             curr_x += 5;
-            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15); // High White
+            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15);
             curr_x += 8;
         } else {
-            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13); // High Magenta
+            draw_string_sub_fast(sub_map, curr_x, 0, "Black", 13);
             curr_x += 5;
-            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15); // High White
+            draw_string_sub_fast(sub_map, curr_x, 0, " to play", 15);
             curr_x += 8;
         }
     }
@@ -1301,16 +972,15 @@ void draw_bottom_stats(void) {
     sprintf(config_buf, "W:%s B:%s", w_play, b_play);
     draw_string_sub_fast(sub_map, curr_x, 0, config_buf, 15);
 
-    // --- LINE 2: Score, NPS, and Time Limits (Prefix-free display) ---
     curr_x = 0;
     if (engine_score_type == 0) {
         double eval = (double)engine_score_val / 100.0;
         char tmp_buf[16];
         sprintf(tmp_buf, "%+.2f", eval);
         if (eval > 0.0) {
-            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10); // Positive green evaluation
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10);
         } else if (eval < 0.0) {
-            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);  // Negative red evaluation
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);
         } else {
             draw_string_sub_fast(sub_map, curr_x, 1, "0.00", 15);
         }
@@ -1319,10 +989,10 @@ void draw_bottom_stats(void) {
         char tmp_buf[16];
         if (engine_score_val > 0) {
             sprintf(tmp_buf, "+M%d", engine_score_val);
-            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10); // Winning green mate evaluation
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 10);
         } else if (engine_score_val < 0) {
             sprintf(tmp_buf, "-M%d", -engine_score_val);
-            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);  // Losing red mate evaluation
+            draw_string_sub_fast(sub_map, curr_x, 1, tmp_buf, 9);
         } else {
             draw_string_sub_fast(sub_map, curr_x, 1, "M0", 15);
         }
@@ -1364,23 +1034,20 @@ void draw_bottom_stats(void) {
     }
     draw_string_sub_fast(sub_map, curr_x, 1, lim_str, 15);
 
-    // --- LINE 3: Recent Moves Title ---
-    draw_string_sub_fast(sub_map, 0, 2, "RECENT MOVES:", 11); // High Bright Yellow
+    draw_string_sub_fast(sub_map, 0, 2, "RECENT MOVES:", 11);
 
-    // --- LINES 4-13: Move List Display (Preformatted Caches) ---
     for (int r = 0; r < 10; r++) {
         draw_string_sub_fast(sub_map, 0, 3 + r, cached_move_rows_left[r], 15);
-        draw_string_sub_fast(sub_map, 14, 3 + r, "|", 8); // Intense dark gray dividing bar
+        draw_string_sub_fast(sub_map, 14, 3 + r, "|", 8);
         draw_string_sub_fast(sub_map, 15, 3 + r, cached_move_rows_right[r], 15);
     }
 
-    // --- LINES 14-23: Real-Time Rolling UCI Engine Terminal Console (10 Rows) ---
     for (int i = 0; i < 10; i++) {
         if (i < raw_log_count) {
             if (i == raw_log_count - 1) {
-                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 15); // Active live output trace in bright white
+                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 15);
             } else {
-                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 8);  // Inactive background traces in dark gray
+                draw_string_sub_fast(sub_map, 0, 13 + i, raw_log[i], 8);
             }
         }
     }
@@ -1406,7 +1073,6 @@ int get_promo_choice(void) {
         if (kDown & KEY_X) { choice = 4; break; }
         if (kDown & KEY_B) { choice = 3; break; }
         if (kDown & KEY_A) { choice = 2; break; }
-        // Optimize loop waiting by yielding to other Calico threads on VBlank
         threadWaitForVBlank();
     }
     redraw_top_needed = 1;
@@ -1422,9 +1088,9 @@ void handle_select(void) {
     int is_engine_turn = 0;
     if (user_side == 2) {
         is_engine_turn = 1; 
-    } else if (user_side == 1 && current_state.turn == -1) {
+    } else if (user_side == 1 && GUI_TURN() == -1) {
         is_engine_turn = 1; 
-    } else if (user_side == -1 && current_state.turn == 1) {
+    } else if (user_side == -1 && GUI_TURN() == 1) {
         is_engine_turn = 1; 
     }
 
@@ -1432,21 +1098,21 @@ void handle_select(void) {
         return; 
     }
 
-    if (!state_analysis.has_legal_moves || current_state.halfmoves >= 100 || state_analysis.repetitions >= 3) {
+    if (!state_analysis.has_legal_moves || g_pos.st->rule50 >= 100 || state_analysis.repetitions >= 3) {
         return;
     }
 
     int sq = screen_to_board_sq(cursor_r, cursor_c);
     if (selected_sq == -1) {
-        int p = current_state.board[sq];
-        if (p != 0 && ((current_state.turn == 1 && p > 0) || (current_state.turn == -1 && p < 0))) {
+        int p = gui_piece_at(sq);
+        if (p != 0 && ((GUI_TURN() == 1 && p > 0) || (GUI_TURN() == -1 && p < 0))) {
             selected_sq = sq;
             update_selected_destinations();
             redraw_top_needed = 1;
         }
     } else {
         GuiMove m = {selected_sq, sq, 0};
-        int p = current_state.board[selected_sq];
+        int p = gui_piece_at(selected_sq);
         int is_promo = (abs(p) == 1 && ((sq >> 3) == 0 || (sq >> 3) == 7));
         if (is_promo) m.promo = 5;
 
@@ -1454,19 +1120,15 @@ void handle_select(void) {
             if (is_promo) {
                 m.promo = get_promo_choice();
             }
-            // OPTIMIZATION: push_state() computes 'next' internally now -
-            // no second gui_make_move() call needed here.
-            BoardState next;
-            push_state(&current_state, m, &next);
-            current_state = next;
+            gui_push_move(m);
             selected_sq = -1;
             
             invalidate_and_update_board_caches();
             redraw_top_needed = 1;
             redraw_bottom_needed = 1;
         } else {
-            int target = current_state.board[sq];
-            if (target != 0 && ((current_state.turn == 1 && target > 0) || (current_state.turn == -1 && target < 0))) {
+            int target = gui_piece_at(sq);
+            if (target != 0 && ((GUI_TURN() == 1 && target > 0) || (GUI_TURN() == -1 && target < 0))) {
                 selected_sq = sq;
                 update_selected_destinations();
                 redraw_top_needed = 1;
@@ -1490,11 +1152,11 @@ void handle_undo(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    g_next_has_moves_hint_valid = 0; // defensive: don't let a stale hint leak into the recomputation below
+    g_next_has_moves_hint_valid = 0;
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
-        current_state = history[history_count];
+        undo_move(&g_pos, cfish_move_history[history_count]);
         step_back--;
     }
     selected_sq = -1;
@@ -1515,8 +1177,8 @@ void handle_reset_board(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
-    g_next_has_moves_hint_valid = 0; // defensive: don't let a stale hint leak into the recomputation below
-    gui_init_board(&current_state);
+    g_next_has_moves_hint_valid = 0;
+    gui_reset_game();
     history_count = 0;
     selected_sq = -1;
     cursor_r = 6;
@@ -1557,7 +1219,7 @@ void adjust_time_control(void) {
         }
         time_control_val = (found_idx == -1 || found_idx == time_count - 1) ? time_list[0] : time_list[found_idx + 1];
     } else if (time_control_type == 1) { 
-        time_control_val = (time_control_val % 20) + 1; // 1 to 20 range
+        time_control_val = (time_control_val % 20) + 1;
     } else { 
         int nodes_list[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608};
         int nodes_count = sizeof(nodes_list) / sizeof(nodes_list[0]);
@@ -1572,62 +1234,38 @@ void adjust_time_control(void) {
     }
 }
 
-void gui_init_board(BoardState *state) {
-    // OPTIMIZATION: must be int8_t now to match BoardState.board's type -
-    // the old "int start[64]" + memcpy(sizeof(start)) combo would have
-    // copied 4x too much data into (and past!) an int8_t board array.
-    static const int8_t start[64] = {
-        -4, -2, -3, -5, -6, -3, -2, -4,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         0,  0,  0,  0,  0,  0,  0,  0,
-         1,  1,  1,  1,  1,  1,  1,  1,
-         4,  2,  3,  5,  6,  3,  2,  4
-    };
-    memcpy(state->board, start, sizeof(start));
-    state->turn = 1;
-    state->castle = 15;
-    state->ep = -1;
-    state->halfmoves = 0;
-    state->fullmoves = 1;
-    state->hash = gui_compute_hash(state);
-}
-
 // Stockfish Engine Subprocess Entry Point
 int main_stockfish(int argc, char **argv)
 {
   print_engine_info(false);
-  ds_yield(); // Let GUI draw initial console booting messages
+  ds_yield();
 
   psqt_init();
-  ds_yield(); // Hand off CPU to GUI so screens don't freeze
+  ds_yield();
 
   bitboards_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
   zob_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
   bitbases_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
 #ifndef NNUE_PURE
   endgames_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 #endif
 
   threads_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
   options_init();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
   search_clear();
-  ds_yield(); // Hand off CPU to GUI
+  ds_yield();
 
-  // Start the engine command interface loop
   uci_loop(argc, argv);
 
   threads_exit();
@@ -1642,7 +1280,6 @@ int main_stockfish(int argc, char **argv)
   return 0;
 }
 
-// Thread callback wrapper invoking Stockfish
 void stockfish_thread_func(void* arg) {
     (void)arg;
     char *argv[] = {"stockfish", NULL};
@@ -1653,39 +1290,38 @@ void stockfish_thread_func(void* arg) {
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     
-    // Enable DS Interrupt System
     irqEnable(IRQ_VBLANK);
 
-    // Set 2D Text Modes on both displays
     videoSetMode(MODE_0_2D);
     videoSetModeSub(MODE_0_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankC(VRAM_C_SUB_BG);
 
-    // Initialize both standard consoles. 
     consoleInit(&topConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleInit(&bottomConsole, 3, BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    // Initialize top custom backgrounds (Sharing Tile Base 0 with loaded console font)
-    bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);  // Low Priority: Swatches
-    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0); // High Priority: Pieces/Labels
+    bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);
+    bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0);
 
-    // Initialize Stockfish/handshake bridge
     sf_bridge_init();
-    gui_init_board(&current_state);
 
-    // Copy solid color tile array safely to Index 255 of Main Engine VRAM via CPU Memcpy
+    // IMPORTANT: pos_set() below computes real Zobrist keys and relies on
+    // bitboard attack tables, so the lookup tables those depend on must be
+    // built first. These are pure, idempotent table generators - the
+    // engine thread calling them again later inside main_stockfish() is
+    // harmless.
+    bitboards_init();
+    zob_init();
+    gui_reset_game();
+
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
 
-    // Map hardware palette colors after bridge loaded to bypass overwrites
     init_custom_palettes();
     init_bottom_palette();
 
-    // Explicitly force hardware Backgrounds 1, 2, and 3 active on main screen
     REG_DISPCNT |= DISPLAY_BG1_ACTIVE | DISPLAY_BG2_ACTIVE | DISPLAY_BG3_ACTIVE;
 
-    // Clear graphics maps and console text screen maps before starting
     u16* board_map = bgGetMapPtr(bg_board_id);
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
     memset(board_map, 0, 32 * 32 * sizeof(u16));
@@ -1699,7 +1335,6 @@ int main(int argc, char **argv) {
     printf("\x1b[2J");
     fflush(stdout);
     
-    // Perform early wait using preemptive VBlank engine
     threadWaitForVBlank();
 
     pthread_t stockfish_thread;
@@ -1714,17 +1349,14 @@ int main(int argc, char **argv) {
         fflush(stdout);
     }
 
-    // Yield control delay for engine initialization setup
     for (int i = 0; i < 3; i++) {
         ds_yield();
         threadWaitForVBlank();
     }
 
-    // Initiate Phase 1 of Handshake
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
-    // Fill analysis caches with startpos values
     invalidate_and_update_board_caches();
     redraw_top_needed = 1;
     redraw_bottom_needed = 1;
@@ -1763,10 +1395,11 @@ int main(int argc, char **argv) {
         }
 
         int engine_active = 0;
-        if (engine_state == ENGINE_STATE_READY && state_analysis.has_legal_moves && current_state.halfmoves < 100 && state_analysis.repetitions < 3) {
+        if (engine_state == ENGINE_STATE_READY && state_analysis.has_legal_moves &&
+            g_pos.st->rule50 < 100 && state_analysis.repetitions < 3) {
             if (user_side == 2) engine_active = 1;
-            else if (user_side == 1 && current_state.turn == -1) engine_active = 1;
-            else if (user_side == -1 && current_state.turn == 1) engine_active = 1;
+            else if (user_side == 1 && GUI_TURN() == -1) engine_active = 1;
+            else if (user_side == -1 && GUI_TURN() == 1) engine_active = 1;
         }
 
         if (engine_active && !engine_thinking) {
@@ -1776,7 +1409,6 @@ int main(int argc, char **argv) {
 
         read_from_engine();
 
-        // Perform split screen redrawing conditionally
         if (redraw_top_needed) {
             draw_top_board();
             redraw_top_needed = 0;
@@ -1786,8 +1418,6 @@ int main(int argc, char **argv) {
             redraw_bottom_needed = 0;
         }
 
-        // IMPORTANT OPTIMIZATION: threadWaitForVBlank() yields CPU back to Stockfish 
-        // asynchronously, giving the engine maximum processing power while the GUI is idle.
         threadWaitForVBlank();
     }
 
