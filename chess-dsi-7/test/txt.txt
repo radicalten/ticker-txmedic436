@@ -39,4 +39,4 @@ here is search.c
 
 and what about the thread.c file, any changes necessary there? when I tested the previous version, the engine would never make a move any more. 
 
-
+#cson5 fixed this and it works now. next project is to refactor main.c using the info from bitboard.c
