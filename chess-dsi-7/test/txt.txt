@@ -31,4 +31,10 @@ follow up: Here is devkitpro's calico/thread.h
 
 do any changes need to be made to main.c now?
 
+#it said no changes needed and requested search.c
+
+here is search.c 
+
+#now it asked for uci.c
+
 
