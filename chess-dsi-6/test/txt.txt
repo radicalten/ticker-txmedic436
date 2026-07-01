@@ -1,1 +1,20 @@
+from chess-3ds-7-merge-info.txt applied to chess-dsi-6 which borrows the files from chess-dsi-5
 
+p1: 
+Can you combine these two c files into one main file?: 
+main_stockfish.c
+main-test-1ms-sleep-v1.c 
+
+
+
+#starting a new thread with gemini 3.5 flash
+p2:
+Is is possible to combine these two separate C language files into one? The primary file should be thread.h 
+3ds_bridge.h
+thread.h
+
+
+p3:
+Now lets create a combined thread.c file. here is 3ds_bridge.c followed by thread.c:
+
+wait, I simply meant to merge 3ds_bridge.c with this thread.c:
