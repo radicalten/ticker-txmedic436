@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 // Stockfish Engine Headers
 #include "bitboard.h"
@@ -51,12 +52,25 @@ typedef enum {
 EngineInitState engine_state = ENGINE_STATE_BOOTING;
 
 typedef struct {
-    int board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
+    // OPTIMIZATION: int8_t instead of int. Values only ever range -6..6, so a
+    // full 32-bit int per square was wasting 3 bytes per square for nothing.
+    // This shrinks BoardState from ~276 bytes to ~88 bytes (~3.1x smaller),
+    // which matters a lot because gui_make_move() copies a whole BoardState
+    // for *every* legality test performed (potentially thousands per frame
+    // during move-list generation), and history[MAX_HISTORY] holds hundreds
+    // of these structs.
+    int8_t board[64]; // P=1, N=2, B=3, R=4, Q=5, K=6 (Positive=White, Negative=Black)
     int turn;      // 1 = White, -1 = Black
     int castle;    // Bitmask: 1=WK, 2=WQ, 4=BK, 8=BQ
     int ep;        // En-passant square (0-63), -1 if none
     int halfmoves; // For 50-move rule
     int fullmoves;
+    // OPTIMIZATION: cached position hash (FNV-1a over board+turn+castle+ep),
+    // computed once whenever a BoardState is produced (gui_make_move /
+    // gui_init_board). Lets count_repetitions() reject non-matches with a
+    // single int comparison instead of a 64-byte memcmp against every
+    // history entry.
+    unsigned int hash;
 } BoardState;
 
 typedef struct {
@@ -64,6 +78,15 @@ typedef struct {
     int to;
     int promo; // 0=None, 2=N, 3=B, 4=R, 5=Q
 } GuiMove;
+
+// OPTIMIZATION: cached per-position pin/check info, computed once per
+// position instead of being implicitly recomputed (via full make-move +
+// board rescan) for every single candidate move tested against it.
+typedef struct {
+    int king_sq;
+    int in_check;
+    unsigned long long pinned; // bit i set => piece on square i is pinned to its own king
+} PinInfo;
 
 BoardState current_state;
 BoardState history[MAX_HISTORY];
@@ -107,13 +130,31 @@ typedef struct {
 } BoardAnalysisCache;
 
 BoardAnalysisCache state_analysis;
-int selected_legal_destinations[64] = {0}; // Cache legal moves for active piece
+// OPTIMIZATION: uint8_t instead of int - it's a boolean array, so this is a
+// 4x smaller footprint (and a 4x cheaper memset) for no downside.
+uint8_t selected_legal_destinations[64] = {0}; // Cache legal moves for active piece
 
 char cached_move_rows_left[10][16] = { {0} };
 char cached_move_rows_right[10][16] = { {0} };
 
 int redraw_top_needed = 1;
 int redraw_bottom_needed = 1;
+
+// OPTIMIZATION: one-shot hint used to pass an already-computed
+// gui_has_legal_moves() result from push_state() forward into the
+// immediately-following invalidate_and_update_board_caches() call, since
+// both were otherwise independently recomputing the exact same thing on the
+// exact same resulting position.
+int g_next_has_moves_hint = 0;
+int g_next_has_moves_hint_valid = 0;
+
+// OPTIMIZATION: persistent, incrementally-updated UCI "position" command
+// buffer. Previously trigger_engine_move() rebuilt the *entire* move history
+// string from scratch (up to MAX_HISTORY moves) every single time the engine
+// was asked to move. Now we remember how many moves are already encoded in
+// the buffer and only append what's new.
+static char engine_cmd_buf[8192] = "position startpos";
+static int engine_cmd_synced_count = -1; // -1 forces a full rebuild on first use
 
 PrintConsole topConsole, bottomConsole;
 
@@ -135,6 +176,8 @@ static const u32 solid_tile[8] = {
 
 void gui_init_board(BoardState *state);
 int gui_is_legal_move(const BoardState *state, GuiMove m);
+int gui_is_legal_move_pins(const BoardState *state, GuiMove m, const PinInfo *pins);
+void gui_compute_pin_info(const BoardState *state, int color, PinInfo *info);
 int gui_has_legal_moves(const BoardState *state);
 int gui_is_square_attacked(const BoardState *state, int sq, int attacker);
 void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m);
@@ -143,8 +186,24 @@ int gui_find_king(const BoardState *state, int color);
 int count_repetitions(const BoardState *state);
 int get_promo_choice(void);
 void invalidate_and_update_board_caches(void);
+void push_state(const BoardState *state, GuiMove m, BoardState *out_next);
 
 GuiMove gui_uci_to_move(const char *str);
+
+// OPTIMIZATION: cheap FNV-1a hash of a position. Only used as a fast
+// pre-filter before falling back to an exact memcmp, so it doesn't need to
+// be cryptographically strong or collision-proof - it just needs to make
+// the overwhelmingly common "definitely not the same position" case cheap.
+static inline unsigned int gui_compute_hash(const BoardState *s) {
+    unsigned int h = 2166136261u; // FNV-1a offset basis
+    for (int i = 0; i < 64; i++) {
+        h = (h ^ (unsigned int)(unsigned char)s->board[i]) * 16777619u;
+    }
+    h = (h ^ (unsigned int)(s->turn & 0xFF)) * 16777619u;
+    h = (h ^ (unsigned int)(s->castle & 0xFF)) * 16777619u;
+    h = (h ^ (unsigned int)((s->ep + 1) & 0xFF)) * 16777619u;
+    return h;
+}
 
 static inline int screen_to_board_sq(int r, int c) {
     if (board_orientation == 1) {
@@ -188,7 +247,12 @@ GuiMove gui_uci_to_move(const char *str) {
     return m;
 }
 
-void gui_move_to_san(const BoardState *state, GuiMove m, char *buf) {
+// OPTIMIZATION: renamed from gui_move_to_san(). Now takes the already-made
+// resulting position ('next') and returns whether that position has any
+// legal replies via *out_has_moves, so the caller (push_state) doesn't need
+// to call gui_make_move() and gui_has_legal_moves() a second time right
+// after this returns.
+void gui_move_to_san_ex(const BoardState *state, const BoardState *next, GuiMove m, char *buf, int *out_has_moves) {
     int p = abs(state->board[m.from]);
     int turn = state->turn;
     
@@ -211,6 +275,12 @@ void gui_move_to_san(const BoardState *state, GuiMove m, char *buf) {
         char p_chars[] = "?PNBRQK";
         *ptr++ = p_chars[p];
 
+        // OPTIMIZATION: compute pin/check info for 'state' once, then reuse
+        // it for every same-type piece scanned below instead of doing a
+        // full make-move + attacked-square rescan per candidate.
+        PinInfo pins;
+        gui_compute_pin_info(state, turn, &pins);
+
         int another_can_move = 0;
         int same_file = 0;
         int same_rank = 0;
@@ -218,7 +288,7 @@ void gui_move_to_san(const BoardState *state, GuiMove m, char *buf) {
             if (sq == m.from) continue;
             if (state->board[sq] == state->board[m.from]) {
                 GuiMove alt_m = {sq, m.to, 0};
-                if (gui_is_legal_move(state, alt_m)) {
+                if (gui_is_legal_move_pins(state, alt_m, &pins)) {
                     another_can_move = 1;
                     if ((sq & 7) == (m.from & 7)) same_file = 1;
                     if ((sq >> 3) == (m.from >> 3)) same_rank = 1;
@@ -252,12 +322,13 @@ void gui_move_to_san(const BoardState *state, GuiMove m, char *buf) {
     *ptr = '\0';
 
 append_suffixes:;
-    BoardState next;
-    gui_make_move(state, &next, m);
-    int op_king = gui_find_king(&next, next.turn);
-    int is_check = (op_king != -1) && gui_is_square_attacked(&next, op_king, -next.turn);
-    int has_moves = gui_has_legal_moves(&next);
-    
+    // OPTIMIZATION: 'next' is supplied by the caller (already computed once
+    // via gui_make_move) instead of being recomputed here.
+    int op_king = gui_find_king(next, next->turn);
+    int is_check = (op_king != -1) && gui_is_square_attacked(next, op_king, -next->turn);
+    int has_moves = gui_has_legal_moves(next);
+    if (out_has_moves) *out_has_moves = has_moves;
+
     ptr = buf + strlen(buf);
     if (is_check) {
         if (!has_moves) {
@@ -269,20 +340,36 @@ append_suffixes:;
     *ptr = '\0';
 }
 
-void push_state(const BoardState *state, GuiMove m) {
+// OPTIMIZATION: now outputs the resulting position via out_next so callers
+// don't need to call gui_make_move() a second time immediately afterward,
+// and internally reuses that single make-move result for SAN generation too.
+void push_state(const BoardState *state, GuiMove m, BoardState *out_next) {
     if (history_count < MAX_HISTORY - 1) {
         history[history_count] = *state;
         move_history[history_count] = m;
-        
-        // Compute and cache the SAN string immediately upon pushing the move
-        gui_move_to_san(state, m, san_history[history_count]);
-        
+
+        BoardState next;
+        gui_make_move(state, &next, m);
+
+        int has_moves_next = 0;
+        gui_move_to_san_ex(state, &next, m, san_history[history_count], &has_moves_next);
+
         history_count++;
 
-        // Invalidate caching calculations
-        invalidate_and_update_board_caches();
+        if (out_next) *out_next = next;
+
+        // Hand the has_legal_moves() result we just computed for 'next'
+        // forward to the caches update that's about to happen on the exact
+        // same position.
+        g_next_has_moves_hint = has_moves_next;
+        g_next_has_moves_hint_valid = 1;
+
         redraw_top_needed = 1;
         redraw_bottom_needed = 1;
+    } else if (out_next) {
+        // History full (shouldn't normally happen) - still give the caller
+        // a valid resulting position.
+        gui_make_move(state, out_next, m);
     }
 }
 
@@ -303,6 +390,52 @@ void push_raw_log(const char *line) {
     redraw_bottom_needed = 1; 
 }
 
+// OPTIMIZATION: incrementally syncs engine_cmd_buf with move_history[] /
+// history_count instead of rebuilding the full "position startpos moves ..."
+// string from scratch every time the engine is asked to move. Self-heals
+// with a full rebuild if history_count ever goes backwards (Undo/Reset).
+void engine_cmd_sync(void) {
+    if (engine_cmd_synced_count == history_count) return;
+
+    if (engine_cmd_synced_count < 0 || engine_cmd_synced_count > history_count) {
+        // Full rebuild: first run ever, or history shrank (Undo/Reset).
+        if (history_count == 0) {
+            strcpy(engine_cmd_buf, "position startpos");
+        } else {
+            strcpy(engine_cmd_buf, "position startpos moves");
+            int len = strlen(engine_cmd_buf);
+            for (int i = 0; i < history_count; i++) {
+                char uci_m[10];
+                gui_move_to_uci(move_history[i], uci_m);
+                int move_len = strlen(uci_m);
+                if (len + 1 + move_len + 1 >= (int)sizeof(engine_cmd_buf)) break;
+                engine_cmd_buf[len++] = ' ';
+                strcpy(engine_cmd_buf + len, uci_m);
+                len += move_len;
+            }
+            engine_cmd_buf[len] = '\0';
+        }
+    } else {
+        // Incremental: only append the moves that are new since last sync.
+        if (engine_cmd_synced_count == 0) {
+            strcpy(engine_cmd_buf, "position startpos moves");
+        }
+        int len = strlen(engine_cmd_buf);
+        for (int i = engine_cmd_synced_count; i < history_count; i++) {
+            char uci_m[10];
+            gui_move_to_uci(move_history[i], uci_m);
+            int move_len = strlen(uci_m);
+            if (len + 1 + move_len + 1 >= (int)sizeof(engine_cmd_buf)) break;
+            engine_cmd_buf[len++] = ' ';
+            strcpy(engine_cmd_buf + len, uci_m);
+            len += move_len;
+        }
+        engine_cmd_buf[len] = '\0';
+    }
+
+    engine_cmd_synced_count = history_count;
+}
+
 void trigger_engine_move(void) {
     engine_nps = 0;
     engine_score_type = -1;
@@ -311,26 +444,8 @@ void trigger_engine_move(void) {
     engine_nodes = 0;
     engine_pv[0] = '\0';
 
-    static char cmd[8192];
-    
-    if (history_count == 0) {
-        strcpy(cmd, "position startpos");
-    } else {
-        strcpy(cmd, "position startpos moves");
-        int len = strlen(cmd);
-        for (int i = 0; i < history_count; i++) {
-            char uci_m[10];
-            gui_move_to_uci(move_history[i], uci_m);
-            int move_len = strlen(uci_m);
-            if (len + 1 + move_len + 2 >= (int)sizeof(cmd)) break;
-            cmd[len++] = ' ';
-            strcpy(cmd + len, uci_m);
-            len += move_len;
-        }
-        cmd[len] = '\0';
-    }
-    
-    sf_send_command(cmd);
+    engine_cmd_sync();
+    sf_send_command(engine_cmd_buf);
 
     char go_cmd[128];
     if (time_control_type == 0) {
@@ -434,9 +549,10 @@ void process_engine_output(char *line) {
             
             GuiMove m = gui_uci_to_move(move_str);
             if (gui_is_legal_move(&current_state, m)) {
-                push_state(&current_state, m);
+                // OPTIMIZATION: push_state() now computes 'next' internally
+                // and hands it back here - no second gui_make_move() call.
                 BoardState next;
-                gui_make_move(&current_state, &next, m);
+                push_state(&current_state, m, &next);
                 current_state = next;
                 invalidate_and_update_board_caches();
             }
@@ -654,8 +770,73 @@ int gui_is_pseudo_legal_move(const BoardState *state, GuiMove m) {
     return 0;
 }
 
-int gui_is_legal_move(const BoardState *state, GuiMove m) {
+// ==========================================
+// OPTIMIZATION: PIN / CHECK CACHE
+// ==========================================
+// Computes, once per position, whether 'color's king is currently in check
+// and which of 'color's pieces are absolutely pinned to that king. This lets
+// gui_is_legal_move_pins() skip the expensive "make the move, then rescan
+// the whole board for attackers" step for the large majority of moves: any
+// move by a non-pinned, non-king piece while not already in check cannot
+// possibly expose our own king, so it's legal by construction.
+void gui_compute_pin_info(const BoardState *state, int color, PinInfo *info) {
+    info->pinned = 0ULL;
+    info->king_sq = gui_find_king(state, color);
+    info->in_check = 0;
+    if (info->king_sq == -1) return;
+
+    info->in_check = gui_is_square_attacked(state, info->king_sq, -color);
+
+    int r = info->king_sq >> 3;
+    int c = info->king_sq & 7;
+    static const int dr[8] = {-1, -1, 1, 1, -1, 1, 0, 0};
+    static const int dc[8] = {-1, 1, -1, 1, 0, 0, -1, 1};
+
+    for (int d = 0; d < 8; d++) {
+        int is_diag = (dr[d] != 0 && dc[d] != 0);
+        int nr = r + dr[d], nc = c + dc[d];
+        int first_sq = -1;
+        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+            int sq = (nr << 3) + nc;
+            int p = state->board[sq];
+            if (p != 0) {
+                if (first_sq == -1) {
+                    int is_own = (color == 1 && p > 0) || (color == -1 && p < 0);
+                    if (!is_own) break; // Enemy piece blocks the ray immediately: no pin here.
+                    first_sq = sq;
+                } else {
+                    int is_enemy = (color == 1 && p < 0) || (color == -1 && p > 0);
+                    if (is_enemy) {
+                        int ap = abs(p);
+                        int slides_this_way = is_diag ? (ap == 3 || ap == 5) : (ap == 4 || ap == 5);
+                        if (slides_this_way) {
+                            info->pinned |= (1ULL << first_sq);
+                        }
+                    }
+                    break;
+                }
+            }
+            nr += dr[d]; nc += dc[d];
+        }
+    }
+}
+
+// OPTIMIZATION: fast-path legality check using precomputed pin/check info.
+// Falls back to the original, fully general make-move + attacked-square
+// check for anything that isn't provably safe by construction (king moves,
+// in-check evasions, pinned pieces, en passant, castling).
+int gui_is_legal_move_pins(const BoardState *state, GuiMove m, const PinInfo *pins) {
     if (!gui_is_pseudo_legal_move(state, m)) return 0;
+
+    int p = state->board[m.from];
+    int abs_p = abs(p);
+    int is_ep_capture = (abs_p == 1 && m.to == state->ep);
+
+    if (!pins->in_check && abs_p != 6 && !is_ep_capture &&
+        !((pins->pinned >> m.from) & 1ULL)) {
+        return 1;
+    }
+
     BoardState next;
     gui_make_move(state, &next, m);
     int king = gui_find_king(&next, state->turn);
@@ -663,7 +844,16 @@ int gui_is_legal_move(const BoardState *state, GuiMove m) {
     return !gui_is_square_attacked(&next, king, -state->turn);
 }
 
+int gui_is_legal_move(const BoardState *state, GuiMove m) {
+    PinInfo pins;
+    gui_compute_pin_info(state, state->turn, &pins);
+    return gui_is_legal_move_pins(state, m, &pins);
+}
+
 int gui_has_legal_moves(const BoardState *state) {
+    PinInfo pins;
+    gui_compute_pin_info(state, state->turn, &pins);
+
     for (int f = 0; f < 64; f++) {
         if (state->board[f] == 0) continue;
         if ((state->turn == 1 && state->board[f] < 0) || (state->turn == -1 && state->board[f] > 0)) continue;
@@ -672,7 +862,7 @@ int gui_has_legal_moves(const BoardState *state) {
             if (abs(state->board[f]) == 1 && ((t >> 3) == 0 || (t >> 3) == 7)) {
                 m.promo = 5;
             }
-            if (gui_is_legal_move(state, m)) return 1;
+            if (gui_is_legal_move_pins(state, m, &pins)) return 1;
         }
     }
     return 0;
@@ -681,7 +871,10 @@ int gui_has_legal_moves(const BoardState *state) {
 int count_repetitions(const BoardState *state) {
     int count = 1;
     for (int i = 0; i < history_count; i++) {
-        if (state->turn == history[i].turn &&
+        // OPTIMIZATION: cheap hash compare rejects the overwhelming majority
+        // of non-matching history entries before paying for a full memcmp.
+        if (state->hash == history[i].hash &&
+            state->turn == history[i].turn &&
             state->castle == history[i].castle &&
             state->ep == history[i].ep &&
             memcmp(state->board, history[i].board, sizeof(state->board)) == 0) {
@@ -698,9 +891,9 @@ void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
 
     dst->board[m.from] = 0;
     if (m.promo != 0) {
-        dst->board[m.to] = dst->turn * m.promo;
+        dst->board[m.to] = (int8_t)(dst->turn * m.promo);
     } else {
-        dst->board[m.to] = p;
+        dst->board[m.to] = (int8_t)p;
     }
 
     if (abs(p) == 1 && m.to == dst->ep) {
@@ -732,6 +925,10 @@ void gui_make_move(const BoardState *src, BoardState *dst, GuiMove m) {
     else dst->halfmoves++;
     
     if (dst->turn == 1) dst->fullmoves++;
+
+    // OPTIMIZATION: cache the position hash once here rather than
+    // recomputing a full board scan every time repetitions are checked.
+    dst->hash = gui_compute_hash(dst);
 }
 
 // Map coordinates helper
@@ -855,12 +1052,15 @@ void update_selected_destinations(void) {
     memset(selected_legal_destinations, 0, sizeof(selected_legal_destinations));
     if (selected_sq == -1) return;
 
+    PinInfo pins;
+    gui_compute_pin_info(&current_state, current_state.turn, &pins);
+
     for (int sq = 0; sq < 64; sq++) {
         GuiMove test_m = {selected_sq, sq, 0};
         if (abs(current_state.board[selected_sq]) == 1 && ((sq >> 3) == 0 || (sq >> 3) == 7)) {
             test_m.promo = 5;
         }
-        if (gui_is_legal_move(&current_state, test_m)) {
+        if (gui_is_legal_move_pins(&current_state, test_m, &pins)) {
             selected_legal_destinations[sq] = 1;
         }
     }
@@ -923,8 +1123,16 @@ void invalidate_and_update_board_caches(void) {
     state_analysis.king_in_check_sq = king_in_check;
     state_analysis.is_check = (king_in_check != -1);
 
-    // 2. Scan remaining legal transitions
-    state_analysis.has_legal_moves = gui_has_legal_moves(&current_state);
+    // 2. Scan remaining legal transitions.
+    // OPTIMIZATION: reuse the has_legal_moves() result push_state() already
+    // computed for this exact position (while generating the SAN '+'/'#'
+    // suffix) instead of scanning all 64x64 candidate moves a second time.
+    if (g_next_has_moves_hint_valid) {
+        state_analysis.has_legal_moves = g_next_has_moves_hint;
+        g_next_has_moves_hint_valid = 0;
+    } else {
+        state_analysis.has_legal_moves = gui_has_legal_moves(&current_state);
+    }
     state_analysis.repetitions = count_repetitions(&current_state);
 
     // 3. Cache the legal highlights for the selected piece
@@ -1246,9 +1454,10 @@ void handle_select(void) {
             if (is_promo) {
                 m.promo = get_promo_choice();
             }
-            push_state(&current_state, m);
+            // OPTIMIZATION: push_state() computes 'next' internally now -
+            // no second gui_make_move() call needed here.
             BoardState next;
-            gui_make_move(&current_state, &next, m);
+            push_state(&current_state, m, &next);
             current_state = next;
             selected_sq = -1;
             
@@ -1281,6 +1490,7 @@ void handle_undo(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    g_next_has_moves_hint_valid = 0; // defensive: don't let a stale hint leak into the recomputation below
     int step_back = (user_side == 1 || user_side == -1) ? 2 : 1;
     while (step_back > 0 && history_count > 0) {
         history_count--;
@@ -1305,6 +1515,7 @@ void handle_reset_board(void) {
     engine_depth = 0;
     engine_nodes = 0;
     engine_pv[0] = '\0';
+    g_next_has_moves_hint_valid = 0; // defensive: don't let a stale hint leak into the recomputation below
     gui_init_board(&current_state);
     history_count = 0;
     selected_sq = -1;
@@ -1362,7 +1573,10 @@ void adjust_time_control(void) {
 }
 
 void gui_init_board(BoardState *state) {
-    int start[64] = {
+    // OPTIMIZATION: must be int8_t now to match BoardState.board's type -
+    // the old "int start[64]" + memcpy(sizeof(start)) combo would have
+    // copied 4x too much data into (and past!) an int8_t board array.
+    static const int8_t start[64] = {
         -4, -2, -3, -5, -6, -3, -2, -4,
         -1, -1, -1, -1, -1, -1, -1, -1,
          0,  0,  0,  0,  0,  0,  0,  0,
@@ -1378,6 +1592,7 @@ void gui_init_board(BoardState *state) {
     state->ep = -1;
     state->halfmoves = 0;
     state->fullmoves = 1;
+    state->hash = gui_compute_hash(state);
 }
 
 // Stockfish Engine Subprocess Entry Point
