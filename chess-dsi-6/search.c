@@ -22,7 +22,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "3ds_bridge.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "movegen.h"
