@@ -37,4 +37,6 @@ here is search.c
 
 #now it asked for uci.c
 
+and what about the thread.c file, any changes necessary there? when I tested the previous version, the engine would never make a move any more. 
+
 
