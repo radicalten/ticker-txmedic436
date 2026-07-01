@@ -43,6 +43,11 @@
 // OPTIMIZATION: Reduced from 2048 to 512 to reclaim RAM, preventing thread spawn failure.
 #define MAX_HISTORY 512
 
+// Forward declaration: topConsole is defined further down in this file, but
+// gui_alloc_position()/gui_reset_game() (used for early boot diagnostics)
+// are defined earlier and need to reference it.
+extern PrintConsole topConsole;
+
 // ==========================================================================
 // ENGINE ADAPTER
 // ==========================================================================
