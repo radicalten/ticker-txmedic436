@@ -79,12 +79,21 @@
 // The GUI's live game position.
 static Position g_pos;
 
-// Stack buffer backing g_pos->st. Mirrors thread_init()'s allocate+align
-// pattern exactly, but sized for one long-lived linear game (MAX_HISTORY
-// plies) with generous padding on both ends, rather than thread_init()'s
-// bounded search-recursion sizing (63 + MAX_PLY + 110 slots), since we
-// don't know exactly where pos_set() anchors pos->st within the buffer.
-#define GUI_STACK_SLOTS (128 + MAX_HISTORY + 128)
+// Stack buffer backing g_pos->st.
+//
+// OPTIMIZATION / BUGFIX: this now mirrors thread.c's own thread_init()
+// sizing EXACTLY (63 + (MAX_PLY + 110) slots), rather than an independently
+// guessed (128 + MAX_HISTORY + 128) size. That original guess was ~45%
+// larger and is suspected to have caused a silent calloc() failure (hard
+// black screen, no output) given how tight this device's RAM budget already
+// is - see the MAX_HISTORY 2048->512 comment above. This formula is
+// known-good because it's the exact same one already succeeding, today, for
+// the real engine thread's own Position (Threads.pos[0]).
+//
+// NOTE: this does bound gameplay/undo depth to roughly this many plies -
+// same implicit constraint that already exists engine-side for
+// Threads.pos[0], so this isn't a new limitation.
+#define GUI_STACK_SLOTS (63 + (MAX_PLY + 110))
 static void *g_stack_alloc = NULL;
 
 // The exact Move object applied at each ply, needed to call undo_move()
@@ -182,14 +191,27 @@ static inline int gui_has_legal_moves(void) {
 // One-time allocation of g_pos's Stack backing storage (mirrors
 // thread_init()'s allocate+align pattern in thread.c). Must be called
 // exactly once, before the first gui_reset_game().
+//
+// DIAGNOSTIC: prints checkpoint messages to the top screen so a hard
+// black-screen hang can be localized to a specific step instead of being a
+// total mystery. Remove/quiet these once startup is confirmed reliable.
 static void gui_alloc_position(void) {
     memset(&g_pos, 0, sizeof(g_pos));
 
+    consoleSelect(&topConsole);
+    printf("Alloc GUI stack:\n %d slots, %u bytes\n",
+           GUI_STACK_SLOTS, (unsigned)(GUI_STACK_SLOTS * sizeof(Stack)));
+    fflush(stdout);
+
     g_stack_alloc = calloc(GUI_STACK_SLOTS, sizeof(Stack));
     if (!g_stack_alloc) {
-        // Fatal - cannot proceed without a valid Stack buffer.
+        printf("\x1b[1;31mFATAL: OOM allocating\nGUI Stack buffer!\x1b[0m\n");
+        fflush(stdout);
         while (1) threadWaitForVBlank();
     }
+    printf("Stack alloc OK.\n");
+    fflush(stdout);
+
     g_pos.stackAllocation = g_stack_alloc;
     g_pos.stack = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
 
@@ -201,10 +223,20 @@ static void gui_alloc_position(void) {
 // (mirrors how uci.c's "ucinewgame"/"position" handlers repeatedly call
 // pos_set() on the SAME Threads.pos[0] object, reusing its one-time
 // stack/table allocations).
+//
+// DIAGNOSTIC: see gui_alloc_position() note above.
 static void gui_reset_game(void) {
     static char startfen[] =
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    consoleSelect(&topConsole);
+    printf("Calling pos_set()...\n");
+    fflush(stdout);
+
     pos_set(&g_pos, startfen, 0 /* isChess960 */);
+
+    printf("pos_set() returned OK.\n");
+    fflush(stdout);
 }
 
 // ==========================================================================
@@ -1327,7 +1359,16 @@ int main(int argc, char **argv) {
     bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);
     bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0);
 
+    // DIAGNOSTIC: visible startup checkpoints on the top screen so a hard
+    // hang/black-screen can be localized to a specific step.
+    consoleSelect(&topConsole);
+    printf("Boot: bridge init...\n");
+    fflush(stdout);
+
     sf_bridge_init();
+
+    printf("Boot: bitboards/zob/psqt...\n");
+    fflush(stdout);
 
     // IMPORTANT: pos_set() relies on real Zobrist keys, PSQT scores, and
     // bitboard attack tables, so these idempotent table-builders must run
@@ -1337,8 +1378,14 @@ int main(int argc, char **argv) {
     zob_init();
     psqt_init();
 
+    printf("Boot: alloc GUI position...\n");
+    fflush(stdout);
+
     gui_alloc_position();
     gui_reset_game();
+
+    printf("Boot: GUI position ready.\n");
+    fflush(stdout);
 
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
