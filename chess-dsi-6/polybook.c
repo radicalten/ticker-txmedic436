@@ -8,7 +8,6 @@
 #include "thread.h"
 #include "types.h"
 #include "uci.h"
-#include "3ds_bridge.h"
 
 struct PolyHash {
   uint64_t key;
