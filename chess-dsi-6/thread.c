@@ -18,7 +18,6 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#define THREAD_IMPLEMENTATION
 #include "thread.h"
 
 #include <assert.h>
