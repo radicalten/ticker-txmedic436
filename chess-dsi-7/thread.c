@@ -71,13 +71,23 @@ typedef struct {
     volatile uint32_t tail; // consumer-owned: total bytes ever read
 } MsgQueue;
 
-static MsgQueue q_gui_to_engine;   // producer: GUI thread   | consumer: engine/UCI thread
+static MsgQueue q_gui_to_engine;   // producer: GUI thread    | consumer: engine/UCI thread
 static MsgQueue q_engine_to_gui;   // producer: engine thread | consumer: GUI thread
 
+// SAFETY NOTE: this queue is safe to use with a blocking
+// threadBlock()/threadUnblockAllByValue() pair specifically because
+// sf_recv_command()'s checker (the UCI command thread, MAIN_THREAD_PRIO)
+// and sf_send_command()'s caller (the GUI thread, also MAIN_THREAD_PRIO)
+// run at EQUAL priority, and Calico does not time-slice equal-priority
+// threads. That means the GUI thread cannot preempt the UCI thread in the
+// narrow gap between its "queue is empty" check and its threadBlock()
+// call - it can only run once the UCI thread itself actually blocks. See
+// the large comment on thread_idle_loop() below for the case where this
+// reasoning does NOT hold and caused a real, reproducible permanent hang.
 static ThrListNode s_guiToEngineQueue;
 
 // Stack and Thread-Local Storage Configuration for Calico
-#define SF_THREAD_STACK_SIZE (64 * 1024)
+#define SF_THREAD_STACK_SIZE (64 * 1024) // 64 KB Stack (safe for heavy chess evaluation)
 
 static Thread s_searchThread;
 static void* s_searchThreadStack = NULL;
@@ -86,15 +96,66 @@ static volatile bool s_searchThreadActive = false;
 static void* (*s_startRoutine)(void*) = NULL;
 static void* s_threadArg = NULL;
 
-// [ds_disable_interrupts / ds_restore_interrupts / calico_thread_entry / ds_yield
-//  stay exactly as they were - no changes needed]
+// Safely execute interrupt manipulations in ARM mode to prevent Thumb assembly syntax errors
+__attribute__((target("arm"), noinline)) u32 ds_disable_interrupts(void) {
+    u32 old;
+    __asm__ volatile(
+        "mrs %0, cpsr\n\t"
+        "orr r12, %0, #0x80\n\t"
+        "msr cpsr_c, r12" 
+        : "=r"(old) 
+        : 
+        : "r12", "cc", "memory"
+    );
+    return old;
+}
+
+__attribute__((target("arm"), noinline)) void ds_restore_interrupts(u32 old) {
+    __asm__ volatile(
+        "msr cpsr_c, %0" 
+        : 
+        : "r"(old) 
+        : "cc", "memory"
+    );
+}
+
+// Adapt standard routine void* return to Calico's int return signature
+static int calico_thread_entry(void* arg) {
+    (void)arg;
+    if (s_startRoutine) {
+        s_startRoutine(s_threadArg);
+    }
+    s_searchThreadActive = false;
+    return 0;
+}
+
+// Yield CPU time
+void ds_yield(void) {
+    threadYield();
+}
+
+// Undefine target library macros to avoid infinite loops inside overrides
+#undef printf
+#undef fprintf
+#undef vfprintf
+#undef fflush
+#undef puts
+#undef fputs
+#undef putchar
+#undef fputc
+#undef putc
+#undef fwrite
+#undef pthread_create
 
 void sf_bridge_init(void) {
     q_gui_to_engine.head = q_gui_to_engine.tail = 0;
     q_engine_to_gui.head = q_engine_to_gui.tail = 0;
 
     s_searchThreadActive = false;
-    // s_guiToEngineQueue is a static ThrListNode, zero-initialized by BSS.
+    // s_guiToEngineQueue is a static ThrListNode and is therefore
+    // zero-initialized by the BSS segment at program start, matching the
+    // "empty queue" representation used elsewhere (see Thread's own
+    // zero-initialized 'waiters' field).
 }
 
 // Producer-side push. Never touches 'tail' (that belongs solely to the
@@ -119,8 +180,8 @@ void sf_send_command(const char *cmd) {
     }
     queue_push_char(&q_gui_to_engine, '\n');
 
-    // Safe: see s_guiToEngineQueue's declaration comment. GUI thread and
-    // the UCI command thread are equal priority, so this cannot race
+    // Safe: see s_guiToEngineQueue's declaration comment above. GUI thread
+    // and the UCI command thread are equal priority, so this cannot race
     // against sf_recv_command()'s check-then-block sequence.
     threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
@@ -180,7 +241,7 @@ int sf_printf(const char *format, ...) {
         queue_push_char(&q_engine_to_gui, temp_buf[i]);
     }
 
-    ds_yield();
+    ds_yield(); // Give GUI immediate priority to read this buffer
     return written;
 }
 
@@ -296,6 +357,66 @@ int sf_get_output(char *buf, size_t max_len) {
     return (int)i;
 }
 
+// Preemptive Thread Spawner mapping POSIX definitions to libcalico
+int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                      void *(*start_routine) (void *), void *arg) {
+    (void)attr;
+
+    // Recursive thread guard (matches original design for single search engines)
+    if (s_searchThreadActive) {
+        if (thread != NULL) {
+            *thread = (pthread_t)999;
+        }
+        return 0; 
+    }
+
+    // Allocate Stack and TLS on the first creation run to prevent runtime fragmentation
+    if (!s_searchThreadStack) {
+        s_searchThreadStack = malloc(SF_THREAD_STACK_SIZE);
+        if (!s_searchThreadStack) {
+            return -1;
+        }
+
+        size_t tls_size = threadGetLocalStorageSize();
+        if (tls_size > 0) {
+            s_searchThreadTls = malloc(tls_size);
+            if (!s_searchThreadTls) {
+                free(s_searchThreadStack);
+                s_searchThreadStack = NULL;
+                return -1;
+            }
+        }
+    }
+
+    s_startRoutine = start_routine;
+    s_threadArg = arg;
+    s_searchThreadActive = true;
+
+    // Align stack base boundary up 8-bytes
+    uintptr_t stack_base = (uintptr_t)s_searchThreadStack;
+    uintptr_t stack_top_aligned = (stack_base + SF_THREAD_STACK_SIZE) & ~7;
+
+    // Setup Calico thread metadata
+    threadPrepare(&s_searchThread, 
+                  calico_thread_entry, 
+                  NULL, 
+                  (void*)stack_top_aligned, 
+                  MAIN_THREAD_PRIO);
+
+    // Register C stdlib Thread-Local Storage pointer (essential to prevent crashes in sub-threads)
+    if (s_searchThreadTls) {
+        threadAttachLocalStorage(&s_searchThread, s_searchThreadTls);
+    }
+
+    // Launch execution context in the Calico scheduler
+    threadStart(&s_searchThread);
+
+    if (thread != NULL) {
+        *thread = (pthread_t)&s_searchThread;
+    }
+
+    return 0;
+}
 
 /* ============================================================================
    PART 2: ENGINE THREADING IMPLEMENTATION (Formerly thread.c)
