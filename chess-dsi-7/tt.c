@@ -33,6 +33,12 @@
 #include "types.h"
 #include "uci.h"
 
+#include <nds.h>
+
+// Diagnostic-only: direct access to the GUI's bottom console, bypassing the
+// engine<->GUI queue entirely.
+extern PrintConsole bottomConsole;
+
 TranspositionTable TT; // Our global transposition table
 
 // tt_free() frees the allocated transposition table memory.
