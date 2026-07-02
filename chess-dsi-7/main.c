@@ -1562,7 +1562,14 @@ int main(int argc, char **argv) {
     redraw_top_needed = 1;
     redraw_bottom_needed = 1;
 
+    static uint32_t frame_counter = 0;
+
     while (pmMainLoop()) {
+        frame_counter++;
+        consoleSelect(&topConsole);
+        printf("\x1b[0;0Hframe=%lu   ", (unsigned long)frame_counter);
+        fflush(stdout);
+
         scanKeys();
         u32 kDown = keysDown();
 
