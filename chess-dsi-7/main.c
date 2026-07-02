@@ -1533,18 +1533,27 @@ int main(int argc, char **argv) {
     consoleSelect(&topConsole);
     printf("Boot: yield loop done.\n");
     fflush(stdout);
-  
-    consoleSelect(&bottomConsole);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
+
     printf("Boot: sending 'uci'...\n");
     fflush(stdout);
 
     sf_send_command("uci");
+
+    printf("Boot: sf_send_command('uci')\nreturned OK.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
+
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
     printf("Boot: calling\ninvalidate_and_update...\n");
     fflush(stdout);
 
     invalidate_and_update_board_caches();
+
+    printf("Boot: invalidate_and_update\nreturned OK.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 
     printf("Boot: entering main loop.\n");
     fflush(stdout);
