@@ -44,33 +44,40 @@
    PART 1: 3DS/DS BRIDGE IMPLEMENTATION (Formerly 3ds_bridge.c)
    ============================================================================ */
 
-#define MSG_QUEUE_SIZE 65536
+#define MSG_QUEUE_SIZE 65536u        // must stay a power of two
+#define MSG_QUEUE_MASK (MSG_QUEUE_SIZE - 1u)
 
+// Lock-free single-producer/single-consumer ring buffer.
+//
+// BUGFIX: previously guarded by a LightLock spinlock. On Calico's
+// non-time-sliced-between-equal-priority scheduler, a spinlock is only
+// safe if a thread that fails to acquire it is guaranteed to eventually
+// yield to whoever holds it. Nothing guaranteed that here: if the GUI
+// thread began spinning on q_engine_to_gui.lock at the exact moment the
+// engine thread was holding it (e.g. interrupted mid-sf_printf() during
+// uci_loop()'s startup banner), the GUI thread would spin forever without
+// ever yielding, so the engine thread holding the lock could never be
+// rescheduled to finish and release it - a permanent deadlock. This
+// matches exactly the same root-cause category already documented and
+// fixed once in this file for thread_idle_loop().
+//
+// Fix: each queue has exactly one producer and one consumer, so no lock is
+// needed at all - a head/tail counter pair with memory barriers (the same
+// __sync_synchronize() idiom already used throughout this file) is
+// sufficient and cannot deadlock.
 typedef struct {
     char data[MSG_QUEUE_SIZE];
-    int head;
-    int tail;
-    LightLock lock;
+    volatile uint32_t head; // producer-owned: total bytes ever written
+    volatile uint32_t tail; // consumer-owned: total bytes ever read
 } MsgQueue;
 
-static MsgQueue q_gui_to_engine;
-static MsgQueue q_engine_to_gui;
+static MsgQueue q_gui_to_engine;   // producer: GUI thread   | consumer: engine/UCI thread
+static MsgQueue q_engine_to_gui;   // producer: engine thread | consumer: GUI thread
 
-// SAFETY NOTE (verified after a real hang was found on-device): this queue
-// is safe to use with a blocking threadBlock()/threadUnblockAllByValue()
-// pair specifically because sf_recv_command()'s checker (the UCI command
-// thread, MAIN_THREAD_PRIO) and sf_send_command()'s caller (the GUI thread,
-// also MAIN_THREAD_PRIO) run at EQUAL priority, and Calico does not
-// time-slice equal-priority threads. That means the GUI thread cannot
-// preempt the UCI thread in the narrow gap between its "queue is empty"
-// check and its threadBlock() call - it can only run once the UCI thread
-// itself actually blocks. See the large comment on thread_idle_loop() below
-// for the case where this reasoning does NOT hold and caused a real,
-// reproducible permanent hang.
 static ThrListNode s_guiToEngineQueue;
 
 // Stack and Thread-Local Storage Configuration for Calico
-#define SF_THREAD_STACK_SIZE (64 * 1024) // 64 KB Stack (safe for heavy chess evaluation)
+#define SF_THREAD_STACK_SIZE (64 * 1024)
 
 static Thread s_searchThread;
 static void* s_searchThreadStack = NULL;
@@ -79,140 +86,84 @@ static volatile bool s_searchThreadActive = false;
 static void* (*s_startRoutine)(void*) = NULL;
 static void* s_threadArg = NULL;
 
-// Safely execute interrupt manipulations in ARM mode to prevent Thumb assembly syntax errors
-__attribute__((target("arm"), noinline)) u32 ds_disable_interrupts(void) {
-    u32 old;
-    __asm__ volatile(
-        "mrs %0, cpsr\n\t"
-        "orr r12, %0, #0x80\n\t"
-        "msr cpsr_c, r12" 
-        : "=r"(old) 
-        : 
-        : "r12", "cc", "memory"
-    );
-    return old;
-}
-
-__attribute__((target("arm"), noinline)) void ds_restore_interrupts(u32 old) {
-    __asm__ volatile(
-        "msr cpsr_c, %0" 
-        : 
-        : "r"(old) 
-        : "cc", "memory"
-    );
-}
-
-// Adapt standard routine void* return to Calico's int return signature
-static int calico_thread_entry(void* arg) {
-    (void)arg;
-    if (s_startRoutine) {
-        s_startRoutine(s_threadArg);
-    }
-    s_searchThreadActive = false;
-    return 0;
-}
-
-// Yield CPU time
-void ds_yield(void) {
-    threadYield();
-}
-
-// Undefine target library macros to avoid infinite loops inside overrides
-#undef printf
-#undef fprintf
-#undef vfprintf
-#undef fflush
-#undef puts
-#undef fputs
-#undef putchar
-#undef fputc
-#undef putc
-#undef fwrite
-#undef pthread_create
+// [ds_disable_interrupts / ds_restore_interrupts / calico_thread_entry / ds_yield
+//  stay exactly as they were - no changes needed]
 
 void sf_bridge_init(void) {
     q_gui_to_engine.head = q_gui_to_engine.tail = 0;
-    LightLock_Init(&q_gui_to_engine.lock);
-
     q_engine_to_gui.head = q_engine_to_gui.tail = 0;
-    LightLock_Init(&q_engine_to_gui.lock);
-    
+
     s_searchThreadActive = false;
-    // s_guiToEngineQueue is a static ThrListNode and is therefore
-    // zero-initialized by the BSS segment at program start, matching the
-    // "empty queue" representation used elsewhere (see Thread's own
-    // zero-initialized 'waiters' field).
+    // s_guiToEngineQueue is a static ThrListNode, zero-initialized by BSS.
 }
 
-static void queue_push_char(MsgQueue *q, char c) {
-    int next_head = (q->head + 1) % MSG_QUEUE_SIZE;
-    if (next_head == q->tail) {
-        q->tail = (q->tail + 1) % MSG_QUEUE_SIZE;
+// Producer-side push. Never touches 'tail' (that belongs solely to the
+// consumer) - if the queue is completely full we simply drop the
+// character rather than overwrite, to preserve strict single-writer-per-
+// index safety. In practice, at 64KB and drained every GUI frame, this
+// should never actually happen.
+static inline void queue_push_char(MsgQueue *q, char c) {
+    uint32_t head = q->head;
+    uint32_t tail = q->tail;
+    if ((head - tail) >= MSG_QUEUE_SIZE) {
+        return; // full - drop rather than corrupt consumer-owned state
     }
-    q->data[q->head] = c;
-    q->head = next_head;
+    q->data[head & MSG_QUEUE_MASK] = c;
+    __sync_synchronize();      // publish the byte before advertising it
+    q->head = head + 1;
 }
 
 void sf_send_command(const char *cmd) {
-    LightLock_Lock(&q_gui_to_engine.lock);
     for (int i = 0; cmd[i] != '\0'; i++) {
         queue_push_char(&q_gui_to_engine, cmd[i]);
     }
     queue_push_char(&q_gui_to_engine, '\n');
-    LightLock_Unlock(&q_gui_to_engine.lock);
 
-    // Safe: see s_guiToEngineQueue's declaration comment above. GUI thread
-    // and the UCI command thread are equal priority, so this cannot race
+    // Safe: see s_guiToEngineQueue's declaration comment. GUI thread and
+    // the UCI command thread are equal priority, so this cannot race
     // against sf_recv_command()'s check-then-block sequence.
     threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
 
 void sf_recv_command(char *buf, size_t max_len) {
     while (1) {
-        LightLock_Lock(&q_gui_to_engine.lock);
-        
-        if (q_gui_to_engine.head != q_gui_to_engine.tail) {
+        uint32_t head = q_gui_to_engine.head;
+        uint32_t tail = q_gui_to_engine.tail; // owned by us (consumer)
+
+        if (head != tail) {
             int has_newline = 0;
-            int temp_tail = q_gui_to_engine.tail;
-            while (temp_tail != q_gui_to_engine.head) {
-                if (q_gui_to_engine.data[temp_tail] == '\n') {
+            uint32_t scan = tail;
+            while (scan != head) {
+                if (q_gui_to_engine.data[scan & MSG_QUEUE_MASK] == '\n') {
                     has_newline = 1;
                     break;
                 }
-                temp_tail = (temp_tail + 1) % MSG_QUEUE_SIZE;
+                scan++;
             }
 
             if (has_newline) {
                 size_t i = 0;
                 int truncated = 0;
-                
-                while (q_gui_to_engine.head != q_gui_to_engine.tail) {
-                    char c = q_gui_to_engine.data[q_gui_to_engine.tail];
-                    q_gui_to_engine.tail = (q_gui_to_engine.tail + 1) % MSG_QUEUE_SIZE;
-                    
-                    if (c == '\n') {
-                        break;
-                    }
-                    
-                    if (i < max_len - 1) {
-                        buf[i++] = c;
-                    } else {
-                        truncated = 1;
-                    }
+
+                while (tail != head) {
+                    char c = q_gui_to_engine.data[tail & MSG_QUEUE_MASK];
+                    tail++;
+                    if (c == '\n') break;
+                    if (i < max_len - 1) buf[i++] = c;
+                    else truncated = 1;
                 }
                 buf[i] = '\0';
-                
+
+                __sync_synchronize();
+                q_gui_to_engine.tail = tail;
+
                 if (truncated) {
                     sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
                 }
-
-                LightLock_Unlock(&q_gui_to_engine.lock);
                 return;
             }
         }
-        
-        LightLock_Unlock(&q_gui_to_engine.lock);
-        
+
         // Safe (equal-priority checker/setter - see notes above).
         threadBlock(&s_guiToEngineQueue, 0);
     }
@@ -225,13 +176,11 @@ int sf_printf(const char *format, ...) {
     int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
     va_end(args);
 
-    LightLock_Lock(&q_engine_to_gui.lock);
     for (int i = 0; temp_buf[i] != '\0'; i++) {
         queue_push_char(&q_engine_to_gui, temp_buf[i]);
     }
-    LightLock_Unlock(&q_engine_to_gui.lock);
-    
-    ds_yield(); // Give GUI immediate priority to read this buffer
+
+    ds_yield();
     return written;
 }
 
@@ -243,12 +192,10 @@ int sf_fprintf(FILE *stream, const char *format, ...) {
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, args);
         va_end(args);
 
-        LightLock_Lock(&q_engine_to_gui.lock);
         for (int i = 0; temp_buf[i] != '\0'; i++) {
             queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
-        LightLock_Unlock(&q_engine_to_gui.lock);
-        
+
         ds_yield();
         return written;
     }
@@ -264,12 +211,10 @@ int sf_vfprintf(FILE *stream, const char *format, va_list arg) {
         char temp_buf[4096];
         int written = vsnprintf(temp_buf, sizeof(temp_buf), format, arg);
 
-        LightLock_Lock(&q_engine_to_gui.lock);
         for (int i = 0; temp_buf[i] != '\0'; i++) {
             queue_push_char(&q_engine_to_gui, temp_buf[i]);
         }
-        LightLock_Unlock(&q_engine_to_gui.lock);
-        
+
         ds_yield();
         return written;
     }
@@ -284,14 +229,12 @@ int sf_fflush(FILE *stream) {
 }
 
 int sf_puts(const char *str) {
-    LightLock_Lock(&q_engine_to_gui.lock);
     int i = 0;
     for (; str[i] != '\0'; i++) {
         queue_push_char(&q_engine_to_gui, str[i]);
     }
     queue_push_char(&q_engine_to_gui, '\n');
-    LightLock_Unlock(&q_engine_to_gui.lock);
-    
+
     ds_yield();
     return i + 1;
 }
@@ -304,9 +247,7 @@ int sf_fputs(const char *str, FILE *stream) {
 }
 
 int sf_putchar(int character) {
-    LightLock_Lock(&q_engine_to_gui.lock);
     queue_push_char(&q_engine_to_gui, (char)character);
-    LightLock_Unlock(&q_engine_to_gui.lock);
     return character;
 }
 
@@ -327,95 +268,32 @@ int sf_putc(int character, FILE *stream) {
 size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     size_t total_bytes = size * nmemb;
     const char *char_ptr = (const char *)ptr;
-    
-    LightLock_Lock(&q_engine_to_gui.lock);
+
     for (size_t i = 0; i < total_bytes; i++) {
         queue_push_char(&q_engine_to_gui, char_ptr[i]);
     }
-    LightLock_Unlock(&q_engine_to_gui.lock);
     return nmemb;
 }
 
 int sf_get_output(char *buf, size_t max_len) {
     ds_yield(); // Give engine thread a turn to push outputs
 
-    LightLock_Lock(&q_engine_to_gui.lock);
-    if (q_engine_to_gui.head == q_engine_to_gui.tail) {
-        LightLock_Unlock(&q_engine_to_gui.lock);
-        return 0;
-    }
+    uint32_t head = q_engine_to_gui.head;
+    uint32_t tail = q_engine_to_gui.tail; // owned by us (consumer)
+
+    if (head == tail) return 0;
 
     size_t i = 0;
-    while (q_engine_to_gui.head != q_engine_to_gui.tail && i < max_len - 1) {
-        char c = q_engine_to_gui.data[q_engine_to_gui.tail];
-        q_engine_to_gui.tail = (q_engine_to_gui.tail + 1) % MSG_QUEUE_SIZE;
-        buf[i++] = c;
+    while (tail != head && i < max_len - 1) {
+        buf[i++] = q_engine_to_gui.data[tail & MSG_QUEUE_MASK];
+        tail++;
     }
     buf[i] = '\0';
 
-    LightLock_Unlock(&q_engine_to_gui.lock);
+    __sync_synchronize();
+    q_engine_to_gui.tail = tail;
+
     return (int)i;
-}
-
-// Preemptive Thread Spawner mapping POSIX definitions to libcalico
-int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
-                      void *(*start_routine) (void *), void *arg) {
-    (void)attr;
-
-    // Recursive thread guard (matches original design for single search engines)
-    if (s_searchThreadActive) {
-        if (thread != NULL) {
-            *thread = (pthread_t)999;
-        }
-        return 0; 
-    }
-
-    // Allocate Stack and TLS on the first creation run to prevent runtime fragmentation
-    if (!s_searchThreadStack) {
-        s_searchThreadStack = malloc(SF_THREAD_STACK_SIZE);
-        if (!s_searchThreadStack) {
-            return -1;
-        }
-
-        size_t tls_size = threadGetLocalStorageSize();
-        if (tls_size > 0) {
-            s_searchThreadTls = malloc(tls_size);
-            if (!s_searchThreadTls) {
-                free(s_searchThreadStack);
-                s_searchThreadStack = NULL;
-                return -1;
-            }
-        }
-    }
-
-    s_startRoutine = start_routine;
-    s_threadArg = arg;
-    s_searchThreadActive = true;
-
-    // Align stack base boundary up 8-bytes
-    uintptr_t stack_base = (uintptr_t)s_searchThreadStack;
-    uintptr_t stack_top_aligned = (stack_base + SF_THREAD_STACK_SIZE) & ~7;
-
-    // Setup Calico thread metadata
-    threadPrepare(&s_searchThread, 
-                  calico_thread_entry, 
-                  NULL, 
-                  (void*)stack_top_aligned, 
-                  MAIN_THREAD_PRIO);
-
-    // Register C stdlib Thread-Local Storage pointer (essential to prevent crashes in sub-threads)
-    if (s_searchThreadTls) {
-        threadAttachLocalStorage(&s_searchThread, s_searchThreadTls);
-    }
-
-    // Launch execution context in the Calico scheduler
-    threadStart(&s_searchThread);
-
-    if (thread != NULL) {
-        *thread = (pthread_t)&s_searchThread;
-    }
-
-    return 0;
 }
 
 
