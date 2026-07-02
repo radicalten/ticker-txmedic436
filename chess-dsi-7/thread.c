@@ -40,6 +40,12 @@
 #include "uci.h"
 #include "tbprobe.h"
 
+// Diagnostic-only: direct access to the GUI's consoles, bypassing the
+// engine<->GUI queue entirely, so we can see cross-thread activity even if
+// the queue/scheduling itself is the thing that's broken.
+extern PrintConsole topConsole;
+extern PrintConsole bottomConsole;
+
 /* ============================================================================
    PART 1: 3DS/DS BRIDGE IMPLEMENTATION (Formerly 3ds_bridge.c)
    ============================================================================ */
@@ -175,14 +181,15 @@ static inline void queue_push_char(MsgQueue *q, char c) {
 }
 
 void sf_send_command(const char *cmd) {
+    consoleSelect(&bottomConsole);
+    printf("[BR] send: %s\n", cmd);
+    fflush(stdout);
+
     for (int i = 0; cmd[i] != '\0'; i++) {
         queue_push_char(&q_gui_to_engine, cmd[i]);
     }
     queue_push_char(&q_gui_to_engine, '\n');
 
-    // Safe: see s_guiToEngineQueue's declaration comment above. GUI thread
-    // and the UCI command thread are equal priority, so this cannot race
-    // against sf_recv_command()'s check-then-block sequence.
     threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
 
@@ -213,10 +220,14 @@ void sf_recv_command(char *buf, size_t max_len) {
                     if (i < max_len - 1) buf[i++] = c;
                     else truncated = 1;
                 }
-                buf[i] = '\0';
+                                buf[i] = '\0';
 
                 __sync_synchronize();
                 q_gui_to_engine.tail = tail;
+
+                consoleSelect(&bottomConsole);
+                printf("[BR] recv: %s\n", buf);
+                fflush(stdout);
 
                 if (truncated) {
                     sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
@@ -337,12 +348,23 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int sf_get_output(char *buf, size_t max_len) {
+    static int dbg_calls = 0;
+    int dbg = (dbg_calls < 12);
+    if (dbg) dbg_calls++;
+
+    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: pre-yield #%d\n", dbg_calls); fflush(stdout); }
+
     ds_yield(); // Give engine thread a turn to push outputs
+
+    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: post-yield #%d\n", dbg_calls); fflush(stdout); }
 
     uint32_t head = q_engine_to_gui.head;
     uint32_t tail = q_engine_to_gui.tail; // owned by us (consumer)
 
-    if (head == tail) return 0;
+    if (head == tail) {
+        if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: empty #%d\n", dbg_calls); fflush(stdout); }
+        return 0;
+    }
 
     size_t i = 0;
     while (tail != head && i < max_len - 1) {
@@ -353,6 +375,8 @@ int sf_get_output(char *buf, size_t max_len) {
 
     __sync_synchronize();
     q_engine_to_gui.tail = tail;
+
+    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: got %d bytes #%d\n", (int)i, dbg_calls); fflush(stdout); }
 
     return (int)i;
 }
