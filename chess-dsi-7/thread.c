@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <sys/reent.h>
 #include <calico/system/thread.h> // Correct path to Calico preemptive thread API
 #include <nds.h>
 
