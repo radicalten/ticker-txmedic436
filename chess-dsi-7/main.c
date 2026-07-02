@@ -69,14 +69,9 @@ extern PrintConsole topConsole;
 // is_draw() are confirmed (by reading position.c) to only touch
 // board/bitboard/Stack state - never pos->pawnTable, materialTable,
 // mainHistory, captureHistory, lowPlyHistory, counterMoveHistory,
-// counterMoves, rootMoves, or moveList (those are only referenced from
-// search/move-ordering code, e.g. prefetch calls into pawnTable/
-// materialTable in do_move() are guarded and just prefetch - reading NULL
-// pointers there would be a real bug, but prefetch()/prefetch2() on most
-// platforms are safe/no-op on bad pointers; if this ever becomes an issue
-// this is the first place to look). We deliberately leave those big tables
-// NULL rather than duplicating thread_init()'s multi-megabyte allocations
-// (CounterMoveHistoryStat alone is ~8MB).
+// counterMoves, rootMoves, or moveList. We deliberately leave those big
+// tables NULL rather than duplicating thread_init()'s multi-megabyte
+// allocations (CounterMoveHistoryStat alone is ~8MB).
 // ==========================================================================
 
 // The GUI's live game position.
@@ -84,17 +79,26 @@ static Position g_pos;
 
 // Stack buffer backing g_pos->st.
 //
-// BUGFIX: sized off MAX_HISTORY (the GUI's actual maximum game length in
-// plies) plus a small safety margin, rather than thread.c's
-// search-recursion-bounded formula (63 + MAX_PLY + 110 =~ 419 slots) used
-// for Threads.pos[0]'s Stack buffer. That formula is sized for bounded
-// search recursion depth, NOT for a persistent, ever-growing game history -
-// it would have been too small once a game exceeded ~419 total plies.
-// sizeof(Stack) is only a couple hundred bytes (nowhere near the ~8MB
-// CounterMoveHistoryStat table thread_init() already allocates for the
-// real engine thread), so sizing generously here for MAX_HISTORY is cheap
-// and safe.
-#define GUI_STACK_SLOTS (MAX_HISTORY + 16)
+// BUGFIX: previous versions started g_pos.st at index 0 of the allocated
+// buffer (its very base). That is unsafe: do_move(), is_draw(), and
+// has_game_cycle() all walk BACKWARD through consecutive Stack slots
+// (st-1, st-2, stp-=2, etc.) for repetition detection and check-info
+// bookkeeping. Starting at index 0 meant those backward reads/writes could
+// underflow to stack[-1], stack[-2], etc. - memory BEFORE our calloc()
+// block, i.e. heap allocator metadata or an adjacent allocation. That is a
+// classic silent heap-corruption bug: nothing looks wrong immediately, but
+// shortly afterward something that reads the corrupted memory (or the heap
+// allocator itself on its next call) misbehaves - consistent with the
+// observed "renders fine for ~1 second, then the whole display goes black"
+// symptom during testing.
+//
+// Fix: reserve a real front-guard region (mirroring thread.c's own "63
+// extra slots" padding for Threads.pos[0]'s Stack buffer) and start
+// g_pos.st well past the base of the buffer, so backward indexing from the
+// very first moves of the game always lands in valid, zeroed, allocated
+// Stack slots instead of underflowing before the allocation.
+#define GUI_STACK_GUARD 64
+#define GUI_STACK_SLOTS (GUI_STACK_GUARD + MAX_HISTORY + 16)
 static void *g_stack_alloc = NULL;
 
 // The exact Move object applied at each ply, needed to call undo_move()
@@ -193,23 +197,21 @@ static inline int gui_has_legal_moves(void) {
 // thread_init()'s allocate+align pattern in thread.c). Must be called
 // exactly once, before the first gui_reset_game().
 //
-// DIAGNOSTIC: prints checkpoint messages to the top screen so a hard
-// black-screen hang can be localized to a specific step instead of being a
-// total mystery. Remove/quiet these once startup is confirmed reliable.
+// DIAGNOSTIC: prints checkpoint messages (with brief pauses so they're
+// readable) to the top screen so a hang/crash can be localized to a
+// specific step. Remove/quiet these once startup is confirmed reliable.
 static void gui_alloc_position(void) {
-    printf("sizeof(Stack) = %u\n", (unsigned)sizeof(Stack));
-    fflush(stdout);
-    for (int i = 0; i < 120; i++) threadWaitForVBlank(); // ~2 sec, so you can read it  
     consoleSelect(&topConsole);
     printf("Entered gui_alloc_position()\n");
+    printf("sizeof(Stack) = %u\n", (unsigned)sizeof(Stack));
     fflush(stdout);
-    for (int i = 0; i < 60; i++) threadWaitForVBlank(); // ~1 second pause, so we can actually read it
+    for (int i = 0; i < 60; i++) threadWaitForVBlank();
 
     memset(&g_pos, 0, sizeof(g_pos));
 
     printf("memset(g_pos) OK\n");
     fflush(stdout);
-    for (int i = 0; i < 60; i++) threadWaitForVBlank();
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 
     printf("Alloc GUI stack:\n %d slots, %u bytes\n",
            GUI_STACK_SLOTS, (unsigned)(GUI_STACK_SLOTS * sizeof(Stack)));
@@ -223,35 +225,41 @@ static void gui_alloc_position(void) {
     }
     printf("Stack alloc OK.\n");
     fflush(stdout);
-    for (int i = 0; i < 60; i++) threadWaitForVBlank();
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 
     g_pos.stackAllocation = g_stack_alloc;
-    g_pos.stack = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
-    g_pos.st = g_pos.stack;
-    g_pos.threadIdx = -1;
+    Stack *aligned_base = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
+    g_pos.stack = aligned_base;
+
+    // BUGFIX: start well past the base of the buffer (see GUI_STACK_GUARD
+    // comment above) rather than at index 0, so backward-indexing Stack
+    // accesses during the first several plies of the game land in valid,
+    // zeroed memory instead of underflowing before the allocation.
+    g_pos.st = aligned_base + GUI_STACK_GUARD;
+
+    g_pos.threadIdx = -1; // sentinel: never a real Threads.pos[] index
     atomic_store(&g_pos.resetCalls, false);
 
     printf("gui_alloc_position() done.\n");
     fflush(stdout);
-    for (int i = 0; i < 60; i++) threadWaitForVBlank();
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 }
 
-// Resets g_pos to the standard starting position. Safe to call repeatedly
-// (mirrors how uci.c's "ucinewgame"/"position" handlers repeatedly call
-// pos_set() on the SAME Threads.pos[0] object, reusing its one-time
-// stack/table allocations).
+// Resets g_pos to the standard starting position. Safe to call repeatedly.
 //
-// IMPORTANT: also resets pos->st back to the base of our Stack buffer,
-// since do_move()/undo_move() will have walked it forward/backward during
-// play - pos_set() itself does NOT do this (it trusts pos->st is already
-// wherever the caller wants the "current" Stack slot to be).
+// IMPORTANT: also resets pos->st back to the guarded starting point within
+// our Stack buffer (base + GUI_STACK_GUARD), since do_move()/undo_move()
+// will have walked it forward/backward during play, and pos_set() itself
+// does NOT do this (it trusts pos->st is already wherever the caller wants
+// the "current" Stack slot to be - see position.c's pos_set(), which reads
+// "Stack *st = pos->st;" as its very first statement).
 //
 // DIAGNOSTIC: see gui_alloc_position() note above.
 static void gui_reset_game(void) {
     static char startfen[] =
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-    g_pos.st = g_pos.stack;
+    g_pos.st = g_pos.stack + GUI_STACK_GUARD;
 
     consoleSelect(&topConsole);
     printf("Calling pos_set()...\n");
@@ -261,6 +269,7 @@ static void gui_reset_game(void) {
 
     printf("pos_set() returned OK.\n");
     fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 }
 
 // ==========================================================================
@@ -1383,13 +1392,8 @@ int main(int argc, char **argv) {
     bg_board_id = bgInit(2, BgType_Text4bpp, BgSize_T_256x256, 29, 0);
     bg_pieces_id = bgInit(1, BgType_Text4bpp, BgSize_T_256x256, 30, 0);
 
-    // DIAGNOSTIC: visible startup checkpoints on the top screen so a hard
-    // hang/black-screen can be localized to a specific step.
-    consoleSelect(&topConsole);
-    printf("Boot: bridge init...\n");
-    fflush(stdout);
-
-    sf_bridge_init();
+    // DIAGNOSTIC: visible startup checkpoints on the top screen so a hang
+    // or crash can be localized to a specific step.
     consoleSelect(&topConsole);
     printf("Boot: bridge init...\n");
     fflush(stdout);
@@ -1422,12 +1426,7 @@ int main(int argc, char **argv) {
 
     printf("Boot: GUI position ready.\n");
     fflush(stdout);
-
-    gui_alloc_position();
-    gui_reset_game();
-
-    printf("Boot: GUI position ready.\n");
-    fflush(stdout);
+    for (int i = 0; i < 60; i++) threadWaitForVBlank();
 
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
