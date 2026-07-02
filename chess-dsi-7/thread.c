@@ -120,6 +120,14 @@ __attribute__((target("arm"), noinline)) void ds_restore_interrupts(u32 old) {
     );
 }
 
+// Diagnostic-only: read CPSR without modifying it, so we can check whether
+// IRQs are currently disabled at an arbitrary point in the program.
+__attribute__((target("arm"), noinline)) u32 ds_get_cpsr(void) {
+    u32 v;
+    __asm__ volatile("mrs %0, cpsr" : "=r"(v));
+    return v;
+}
+
 // Adapt standard routine void* return to Calico's int return signature
 static int calico_thread_entry(void* arg) {
     (void)arg;
@@ -164,6 +172,13 @@ void ds_yield(void) {
 // ============================================================================
 static u32 s_mallocLockSavedCPSR = 0;
 static int s_mallocLockDepth = 0;
+
+// Diagnostic-only accessor so other files can check for an unbalanced
+// malloc lock (depth should always be 0 whenever no thread is inside a
+// malloc-family call).
+int sf_get_malloc_lock_depth(void) {
+    return s_mallocLockDepth;
+}
 
 // Diagnostic-only: globally-numbered debug print, safe to call from any
 // thread at any time, writing straight to the bottom screen (bypasses the
