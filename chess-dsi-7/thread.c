@@ -41,12 +41,6 @@
 #include "uci.h"
 #include "tbprobe.h"
 
-// Diagnostic-only: direct access to the GUI's consoles, bypassing the
-// engine<->GUI queue entirely, so we can see cross-thread activity even if
-// the queue/scheduling itself is the thing that's broken.
-extern PrintConsole topConsole;
-extern PrintConsole bottomConsole;
-
 /* ============================================================================
    PART 1: 3DS/DS BRIDGE IMPLEMENTATION (Formerly 3ds_bridge.c)
    ============================================================================ */
@@ -141,6 +135,72 @@ void ds_yield(void) {
     threadYield();
 }
 
+// ============================================================================
+// CRITICAL FIX: newlib malloc/calloc/realloc/free/memalign thread-safety.
+//
+// newlib's allocator is NOT thread-safe by default - it requires the
+// platform to supply __malloc_lock()/__malloc_unlock() hooks, which nothing
+// in this codebase was providing. Calico is a genuinely preemptive
+// scheduler (a thread can be interrupted at an arbitrary instruction, e.g.
+// on a VBlank IRQ), so without these hooks, two threads calling into malloc
+// concurrently could corrupt the allocator's internal free-list. This does
+// not crash immediately - it silently sits there until a LATER, completely
+// unrelated allocation's free-list walk hits the corrupted region and spins
+// forever. Because the engine's UCI thread runs at the SAME priority as the
+// GUI thread (MAIN_THREAD_PRIO) and Calico does not time-slice
+// equal-priority threads (see calico/system/thread.h's own module
+// documentation), a stuck non-yielding loop in EITHER thread permanently
+// starves the other.
+//
+// Fix: since the DSi's ARM9 is single-core, Calico can only ever preempt a
+// running thread via an interrupt. Disabling IRQs for the (very short)
+// duration of a malloc-family call is therefore sufficient to make it
+// atomic with respect to every other thread, regardless of relative thread
+// priority - no additional scheduler-aware lock primitive is needed.
+// Depth-counted, and safe against same-thread re-entrancy (e.g. memalign()
+// internally calling malloc() on some newlib builds), unlike a plain
+// spinlock, since disabling already-disabled interrupts is a harmless
+// no-op.
+// ============================================================================
+static u32 s_mallocLockSavedCPSR = 0;
+static int s_mallocLockDepth = 0;
+
+// Diagnostic-only: globally-numbered debug print, safe to call from any
+// thread at any time, writing straight to the bottom screen (bypasses the
+// engine<->GUI queue entirely). The sequence number lets us tell exactly
+// which call happened last, regardless of which thread printed it or how
+// the console scrolled.
+extern PrintConsole bottomConsole;
+static volatile int s_dbgSeq = 0;
+
+void sf_dbg(const char *msg) {
+    int n = ++s_dbgSeq;
+    consoleSelect(&bottomConsole);
+    printf("[%d] %s\n", n, msg);
+    fflush(stdout);
+}
+
+void __malloc_lock(struct _reent *reent) {
+    (void)reent;
+    sf_dbg("malloc_lock enter");
+    u32 old = ds_disable_interrupts();
+    if (s_mallocLockDepth == 0) {
+        s_mallocLockSavedCPSR = old;
+    }
+    s_mallocLockDepth++;
+    sf_dbg("malloc_lock exit");
+}
+
+void __malloc_unlock(struct _reent *reent) {
+    (void)reent;
+    sf_dbg("malloc_unlock enter");
+    s_mallocLockDepth--;
+    if (s_mallocLockDepth == 0) {
+        ds_restore_interrupts(s_mallocLockSavedCPSR);
+    }
+    sf_dbg("malloc_unlock exit");
+}
+
 // Undefine target library macros to avoid infinite loops inside overrides
 #undef printf
 #undef fprintf
@@ -165,35 +225,6 @@ void sf_bridge_init(void) {
     // zero-initialized 'waiters' field).
 }
 
-// FIX: newlib's malloc/calloc/realloc/free/memalign are not thread-safe
-// without these hooks. Using LightLock caused a self-deadlock (newlib's
-// allocator can call back into itself, e.g. memalign() calling malloc()
-// internally, re-entering __malloc_lock() on the SAME thread that already
-// holds it - a plain spinlock just spins against itself forever). Since
-// the DSi's ARM9 is single-core, Calico can only preempt a thread via an
-// interrupt, so disabling IRQs is sufficient to make malloc atomic w.r.t.
-// every other thread, AND is safe against same-thread recursion (disabling
-// already-disabled interrupts is a harmless no-op) - unlike a spinlock.
-static u32 s_mallocLockSavedCPSR = 0;
-static int s_mallocLockDepth = 0;
-
-void __malloc_lock(struct _reent *reent) {
-    (void)reent;
-    u32 old = ds_disable_interrupts();
-    if (s_mallocLockDepth == 0) {
-        s_mallocLockSavedCPSR = old;
-    }
-    s_mallocLockDepth++;
-}
-
-void __malloc_unlock(struct _reent *reent) {
-    (void)reent;
-    s_mallocLockDepth--;
-    if (s_mallocLockDepth == 0) {
-        ds_restore_interrupts(s_mallocLockSavedCPSR);
-    }
-}
-
 // Producer-side push. Never touches 'tail' (that belongs solely to the
 // consumer) - if the queue is completely full we simply drop the
 // character rather than overwrite, to preserve strict single-writer-per-
@@ -211,15 +242,14 @@ static inline void queue_push_char(MsgQueue *q, char c) {
 }
 
 void sf_send_command(const char *cmd) {
-    consoleSelect(&bottomConsole);
-    printf("[BR] send: %s\n", cmd);
-    fflush(stdout);
-
     for (int i = 0; cmd[i] != '\0'; i++) {
         queue_push_char(&q_gui_to_engine, cmd[i]);
     }
     queue_push_char(&q_gui_to_engine, '\n');
 
+    // Safe: see s_guiToEngineQueue's declaration comment above. GUI thread
+    // and the UCI command thread are equal priority, so this cannot race
+    // against sf_recv_command()'s check-then-block sequence.
     threadUnblockAllByValue(&s_guiToEngineQueue, 0);
 }
 
@@ -250,14 +280,10 @@ void sf_recv_command(char *buf, size_t max_len) {
                     if (i < max_len - 1) buf[i++] = c;
                     else truncated = 1;
                 }
-                                buf[i] = '\0';
+                buf[i] = '\0';
 
                 __sync_synchronize();
                 q_gui_to_engine.tail = tail;
-
-                consoleSelect(&bottomConsole);
-                printf("[BR] recv: %s\n", buf);
-                fflush(stdout);
 
                 if (truncated) {
                     sf_printf("[BRIDGE_WARNING] Command exceeded buffer size and was safely truncated!\n");
@@ -378,23 +404,12 @@ size_t sf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int sf_get_output(char *buf, size_t max_len) {
-    static int dbg_calls = 0;
-    int dbg = (dbg_calls < 12);
-    if (dbg) dbg_calls++;
-
-    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: pre-yield #%d\n", dbg_calls); fflush(stdout); }
-
     ds_yield(); // Give engine thread a turn to push outputs
-
-    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: post-yield #%d\n", dbg_calls); fflush(stdout); }
 
     uint32_t head = q_engine_to_gui.head;
     uint32_t tail = q_engine_to_gui.tail; // owned by us (consumer)
 
-    if (head == tail) {
-        if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: empty #%d\n", dbg_calls); fflush(stdout); }
-        return 0;
-    }
+    if (head == tail) return 0;
 
     size_t i = 0;
     while (tail != head && i < max_len - 1) {
@@ -405,8 +420,6 @@ int sf_get_output(char *buf, size_t max_len) {
 
     __sync_synchronize();
     q_engine_to_gui.tail = tail;
-
-    if (dbg) { consoleSelect(&bottomConsole); printf("[BR] get: got %d bytes #%d\n", (int)i, dbg_calls); fflush(stdout); }
 
     return (int)i;
 }
@@ -471,6 +484,7 @@ int sf_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
     return 0;
 }
+
 
 /* ============================================================================
    PART 2: ENGINE THREADING IMPLEMENTATION (Formerly thread.c)
