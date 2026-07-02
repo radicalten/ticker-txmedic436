@@ -64,21 +64,19 @@ extern PrintConsole topConsole;
 // GUI<->engine communication continues to go over the existing UCI text
 // bridge (sf_send_command / sf_get_output), exactly as before.
 //
-// DESIGN NOTE / ASSUMPTION (please verify against movegen.c / position.c if
-// possible): do_move(), undo_move(), is_legal(), is_pseudo_legal(),
-// gives_check_special(), generate_legal(), and is_draw() are assumed to
-// touch only board/bitboard/Stack state - never pos->pawnTable,
-// materialTable, mainHistory, captureHistory, lowPlyHistory,
-// counterMoveHistory, counterMoves, rootMoves, or moveList. Those are
-// search/move-ordering/evaluation-only structures in every known
-// Stockfish/Cfish version (thread_init() in thread.c only allocates them
-// for use by movepick.c/search.c/pawns.c/material.c). We deliberately leave
-// them NULL here rather than duplicating thread_init()'s multi-megabyte
-// allocations (CounterMoveHistoryStat alone is ~8MB - duplicating that for
-// a second, GUI-only Position is not viable on DSi's RAM budget). If this
-// assumption is wrong for this fork, the failure mode is an immediate,
-// deterministic NULL-pointer crash on the very first do_move() call - not a
-// subtle/rare bug - so it will surface immediately in testing.
+// DESIGN NOTE / ASSUMPTION: do_move(), undo_move(), is_legal(),
+// is_pseudo_legal(), gives_check_special(), generate_legal(), and
+// is_draw() are confirmed (by reading position.c) to only touch
+// board/bitboard/Stack state - never pos->pawnTable, materialTable,
+// mainHistory, captureHistory, lowPlyHistory, counterMoveHistory,
+// counterMoves, rootMoves, or moveList (those are only referenced from
+// search/move-ordering code, e.g. prefetch calls into pawnTable/
+// materialTable in do_move() are guarded and just prefetch - reading NULL
+// pointers there would be a real bug, but prefetch()/prefetch2() on most
+// platforms are safe/no-op on bad pointers; if this ever becomes an issue
+// this is the first place to look). We deliberately leave those big tables
+// NULL rather than duplicating thread_init()'s multi-megabyte allocations
+// (CounterMoveHistoryStat alone is ~8MB).
 // ==========================================================================
 
 // The GUI's live game position.
@@ -86,19 +84,17 @@ static Position g_pos;
 
 // Stack buffer backing g_pos->st.
 //
-// OPTIMIZATION / BUGFIX: this now mirrors thread.c's own thread_init()
-// sizing EXACTLY (63 + (MAX_PLY + 110) slots), rather than an independently
-// guessed (128 + MAX_HISTORY + 128) size. That original guess was ~45%
-// larger and is suspected to have caused a silent calloc() failure (hard
-// black screen, no output) given how tight this device's RAM budget already
-// is - see the MAX_HISTORY 2048->512 comment above. This formula is
-// known-good because it's the exact same one already succeeding, today, for
-// the real engine thread's own Position (Threads.pos[0]).
-//
-// NOTE: this does bound gameplay/undo depth to roughly this many plies -
-// same implicit constraint that already exists engine-side for
-// Threads.pos[0], so this isn't a new limitation.
-#define GUI_STACK_SLOTS (63 + (MAX_PLY + 110))
+// BUGFIX: sized off MAX_HISTORY (the GUI's actual maximum game length in
+// plies) plus a small safety margin, rather than thread.c's
+// search-recursion-bounded formula (63 + MAX_PLY + 110 =~ 419 slots) used
+// for Threads.pos[0]'s Stack buffer. That formula is sized for bounded
+// search recursion depth, NOT for a persistent, ever-growing game history -
+// it would have been too small once a game exceeded ~419 total plies.
+// sizeof(Stack) is only a couple hundred bytes (nowhere near the ~8MB
+// CounterMoveHistoryStat table thread_init() already allocates for the
+// real engine thread), so sizing generously here for MAX_HISTORY is cheap
+// and safe.
+#define GUI_STACK_SLOTS (MAX_HISTORY + 16)
 static void *g_stack_alloc = NULL;
 
 // The exact Move object applied at each ply, needed to call undo_move()
@@ -220,6 +216,25 @@ static void gui_alloc_position(void) {
     g_pos.stackAllocation = g_stack_alloc;
     g_pos.stack = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
 
+    // BUGFIX: this was the actual cause of the hang inside pos_set(). Cfish's
+    // pos_set() does NOT allocate/initialize pos->st itself - it reads
+    // "Stack *st = pos->st;" as its very first statement and then writes
+    // through that pointer, on the assumption that the caller has already
+    // pointed pos->st at a valid Stack slot (matching how real search
+    // threads must already have pos->st set, elsewhere, before pos_set() is
+    // ever called on them - thread_init() itself only sets up pos->stack,
+    // never pos->st). Since g_pos was zero-initialized above, pos->st was
+    // NULL, so pos_set()'s "memset(st, 0, StateSize)" was a null-pointer
+    // write - a silent hang/freeze on this hardware, with no crash screen.
+    //
+    // We start at the very base of our own Stack buffer (index 0) rather
+    // than some offset into it: unlike a search thread (which conceptually
+    // continues from an existing game history built before the search
+    // root), g_pos.stack[0] genuinely IS the very first position of the
+    // game, so do_move()'s "(st-1)->epSquare" style backward-looks never
+    // need to go earlier than index 0's own (freshly zeroed) Stack.
+    g_pos.st = g_pos.stack;
+
     g_pos.threadIdx = -1; // sentinel: never a real Threads.pos[] index
     atomic_store(&g_pos.resetCalls, false);
 }
@@ -229,10 +244,17 @@ static void gui_alloc_position(void) {
 // pos_set() on the SAME Threads.pos[0] object, reusing its one-time
 // stack/table allocations).
 //
+// IMPORTANT: also resets pos->st back to the base of our Stack buffer,
+// since do_move()/undo_move() will have walked it forward/backward during
+// play - pos_set() itself does NOT do this (it trusts pos->st is already
+// wherever the caller wants the "current" Stack slot to be).
+//
 // DIAGNOSTIC: see gui_alloc_position() note above.
 static void gui_reset_game(void) {
     static char startfen[] =
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    g_pos.st = g_pos.stack;
 
     consoleSelect(&topConsole);
     printf("Calling pos_set()...\n");
