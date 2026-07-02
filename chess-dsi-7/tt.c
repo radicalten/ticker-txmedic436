@@ -49,8 +49,15 @@ void tt_free(void)
 
 void tt_allocate(size_t mbSize)
 {
+  consoleSelect(&bottomConsole);
+  printf("[TT] allocate %u MB\n", (unsigned)mbSize);
+  fflush(stdout);
+
   TT.clusterCount = mbSize * 1024 * 1024 / sizeof(Cluster);
   size_t size = TT.clusterCount * sizeof(Cluster);
+
+  printf("[TT] clusterCount=%u\nsize=%u bytes\n", (unsigned)TT.clusterCount, (unsigned)size);
+  fflush(stdout);
 
   TT.table = NULL;
   if (settings.largePages) {
@@ -64,14 +71,24 @@ void tt_allocate(size_t mbSize)
     fflush(stdout);
 #endif
   }
-  if (!TT.table)
+  if (!TT.table) {
+    printf("[TT] allocate_memory (normal)...\n");
+    fflush(stdout);
     TT.table = allocate_memory(size, false, &TT.alloc);
-  if (!TT.table)
+  }
+  if (!TT.table) {
+    printf("[TT] allocate_memory FAILED (NULL)\n");
+    fflush(stdout);
     goto failed;
+  }
 
-  // Clear the TT table to page in the memory immediately. This avoids
-  // an initial slow down during the first second or minutes of the search.
+  printf("[TT] allocate_memory OK,\ncalling tt_clear()...\n");
+  fflush(stdout);
+
   tt_clear();
+
+  printf("[TT] tt_clear() returned OK.\n");
+  fflush(stdout);
   return;
 
 failed:
@@ -80,19 +97,24 @@ failed:
   exit(EXIT_FAILURE);
 }
 
-
-// tt_clear() initialises the entire transposition table to zero.
-
 void tt_clear(void)
 {
-  // We let search threads clear the table in parallel. In NUMA mode,
-  // this has the beneficial effect of spreading the TT over all nodes.
-
   if (TT.table) {
+    consoleSelect(&bottomConsole);
+    printf("[TT] clear: waking %d\nthread(s)...\n", Threads.numThreads);
+    fflush(stdout);
+
     for (int idx = 0; idx < Threads.numThreads; idx++)
       thread_wake_up(Threads.pos[idx], THREAD_TT_CLEAR);
-    for (int idx = 0; idx < Threads.numThreads; idx++)
+
+    printf("[TT] clear: wake sent,\nwaiting for sleep...\n");
+    fflush(stdout);
+
+    for (int idx = 0; idx < Threads.numThreads; idx++) {
       thread_wait_until_sleeping(Threads.pos[idx]);
+      printf("[TT] clear: thread %d\nasleep OK\n", idx);
+      fflush(stdout);
+    }
   }
 }
 
