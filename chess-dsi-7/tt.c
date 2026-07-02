@@ -65,9 +65,17 @@ void tt_allocate(size_t mbSize)
   printf("[TT] clusterCount=%u\nsize=%u bytes\n", (unsigned)TT.clusterCount, (unsigned)size);
   fflush(stdout);
 
-  TT.table = NULL;
+    TT.table = NULL;
+  consoleSelect(&bottomConsole);
+  printf("[TT] largePages=%d\n", (int)settings.largePages);
+  fflush(stdout);
+
   if (settings.largePages) {
+    printf("[TT] calling allocate_memory\n(large)...\n");
+    fflush(stdout);
     TT.table = allocate_memory(size, true, &TT.alloc);
+    printf("[TT] allocate_memory (large)\nreturned.\n");
+    fflush(stdout);
 #if !defined(__linux__)
     if (!TT.table)
       printf("info string Unable to allocate large pages for the "
