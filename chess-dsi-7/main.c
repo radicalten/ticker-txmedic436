@@ -363,6 +363,15 @@ static const u32 solid_tile[8] = {
     0x11111111
 };
 
+// Guaranteed-blank tile (all-zero nibbles = fully transparent in 4bpp mode).
+// Needed because bg_board_id/bg_pieces_id share character memory with
+// topConsole's font, and font glyph index 0 is NOT guaranteed to be blank -
+// it renders as opaque garbage over the whole 32x32 map wherever a cell is
+// left at its default/memset-0 tile index.
+static const u32 blank_tile[8] = {
+    0, 0, 0, 0, 0, 0, 0, 0
+};
+
 void gui_push_move(GuiMove gm);
 void trigger_engine_move(void);
 int get_promo_choice(void);
@@ -919,6 +928,7 @@ void init_bottom_palette(void) {
 void draw_top_board(void) {
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
+    memcpy(tile_memory + (0   * 32), blank_tile, sizeof(blank_tile));
 
     init_custom_palettes();
 
@@ -1430,6 +1440,7 @@ int main(int argc, char **argv) {
 
     u8* tile_memory = (u8*)bgGetGfxPtr(bg_board_id);
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
+    memcpy(tile_memory + (0   * 32), blank_tile, sizeof(blank_tile));
 
     init_custom_palettes();
     init_bottom_palette();
