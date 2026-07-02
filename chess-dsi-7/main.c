@@ -1334,36 +1334,63 @@ void adjust_time_control(void) {
 }
 
 // Stockfish Engine Subprocess Entry Point
+#define SF_CHECKPOINT(msg) do { \
+    consoleSelect(&bottomConsole); \
+    printf("[SF] " msg "\n"); \
+    fflush(stdout); \
+} while (0)
+
 int main_stockfish(int argc, char **argv)
 {
+  SF_CHECKPOINT("start");
   print_engine_info(false);
   ds_yield();
 
+  SF_CHECKPOINT("psqt_init...");
   psqt_init();
+  SF_CHECKPOINT("psqt_init OK");
   ds_yield();
 
+  SF_CHECKPOINT("bitboards_init...");
   bitboards_init();
+  SF_CHECKPOINT("bitboards_init OK");
   ds_yield();
 
+  SF_CHECKPOINT("zob_init...");
   zob_init();
+  SF_CHECKPOINT("zob_init OK");
   ds_yield();
 
+  SF_CHECKPOINT("bitbases_init...");
   bitbases_init();
+  SF_CHECKPOINT("bitbases_init OK");
   ds_yield();
 
 #ifndef NNUE_PURE
+  SF_CHECKPOINT("endgames_init...");
   endgames_init();
+  SF_CHECKPOINT("endgames_init OK");
   ds_yield();
 #endif
 
+  SF_CHECKPOINT("threads_init...");
   threads_init();
+  SF_CHECKPOINT("threads_init OK");
   ds_yield();
 
+  SF_CHECKPOINT("options_init...");
   options_init();
+  SF_CHECKPOINT("options_init OK");
   ds_yield();
 
+  SF_CHECKPOINT("search_clear...");
   search_clear();
+  SF_CHECKPOINT("search_clear OK");
   ds_yield();
+
+  SF_CHECKPOINT("uci_loop...");
+  uci_loop(argc, argv);
+  SF_CHECKPOINT("uci_loop returned(?!)");
 
   uci_loop(argc, argv);
 
