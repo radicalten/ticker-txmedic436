@@ -1442,8 +1442,16 @@ int main(int argc, char **argv) {
     memcpy(tile_memory + (255 * 32), solid_tile, sizeof(solid_tile));
     memcpy(tile_memory + (0   * 32), blank_tile, sizeof(blank_tile));
 
+    printf("Boot: tile stamps OK.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
+
     init_custom_palettes();
     init_bottom_palette();
+
+    printf("Boot: palettes OK.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
 
     REG_DISPCNT |= DISPLAY_BG1_ACTIVE | DISPLAY_BG2_ACTIVE | DISPLAY_BG3_ACTIVE;
 
@@ -1451,6 +1459,25 @@ int main(int argc, char **argv) {
     u16* pieces_map = bgGetMapPtr(bg_pieces_id);
     memset(board_map, 0, 32 * 32 * sizeof(u16));
     memset(pieces_map, 0, 32 * 32 * sizeof(u16));
+
+    printf("Boot: DISPCNT+maps OK.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
+
+    // NOTE: deliberately draw one real board frame BEFORE clearing the
+    // console text and BEFORE spawning the engine thread, purely as a
+    // diagnostic - if this shows a correct board, we know rendering itself
+    // works and the hang is downstream (thread spawn / uci handshake /
+    // cache invalidation). If it does NOT show a board, the bug is in
+    // draw_top_board()/draw_bottom_stats() or the tile/palette setup.
+    invalidate_and_update_board_caches();
+    draw_top_board();
+    draw_bottom_stats();
+
+    consoleSelect(&topConsole);
+    printf("\n\nBoot: first board\ndraw attempted -\ncheck top screen!\n");
+    fflush(stdout);
+    for (int i = 0; i < 120; i++) threadWaitForVBlank();
 
     consoleSelect(&topConsole);
     printf("\x1b[2J");
@@ -1462,15 +1489,21 @@ int main(int argc, char **argv) {
     
     threadWaitForVBlank();
 
+    consoleSelect(&bottomConsole);
+    printf("Boot: spawning\nstockfish thread...\n");
+    fflush(stdout);
+
     pthread_t stockfish_thread;
     int thread_spawn = sf_pthread_create(&stockfish_thread, NULL, (void* (*)(void*))stockfish_thread_func, NULL);
 
     if (thread_spawn != 0) {
         consoleSelect(&bottomConsole);
+        printf("\x1b[1;31mFATAL: thread spawn\nfailed, code=%d\x1b[0m\n", thread_spawn);
         fflush(stdout);
         while(1) threadWaitForVBlank();
     } else {
         consoleSelect(&bottomConsole);
+        printf("Boot: thread spawned OK.\n");
         fflush(stdout);
     }
 
@@ -1479,10 +1512,22 @@ int main(int argc, char **argv) {
         threadWaitForVBlank();
     }
 
+    consoleSelect(&bottomConsole);
+    printf("Boot: sending 'uci'...\n");
+    fflush(stdout);
+
     sf_send_command("uci");
     engine_state = ENGINE_STATE_WAIT_UCIOK;
 
+    printf("Boot: calling\ninvalidate_and_update...\n");
+    fflush(stdout);
+
     invalidate_and_update_board_caches();
+
+    printf("Boot: entering main loop.\n");
+    fflush(stdout);
+    for (int i = 0; i < 30; i++) threadWaitForVBlank();
+
     redraw_top_needed = 1;
     redraw_bottom_needed = 1;
 
