@@ -1564,14 +1564,18 @@ int main(int argc, char **argv) {
 
     static uint32_t frame_counter = 0;
 
-    while (pmMainLoop()) {
+while (pmMainLoop()) {
         frame_counter++;
+        int dbg = (frame_counter <= 3);
+
         consoleSelect(&topConsole);
         printf("\x1b[0;0Hframe=%lu   ", (unsigned long)frame_counter);
         fflush(stdout);
 
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: scanKeys\n", (unsigned long)frame_counter); fflush(stdout); }
         scanKeys();
         u32 kDown = keysDown();
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: scanKeys OK\n", (unsigned long)frame_counter); fflush(stdout); }
 
         if (kDown & KEY_START) break; 
 
@@ -1612,21 +1616,31 @@ int main(int argc, char **argv) {
 
         if (engine_active && !engine_thinking) {
             engine_thinking = 1;
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: trigger_engine_move\n", (unsigned long)frame_counter); fflush(stdout); }
             trigger_engine_move();
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: trigger_engine_move OK\n", (unsigned long)frame_counter); fflush(stdout); }
         }
 
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: read_from_engine\n", (unsigned long)frame_counter); fflush(stdout); }
         read_from_engine();
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: read_from_engine OK\n", (unsigned long)frame_counter); fflush(stdout); }
 
         if (redraw_top_needed) {
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: draw_top_board\n", (unsigned long)frame_counter); fflush(stdout); }
             draw_top_board();
             redraw_top_needed = 0;
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: draw_top_board OK\n", (unsigned long)frame_counter); fflush(stdout); }
         }
         if (redraw_bottom_needed) {
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: draw_bottom_stats\n", (unsigned long)frame_counter); fflush(stdout); }
             draw_bottom_stats();
             redraw_bottom_needed = 0;
+            if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: draw_bottom_stats OK\n", (unsigned long)frame_counter); fflush(stdout); }
         }
 
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: vblank wait\n", (unsigned long)frame_counter); fflush(stdout); }
         threadWaitForVBlank();
+        if (dbg) { consoleSelect(&bottomConsole); printf("f%lu: vblank OK\n", (unsigned long)frame_counter); fflush(stdout); }
     }
 
     sf_send_command("quit");
