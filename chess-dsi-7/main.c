@@ -197,6 +197,9 @@ static inline int gui_has_legal_moves(void) {
 // black-screen hang can be localized to a specific step instead of being a
 // total mystery. Remove/quiet these once startup is confirmed reliable.
 static void gui_alloc_position(void) {
+    printf("sizeof(Stack) = %u\n", (unsigned)sizeof(Stack));
+    fflush(stdout);
+    for (int i = 0; i < 120; i++) threadWaitForVBlank(); // ~2 sec, so you can read it  
     consoleSelect(&topConsole);
     printf("Entered gui_alloc_position()\n");
     fflush(stdout);
