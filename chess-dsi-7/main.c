@@ -1538,7 +1538,11 @@ int main(int argc, char **argv) {
         ds_yield();
         threadWaitForVBlank();
     }
-
+    
+    consoleSelect(&topConsole);
+    printf("Boot: yield loop done.\n");
+    fflush(stdout);
+  
     consoleSelect(&bottomConsole);
     printf("Boot: sending 'uci'...\n");
     fflush(stdout);
