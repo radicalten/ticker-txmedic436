@@ -1346,20 +1346,13 @@ int main_stockfish(int argc, char **argv)
   print_engine_info(false);
   ds_yield();
 
-  SF_CHECKPOINT("psqt_init...");
-  psqt_init();
-  SF_CHECKPOINT("psqt_init OK");
-  ds_yield();
-
-  SF_CHECKPOINT("bitboards_init...");
-  bitboards_init();
-  SF_CHECKPOINT("bitboards_init OK");
-  ds_yield();
-
-  SF_CHECKPOINT("zob_init...");
-  zob_init();
-  SF_CHECKPOINT("zob_init OK");
-  ds_yield();
+  // NOTE: psqt_init(), bitboards_init(), and zob_init() are already
+  // performed once by main() on the main thread before this engine thread
+  // is even spawned. Calling them again here is redundant, and in
+  // zob_init()'s case specifically, calling it a second time from a
+  // different thread context deadlocks (likely a non-reentrant
+  // one-time-init guard/lock left in an acquired state). Do NOT call
+  // these three again.
 
   SF_CHECKPOINT("bitbases_init...");
   bitbases_init();
@@ -1391,8 +1384,6 @@ int main_stockfish(int argc, char **argv)
   SF_CHECKPOINT("uci_loop...");
   uci_loop(argc, argv);
   SF_CHECKPOINT("uci_loop returned(?!)");
-
-  uci_loop(argc, argv);
 
   threads_exit();
   TB_free();
