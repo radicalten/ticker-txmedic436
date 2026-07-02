@@ -1393,19 +1393,37 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     sf_bridge_init();
-
-    printf("Boot: bitboards/zob/psqt...\n");
+    consoleSelect(&topConsole);
+    printf("Boot: bridge init...\n");
     fflush(stdout);
 
-    // IMPORTANT: pos_set() relies on real Zobrist keys, PSQT scores, and
-    // bitboard attack tables, so these idempotent table-builders must run
-    // in the GUI thread first. The engine thread calling them again later
-    // inside main_stockfish() is harmless (same reasoning as before).
+    sf_bridge_init();
+
+    printf("Boot: bitboards_init()...\n");
+    fflush(stdout);
     bitboards_init();
+    printf("Boot: bitboards_init() OK.\n");
+    fflush(stdout);
+
+    printf("Boot: zob_init()...\n");
+    fflush(stdout);
     zob_init();
+    printf("Boot: zob_init() OK.\n");
+    fflush(stdout);
+
+    printf("Boot: psqt_init()...\n");
+    fflush(stdout);
     psqt_init();
+    printf("Boot: psqt_init() OK.\n");
+    fflush(stdout);
 
     printf("Boot: alloc GUI position...\n");
+    fflush(stdout);
+
+    gui_alloc_position();
+    gui_reset_game();
+
+    printf("Boot: GUI position ready.\n");
     fflush(stdout);
 
     gui_alloc_position();
