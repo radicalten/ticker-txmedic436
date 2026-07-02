@@ -164,6 +164,26 @@ void sf_bridge_init(void) {
     // zero-initialized 'waiters' field).
 }
 
+// FIX: newlib's malloc/calloc/realloc/free/memalign are not thread-safe
+// without these hooks. Uses LightLock (already used elsewhere in this
+// file) so every thread's allocator calls are mutually exclusive.
+static LightLock s_mallocLock;
+static bool s_mallocLockInit = false;
+
+void __malloc_lock(struct _reent *reent) {
+    (void)reent;
+    if (!s_mallocLockInit) {
+        LightLock_Init(&s_mallocLock);
+        s_mallocLockInit = true;
+    }
+    LightLock_Lock(&s_mallocLock);
+}
+
+void __malloc_unlock(struct _reent *reent) {
+    (void)reent;
+    LightLock_Unlock(&s_mallocLock);
+}
+
 // Producer-side push. Never touches 'tail' (that belongs solely to the
 // consumer) - if the queue is completely full we simply drop the
 // character rather than overwrite, to preserve strict single-writer-per-
