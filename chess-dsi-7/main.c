@@ -197,9 +197,17 @@ static inline int gui_has_legal_moves(void) {
 // black-screen hang can be localized to a specific step instead of being a
 // total mystery. Remove/quiet these once startup is confirmed reliable.
 static void gui_alloc_position(void) {
+    consoleSelect(&topConsole);
+    printf("Entered gui_alloc_position()\n");
+    fflush(stdout);
+    for (int i = 0; i < 60; i++) threadWaitForVBlank(); // ~1 second pause, so we can actually read it
+
     memset(&g_pos, 0, sizeof(g_pos));
 
-    consoleSelect(&topConsole);
+    printf("memset(g_pos) OK\n");
+    fflush(stdout);
+    for (int i = 0; i < 60; i++) threadWaitForVBlank();
+
     printf("Alloc GUI stack:\n %d slots, %u bytes\n",
            GUI_STACK_SLOTS, (unsigned)(GUI_STACK_SLOTS * sizeof(Stack)));
     fflush(stdout);
@@ -212,31 +220,17 @@ static void gui_alloc_position(void) {
     }
     printf("Stack alloc OK.\n");
     fflush(stdout);
+    for (int i = 0; i < 60; i++) threadWaitForVBlank();
 
     g_pos.stackAllocation = g_stack_alloc;
     g_pos.stack = (Stack *)(((uintptr_t)g_pos.stackAllocation + 0x3f) & ~(uintptr_t)0x3f);
-
-    // BUGFIX: this was the actual cause of the hang inside pos_set(). Cfish's
-    // pos_set() does NOT allocate/initialize pos->st itself - it reads
-    // "Stack *st = pos->st;" as its very first statement and then writes
-    // through that pointer, on the assumption that the caller has already
-    // pointed pos->st at a valid Stack slot (matching how real search
-    // threads must already have pos->st set, elsewhere, before pos_set() is
-    // ever called on them - thread_init() itself only sets up pos->stack,
-    // never pos->st). Since g_pos was zero-initialized above, pos->st was
-    // NULL, so pos_set()'s "memset(st, 0, StateSize)" was a null-pointer
-    // write - a silent hang/freeze on this hardware, with no crash screen.
-    //
-    // We start at the very base of our own Stack buffer (index 0) rather
-    // than some offset into it: unlike a search thread (which conceptually
-    // continues from an existing game history built before the search
-    // root), g_pos.stack[0] genuinely IS the very first position of the
-    // game, so do_move()'s "(st-1)->epSquare" style backward-looks never
-    // need to go earlier than index 0's own (freshly zeroed) Stack.
     g_pos.st = g_pos.stack;
-
-    g_pos.threadIdx = -1; // sentinel: never a real Threads.pos[] index
+    g_pos.threadIdx = -1;
     atomic_store(&g_pos.resetCalls, false);
+
+    printf("gui_alloc_position() done.\n");
+    fflush(stdout);
+    for (int i = 0; i < 60; i++) threadWaitForVBlank();
 }
 
 // Resets g_pos to the standard starting position. Safe to call repeatedly
