@@ -20,3 +20,9 @@ prompt: Can you refactor my main.c file (a chess engine for DSi) so that the gui
 main.c
 bitboard.h
 position.h
+
+#never got anywhere with this going to try again with the cson5 incomplete. will use claude 5 sonnet for this
+can you help fix this main file of a chess engine for nintendo DSi? Unfortunately the chessboard never renders. the text vanishes to black after Boot: Gui position ready.
+main-cson5refactor-incompletev1.c
+
+
