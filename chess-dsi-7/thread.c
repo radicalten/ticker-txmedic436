@@ -166,23 +166,32 @@ void sf_bridge_init(void) {
 }
 
 // FIX: newlib's malloc/calloc/realloc/free/memalign are not thread-safe
-// without these hooks. Uses LightLock (already used elsewhere in this
-// file) so every thread's allocator calls are mutually exclusive.
-static LightLock s_mallocLock;
-static bool s_mallocLockInit = false;
+// without these hooks. Using LightLock caused a self-deadlock (newlib's
+// allocator can call back into itself, e.g. memalign() calling malloc()
+// internally, re-entering __malloc_lock() on the SAME thread that already
+// holds it - a plain spinlock just spins against itself forever). Since
+// the DSi's ARM9 is single-core, Calico can only preempt a thread via an
+// interrupt, so disabling IRQs is sufficient to make malloc atomic w.r.t.
+// every other thread, AND is safe against same-thread recursion (disabling
+// already-disabled interrupts is a harmless no-op) - unlike a spinlock.
+static u32 s_mallocLockSavedCPSR = 0;
+static int s_mallocLockDepth = 0;
 
 void __malloc_lock(struct _reent *reent) {
     (void)reent;
-    if (!s_mallocLockInit) {
-        LightLock_Init(&s_mallocLock);
-        s_mallocLockInit = true;
+    u32 old = ds_disable_interrupts();
+    if (s_mallocLockDepth == 0) {
+        s_mallocLockSavedCPSR = old;
     }
-    LightLock_Lock(&s_mallocLock);
+    s_mallocLockDepth++;
 }
 
 void __malloc_unlock(struct _reent *reent) {
     (void)reent;
-    LightLock_Unlock(&s_mallocLock);
+    s_mallocLockDepth--;
+    if (s_mallocLockDepth == 0) {
+        ds_restore_interrupts(s_mallocLockSavedCPSR);
+    }
 }
 
 // Producer-side push. Never touches 'tail' (that belongs solely to the
